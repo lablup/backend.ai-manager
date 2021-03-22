@@ -22,16 +22,16 @@ from typing import (
     Sequence,
     cast,
 )
+from urllib.parse import quote_plus as urlquote
 
 from aiohttp import web
 import aiohttp_cors
 import aiojobs.aiohttp
 import aiotools
-from aiopg.sa import create_engine
-from aiopg.sa.engine import get_dialect
 import click
 from pathlib import Path
 from setproctitle import setproctitle
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from ai.backend.common import redis
 from ai.backend.common.cli import LazyGroup
@@ -317,20 +317,21 @@ async def redis_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 
 @aiotools.actxmgr
 async def database_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
-    root_ctx.dbpool = await create_engine(
-        host=root_ctx.local_config['db']['addr'].host, port=root_ctx.local_config['db']['addr'].port,
-        user=root_ctx.local_config['db']['user'], password=root_ctx.local_config['db']['password'],
-        dbname=root_ctx.local_config['db']['name'],
-        echo=bool(root_ctx.local_config['logging']['level'] == 'DEBUG'),
-        minsize=8, maxsize=256,
-        timeout=60, pool_recycle=120,
-        dialect=get_dialect(
-            json_serializer=functools.partial(json.dumps, cls=ExtendedJSONEncoder),
-        ),
+    username = root_ctx.local_config['db']['user']
+    password = root_ctx.local_config['db']['password']
+    address = root_ctx.local_config['db']['addr']
+    dbname = root_ctx.local_config['db']['name']
+    url = f"postgresql+asyncpg://{urlquote(username)}:{urlquote(password)}@{address}/{urlquote(dbname)}"
+    root_ctx.dbpool = create_async_engine(
+        url,
+        echo=False,
+        # echo=bool(root_ctx.local_config['logging']['level'] == 'DEBUG'),
+        # minsize=8, maxsize=256,
+        # timeout=60, pool_recycle=120,
+        json_serializer=functools.partial(json.dumps, cls=ExtendedJSONEncoder)
     )
     yield
-    root_ctx.dbpool.close()
-    await root_ctx.dbpool.wait_closed()
+    await root_ctx.dbpool.dispose()
 
 
 @aiotools.actxmgr

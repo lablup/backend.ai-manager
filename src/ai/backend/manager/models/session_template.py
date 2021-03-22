@@ -171,7 +171,7 @@ async def query_accessible_session_templates(
         if extra_conds is not None:
             query = query.where(extra_conds)
         result = await conn.execute(query)
-        async for row in result:
+        for row in result:
             entries.append({
                 'name': row.name,
                 'id': row.id,
@@ -191,7 +191,7 @@ async def query_accessible_session_templates(
                 .where(groups.c.domain_name == domain_name)
             )
             result = await conn.execute(query)
-            grps = await result.fetchall()
+            grps = result.fetchall()
             group_ids = [g.id for g in grps]
         else:
             j = sa.join(agus, users, agus.c.user_id == users.c.uuid)
@@ -201,7 +201,7 @@ async def query_accessible_session_templates(
                 .where(agus.c.user_id == user_uuid)
             )
             result = await conn.execute(query)
-            grps = await result.fetchall()
+            grps = result.fetchall()
             group_ids = [g.group_id for g in grps]
         j = (session_templates.join(groups, session_templates.c.group_id == groups.c.id))
         query = (
@@ -225,7 +225,7 @@ async def query_accessible_session_templates(
             query = query.where(session_templates.c.user_uuid != user_uuid)
         result = await conn.execute(query)
         is_owner = (user_role == UserRole.ADMIN or user_role == 'admin')
-        async for row in result:
+        for row in result:
             entries.append({
                 'name': row.session_templates_name,
                 'id': row.session_templates_id,

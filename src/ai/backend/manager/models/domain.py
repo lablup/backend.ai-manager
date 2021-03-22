@@ -14,11 +14,11 @@ from typing import (
     Union,
 )
 
-from aiopg.sa.connection import SAConnection
-from aiopg.sa.result import RowProxy
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
+from sqlalchemy.engine.row import Row
 from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common import msgpack
@@ -91,7 +91,7 @@ class Domain(graphene.ObjectType):
         return [sg.name for sg in sgroups]
 
     @classmethod
-    def from_row(cls, ctx: GraphQueryContext, row: RowProxy) -> Optional[Domain]:
+    def from_row(cls, ctx: GraphQueryContext, row: Row) -> Optional[Domain]:
         if row is None:
             return None
         return cls(
@@ -113,12 +113,12 @@ class Domain(graphene.ObjectType):
         *,
         is_active: bool = None,
     ) -> Sequence[Domain]:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             query = sa.select([domains]).select_from(domains)
             if is_active is not None:
                 query = query.where(domains.c.is_active == is_active)
             return [
-                obj async for row in conn.execute(query)
+                obj async for row in (await conn.stream(query))
                 if (obj := cls.from_row(ctx, row)) is not None
             ]
 
@@ -130,7 +130,7 @@ class Domain(graphene.ObjectType):
         *,
         is_active: bool = None
     ) -> Sequence[Optional[Domain]]:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             query = (
                 sa.select([domains])
                 .select_from(domains)
@@ -294,7 +294,7 @@ class PurgeDomain(graphene.Mutation):
     async def mutate(cls, root, info: graphene.ResolveInfo, name: str) -> PurgeDomain:
         from . import users, groups
         ctx: GraphQueryContext = info.context
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             if await cls.domain_has_active_kernels(conn, name):
                 raise RuntimeError('Domain has some active kernels. Terminate them first.')
             query = (

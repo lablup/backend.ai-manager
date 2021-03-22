@@ -28,14 +28,14 @@ import uuid
 
 from aiodataloader import DataLoader
 from aiotools import apartial
-from aiopg.sa.connection import SAConnection
-from aiopg.sa.result import RowProxy
 import graphene
 from graphene.types import Scalar
 from graphql.language import ast
 from graphene.types.scalars import MIN_INT, MAX_INT
 import psycopg2 as pg
 import sqlalchemy as sa
+from sqlalchemy.engine.row import Row
+from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 from sqlalchemy.types import (
     SchemaType,
     TypeDecorator,
@@ -359,7 +359,7 @@ class _SQLBasedGQLObject(Protocol):
     def from_row(
         cls: Type[_GenericSQLBasedGQLObject],
         ctx: GraphQueryContext,
-        row: RowProxy,
+        row: Row,
     ) -> _GenericSQLBasedGQLObject:
         ...
 
@@ -370,7 +370,7 @@ async def batch_result(
     query: sa.sql.Select,
     obj_type: Type[_GenericSQLBasedGQLObject],
     key_list: Iterable[_Key],
-    key_getter: Callable[[RowProxy], _Key],
+    key_getter: Callable[[Row], _Key],
 ) -> Sequence[Optional[_GenericSQLBasedGQLObject]]:
     """
     A batched query adaptor for (key -> item) resolving patterns.
@@ -379,7 +379,7 @@ async def batch_result(
     objs_per_key = collections.OrderedDict()
     for key in key_list:
         objs_per_key[key] = None
-    async for row in conn.execute(query):
+    async for row in (await conn.stream(query)):
         objs_per_key[key_getter(row)] = obj_type.from_row(ctx, row)
     return [*objs_per_key.values()]
 
@@ -390,7 +390,7 @@ async def batch_multiresult(
     query: sa.sql.Select,
     obj_type: Type[_GenericSQLBasedGQLObject],
     key_list: Iterable[_Key],
-    key_getter: Callable[[RowProxy], _Key],
+    key_getter: Callable[[Row], _Key],
 ) -> Sequence[Sequence[_GenericSQLBasedGQLObject]]:
     """
     A batched query adaptor for (key -> [item]) resolving patterns.
@@ -399,7 +399,7 @@ async def batch_multiresult(
     objs_per_key = collections.OrderedDict()
     for key in key_list:
         objs_per_key[key] = list()
-    async for row in conn.execute(query):
+    async for row in (await conn.stream(query)):
         objs_per_key[key_getter(row)].append(
             obj_type.from_row(ctx, row)
         )
@@ -524,7 +524,7 @@ def privileged_mutation(required_role, target_func=None):
                         if ctx.user['domain_name'] == target_domain:
                             permit_chains.append(True)
                     if target_group is not None:
-                        async with ctx.dbpool.acquire() as conn, conn.begin():
+                        async with ctx.dbpool.connect() as conn, conn.begin():
                             # check if the group is part of the requester's domain.
                             query = (
                                 groups.select()
@@ -568,7 +568,7 @@ async def simple_db_mutate(
     ctx: GraphQueryContext,
     mutation_query: sa.sql.Update | sa.sql.Insert,
 ) -> ResultType:
-    async with ctx.dbpool.acquire() as conn, conn.begin():
+    async with ctx.dbpool.connect() as conn, conn.begin():
         try:
             result = await conn.execute(mutation_query)
             if result.rowcount > 0:
@@ -591,12 +591,12 @@ async def simple_db_mutate_returning_item(
     item_query: sa.sql.Select,
     item_cls: Type[ItemType],
 ) -> ResultType:
-    async with ctx.dbpool.acquire() as conn, conn.begin():
+    async with ctx.dbpool.connect() as conn, conn.begin():
         try:
             result = await conn.execute(mutation_query)
             if result.rowcount > 0:
                 result = await conn.execute(item_query)
-                item = await result.first()
+                item = result.first()
                 return result_cls(True, 'success', item_cls.from_row(ctx, item))
             else:
                 return result_cls(False, 'no matching record', None)

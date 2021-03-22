@@ -8,9 +8,9 @@ from typing import (
     TYPE_CHECKING,
 )
 
-from aiopg.sa.result import RowProxy
 import graphene
 import sqlalchemy as sa
+from sqlalchemy.engine.row import Row
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ResourceSlot
@@ -54,7 +54,7 @@ class ResourcePreset(graphene.ObjectType):
     def from_row(
         cls,
         ctx: GraphQueryContext,
-        row: RowProxy | None
+        row: Row | None
     ) -> ResourcePreset | None:
         if row is None:
             return None
@@ -67,13 +67,13 @@ class ResourcePreset(graphene.ObjectType):
 
     @classmethod
     async def load_all(cls, ctx: GraphQueryContext) -> Sequence[ResourcePreset]:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             query = (
                 sa.select([resource_presets])
                 .select_from(resource_presets)
             )
             return [
-                obj async for r in conn.execute(query)
+                obj async for r in (await conn.stream(query))
                 if (obj := cls.from_row(ctx, r)) is not None
             ]
 
@@ -83,7 +83,7 @@ class ResourcePreset(graphene.ObjectType):
         ctx: GraphQueryContext,
         names: Sequence[str],
     ) -> Sequence[ResourcePreset | None]:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             query = (
                 sa.select([resource_presets])
                 .select_from(resource_presets)

@@ -10,7 +10,7 @@ from aiopg.sa.engine import Engine as SAEngine
 @actxmgr
 async def reenter_txn(pool: SAEngine, conn: SAConnection) -> AsyncIterator[SAConnection]:
     if conn is None:
-        async with pool.acquire() as conn, conn.begin():
+        async with pool.connect() as conn, conn.begin():
             yield conn
     else:
         async with conn.begin_nested():

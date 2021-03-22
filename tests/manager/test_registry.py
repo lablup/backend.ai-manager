@@ -29,7 +29,7 @@ async def test_handle_heartbeat(mocker) -> None:
     mock_dbtxn_ctx = MagicMock()
     mock_dbresult = MagicMock()
     mock_dbresult.rowcount = 1
-    mock_dbpool.acquire = MagicMock(return_value=mock_dbconn_ctx)
+    mock_dbpool.connect = MagicMock(return_value=mock_dbconn_ctx)
     mock_dbconn_ctx.__aenter__ = AsyncMock(return_value=mock_dbconn)
     mock_dbconn_ctx.__aexit__ = AsyncMock()
     mock_dbconn.execute = AsyncMock(return_value=mock_dbresult)

@@ -14,14 +14,16 @@ from typing import (
 from uuid import UUID, uuid4
 
 import aiohttp
-from aiopg.sa.connection import SAConnection
-from aiopg.sa.engine import _PoolAcquireContextManager as SAPool
-from aiopg.sa.result import RowProxy
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 from passlib.hash import bcrypt
 import psycopg2 as pg
 import sqlalchemy as sa
+from sqlalchemy.engine.row import Row
+from sqlalchemy.ext.asyncio import (
+    AsyncConnection as SAConnection,
+    AsyncEngine as SAEngine,
+)
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
 from ai.backend.common.logging import BraceStyleAdapter
@@ -122,7 +124,7 @@ class UserGroup(graphene.ObjectType):
     name = graphene.String()
 
     @classmethod
-    def from_row(cls, ctx: GraphQueryContext, row: RowProxy) -> Optional[UserGroup]:
+    def from_row(cls, ctx: GraphQueryContext, row: Row) -> Optional[UserGroup]:
         if row is None:
             return None
         return cls(
@@ -132,7 +134,7 @@ class UserGroup(graphene.ObjectType):
 
     @classmethod
     async def batch_load_by_user_id(cls, ctx: GraphQueryContext, user_ids: Sequence[UUID]):
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             from .group import groups, association_groups_users as agus
             j = agus.join(groups, agus.c.group_id == groups.c.id)
             query = (
@@ -181,7 +183,7 @@ class User(graphene.ObjectType):
     def from_row(
         cls,
         ctx: GraphQueryContext,
-        row: RowProxy,
+        row: Row,
     ) -> User:
         return cls(
             id=row['uuid'],
@@ -214,7 +216,7 @@ class User(graphene.ObjectType):
         """
         Load user's information. Group names associated with the user are also returned.
         """
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             if group_id is not None:
                 from .group import association_groups_users as agus
                 j = (users.join(agus, agus.c.user_id == users.c.uuid))
@@ -239,7 +241,7 @@ class User(graphene.ObjectType):
                 query = query.where(users.c.status.in_(_statuses))
             if limit is not None:
                 query = query.limit(limit)
-            return [cls.from_row(ctx, row) async for row in conn.execute(query)]
+            return [cls.from_row(ctx, row) async for row in (await conn.stream(query))]
 
     @staticmethod
     async def load_count(
@@ -250,7 +252,7 @@ class User(graphene.ObjectType):
         is_active: bool = None,
         status: str = None,
     ) -> int:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             if group_id is not None:
                 from .group import association_groups_users as agus
                 j = (users.join(agus, agus.c.user_id == users.c.uuid))
@@ -274,7 +276,7 @@ class User(graphene.ObjectType):
                 _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
                 query = query.where(users.c.status.in_(_statuses))
             result = await conn.execute(query)
-            return await result.scalar()
+            return result.scalar()
 
     @classmethod
     async def load_slice(
@@ -290,7 +292,7 @@ class User(graphene.ObjectType):
         order_key: str = None,
         order_asc: bool = True,
     ) -> Sequence[User]:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             if order_key is None:
                 _ordering = sa.desc(users.c.created_at)
             else:
@@ -323,7 +325,7 @@ class User(graphene.ObjectType):
                 _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
                 query = query.where(users.c.status.in_(_statuses))
             return [
-                cls.from_row(ctx, row) async for row in conn.execute(query)
+                cls.from_row(ctx, row) async for row in (await conn.stream(query))
             ]
 
     @classmethod
@@ -338,7 +340,7 @@ class User(graphene.ObjectType):
     ) -> Sequence[Optional[User]]:
         if not emails:
             return []
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             query = (
                 sa.select([users])
                 .select_from(users)
@@ -368,7 +370,7 @@ class User(graphene.ObjectType):
     ) -> Sequence[Optional[User]]:
         if not user_ids:
             return []
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             query = (
                 sa.select([users])
                 .select_from(users)
@@ -448,7 +450,7 @@ class CreateUser(graphene.Mutation):
         props: UserInput,
     ) -> CreateUser:
         graph_ctx: GraphQueryContext = info.context
-        async with graph_ctx.dbpool.acquire() as conn, conn.begin():
+        async with graph_ctx.dbpool.connect() as conn, conn.begin():
             username = props.username if props.username else email
             if props.status is None and props.is_active is not None:
                 _status = UserStatus.ACTIVE if props.is_active else UserStatus.INACTIVE
@@ -473,7 +475,7 @@ class CreateUser(graphene.Mutation):
                     # Read the created user data from DB.
                     checkq = users.select().where(users.c.email == email)
                     result = await conn.execute(checkq)
-                    o = User.from_row(info.context, await result.first())
+                    o = User.from_row(info.context, result.first())
 
                     # Create user's first access_key and secret_key.
                     from .keypair import generate_keypair, generate_ssh_keypair, keypairs
@@ -505,7 +507,7 @@ class CreateUser(graphene.Mutation):
                                    .where(groups.c.domain_name == props.domain_name)
                                    .where(groups.c.id.in_(props.group_ids)))
                         result = await conn.execute(query)
-                        grps = await result.fetchall()
+                        grps = result.fetchall()
                         if grps:
                             values = [{'user_id': o.uuid, 'group_id': grp.id} for grp in grps]
                             query = association_groups_users.insert().values(values)
@@ -542,7 +544,7 @@ class ModifyUser(graphene.Mutation):
         props: ModifyUserInput,
     ) -> ModifyUser:
         ctx: GraphQueryContext = info.context
-        async with ctx.dbpool.acquire() as conn, conn.begin():
+        async with ctx.dbpool.connect() as conn, conn.begin():
 
             data: Dict[str, Any] = {}
             set_if_set(props, data, 'username')
@@ -572,7 +574,7 @@ class ModifyUser(graphene.Mutation):
                            .select_from(users)
                            .where(users.c.email == email))
                 result = await conn.execute(query)
-                row = await result.first()
+                row = result.first()
                 prev_domain_name = row.domain_name
                 prev_role = row.role
 
@@ -585,7 +587,7 @@ class ModifyUser(graphene.Mutation):
                 if result.rowcount > 0:
                     checkq = users.select().where(users.c.email == email)
                     result = await conn.execute(checkq)
-                    o = User.from_row(ctx, await result.first())
+                    o = User.from_row(ctx, result.first())
                 else:
                     return cls(ok=False, msg='no such user', user=None)
 
@@ -603,7 +605,7 @@ class ModifyUser(graphene.Mutation):
                     result = await conn.execute(query)
                     if data['role'] in [UserRole.SUPERADMIN, UserRole.ADMIN]:
                         # User's becomes admin. Set the keypair as active admin.
-                        kp = await result.first()
+                        kp = result.first()
                         kp_data = dict()
                         if not kp.is_admin:
                             kp_data['is_admin'] = True
@@ -617,7 +619,7 @@ class ModifyUser(graphene.Mutation):
                     else:
                         # User becomes non-admin. Make the keypair non-admin as well.
                         # If there are multiple admin keypairs, inactivate them.
-                        rows = await result.fetchall()
+                        rows = result.fetchall()
                         cnt = 0
                         for row in rows:
                             kp_data = dict()
@@ -654,7 +656,7 @@ class ModifyUser(graphene.Mutation):
                                .where(groups.c.domain_name == o.domain_name)
                                .where(groups.c.id.in_(props.group_ids)))
                     result = await conn.execute(query)
-                    grps = await result.fetchall()
+                    grps = result.fetchall()
                     if grps:
                         values = [{'user_id': o.uuid, 'group_id': grp.id} for grp in grps]
                         query = association_groups_users.insert().values(values)
@@ -691,7 +693,7 @@ class DeleteUser(graphene.Mutation):
         email: str,
     ) -> DeleteUser:
         graph_ctx: GraphQueryContext = info.context
-        async with graph_ctx.dbpool.acquire() as conn, conn.begin():
+        async with graph_ctx.dbpool.connect() as conn, conn.begin():
             try:
                 # Make all user keypairs inactive.
                 from ai.backend.manager.models import keypairs
@@ -754,7 +756,7 @@ class PurgeUser(graphene.Mutation):
         props: PurgeUserInput,
     ) -> PurgeUser:
         ctx: GraphQueryContext = info.context
-        async with ctx.dbpool.acquire() as conn, conn.begin():
+        async with ctx.dbpool.connect() as conn, conn.begin():
             try:
                 query = (
                     sa.select([users.c.uuid])
@@ -825,7 +827,7 @@ class PurgeUser(graphene.Mutation):
             .select_from(vfolders)
             .where(vfolders.c.user == target_user_uuid)
         )
-        existing_vfolder_names = [row.name async for row in conn.execute(query)]
+        existing_vfolder_names = [row.name async for row in (await conn.stream(query))]
 
         # Migrate shared virtual folders.
         # If virtual folder's name collides with target user's folder,
@@ -840,7 +842,7 @@ class PurgeUser(graphene.Mutation):
             .where(vfolders.c.user == deleted_user_uuid)
         )
         migrate_updates = []
-        async for row in conn.execute(query):
+        async for row in (await conn.stream(query)):
             name = row.name
             if name in existing_vfolder_names:
                 name += f'-{uuid4().hex[:10]}'
@@ -909,7 +911,7 @@ class PurgeUser(graphene.Mutation):
             .where(vfolders.c.user == user_uuid)
         )
         result = await conn.execute(query)
-        target_vfs = await result.fetchall()
+        target_vfs = result.fetchall()
         query = (vfolders.delete().where(vfolders.c.user == user_uuid))
         result = await conn.execute(query)
         for row in target_vfs:
@@ -951,14 +953,14 @@ class PurgeUser(graphene.Mutation):
             .where(vfolders.c.user == user_uuid)
         )
         result = await conn.execute(query)
-        rows = await result.fetchall()
+        rows = result.fetchall()
         user_vfolder_ids = [row.id for row in rows]
         query = (
             sa.select([kernels.c.mounts])
             .select_from(kernels)
             .where(kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES))
         )
-        async for row in conn.execute(query):
+        async for row in (await conn.stream(query)):
             for _mount in row['mounts']:
                 try:
                     vfolder_id = UUID(_mount[2])
@@ -1048,12 +1050,12 @@ def _verify_password(guess, hashed):
 
 
 async def check_credential(
-    dbpool: SAPool,
+    dbpool: SAEngine,
     domain: str,
     email: str,
     password: str,
 ) -> Any:
-    async with dbpool.acquire() as conn:
+    async with dbpool.connect() as conn:
         query = (
             sa.select([users])
             .select_from(users)
@@ -1063,7 +1065,7 @@ async def check_credential(
             )
         )
         result = await conn.execute(query)
-        row = await result.first()
+        row = result.first()
         if row is None:
             return None
         if row['password'] is None:

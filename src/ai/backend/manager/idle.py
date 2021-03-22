@@ -32,9 +32,11 @@ from ai.backend.common.events import (
 )
 
 if TYPE_CHECKING:
-    from aiopg.sa.connection import SAConnection
-    from aiopg.sa.engine import _PoolAcquireContextManager as SAPool
-    from aiopg.sa.result import RowProxy
+    from sqlalchemy.ext.asyncio import (
+        AsyncConnection as SAConnection,
+        AsyncEngine as SAEngine,
+    )
+    from sqlalchemy import Row
 import aioredis
 import sqlalchemy as sa
 import trafaret as t
@@ -64,14 +66,14 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
 
     name: ClassVar[str] = "base"
 
-    _dbpool: SAPool
+    _dbpool: SAEngine
     _shared_config: SharedConfig
     _event_dispatcher: EventDispatcher
     _event_producer: EventProducer
 
     def __init__(
         self,
-        dbpool: SAPool,
+        dbpool: SAEngine,
         shared_config: SharedConfig,
         event_dispatcher: EventDispatcher,
         event_producer: EventProducer,
@@ -124,7 +126,7 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
         event: DoIdleCheckEvent,
     ) -> None:
         log.debug('do_idle_check(): triggered')
-        async with self._dbpool.acquire() as conn:
+        async with self._dbpool.connect() as conn:
             query = (
                 sa.select([kernels])
                 .select_from(kernels)
@@ -133,7 +135,7 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
                 )
             )
             result = await conn.execute(query)
-            rows = await result.fetchall()
+            rows = result.fetchall()
             for row in rows:
                 if not (await self.check_session(row, conn)):
                     log.info(f"The {self.name} idle checker triggered termination of s:{row['id']}")
@@ -142,7 +144,7 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
                     )
 
     @abstractmethod
-    async def check_session(self, session: RowProxy, dbconn: SAConnection) -> bool:
+    async def check_session(self, session: Row, dbconn: SAConnection) -> bool:
         """
         Return True if the session should be kept alive or
         return False if the session should be terminated.
@@ -251,7 +253,7 @@ class TimeoutIdleChecker(BaseIdleChecker):
         finally:
             self._policy_cache.reset(cache_token)
 
-    async def check_session(self, session: RowProxy, dbconn: SAConnection) -> bool:
+    async def check_session(self, session: Row, dbconn: SAConnection) -> bool:
         session_id = session['id']
         active_streams = await self._redis.zcount(f"session.{session_id}.active_app_connections")
         if active_streams is not None and active_streams > 0:
@@ -280,7 +282,7 @@ class TimeoutIdleChecker(BaseIdleChecker):
                 )
             )
             result = await dbconn.execute(query)
-            policy = await result.first()
+            policy = result.first()
             assert policy is not None
             policy_cache[session['access_key']] = policy
         # setting idle_timeout:
@@ -311,7 +313,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
     async def populate_config(self, config: Mapping[str, Any]) -> None:
         pass
 
-    async def check_session(self, session: RowProxy, dbconn: SAConnection) -> bool:
+    async def check_session(self, session: Row, dbconn: SAConnection) -> bool:
         # last_stat = session['last_stat']
         # TODO: implement
         return True
@@ -331,7 +333,7 @@ checker_registry: Mapping[str, Type[BaseIdleChecker]] = {
 
 
 async def create_idle_checkers(
-    dbpool: SAPool,
+    dbpool: SAEngine,
     shared_config: SharedConfig,
     event_dispatcher: EventDispatcher,
     event_producer: EventProducer,

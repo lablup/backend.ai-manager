@@ -10,10 +10,10 @@ from typing import (
 )
 import uuid
 
-from aiopg.sa.connection import SAConnection
-from aiopg.sa.result import RowProxy
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
+from sqlalchemy.engine.row import Row
+from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 
@@ -122,13 +122,13 @@ async def query_allowed_sgroups(
     domain_name: str,
     group: Union[uuid.UUID, str],
     access_key: str,
-) -> Sequence[RowProxy]:
+) -> Sequence[Row]:
     query = (
         sa.select([sgroups_for_domains])
         .where(sgroups_for_domains.c.domain == domain_name)
     )
     result = await db_conn.execute(query)
-    from_domain = {row['scaling_group'] async for row in result}
+    from_domain = {row['scaling_group'] for row in result}
 
     group_id = await resolve_group_name_or_id(db_conn, domain_name, group)
     from_group: Set[str]
@@ -142,12 +142,12 @@ async def query_allowed_sgroups(
             )
         )
         result = await db_conn.execute(query)
-        from_group = {row['scaling_group'] async for row in result}
+        from_group = {row['scaling_group'] for row in result}
 
     query = (sa.select([sgroups_for_keypairs])
                .where(sgroups_for_keypairs.c.access_key == access_key))
     result = await db_conn.execute(query)
-    from_keypair = {row['scaling_group'] async for row in result}
+    from_keypair = {row['scaling_group'] for row in result}
 
     sgroups = from_domain | from_group | from_keypair
     query = (sa.select([scaling_groups])
@@ -156,7 +156,7 @@ async def query_allowed_sgroups(
                    (scaling_groups.c.is_active)
                ))
     result = await db_conn.execute(query)
-    return [row async for row in result]
+    return [row for row in result]
 
 
 class ScalingGroup(graphene.ObjectType):
@@ -173,7 +173,7 @@ class ScalingGroup(graphene.ObjectType):
     def from_row(
         cls,
         ctx: GraphQueryContext,
-        row: RowProxy | None,
+        row: Row | None,
     ) -> ScalingGroup | None:
         if row is None:
             return None
@@ -195,12 +195,12 @@ class ScalingGroup(graphene.ObjectType):
         *,
         is_active: bool = None,
     ) -> Sequence[ScalingGroup]:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             query = sa.select([scaling_groups]).select_from(scaling_groups)
             if is_active is not None:
                 query = query.where(scaling_groups.c.is_active == is_active)
             return [
-                obj async for row in conn.execute(query)
+                obj async for row in (await conn.stream(query))
                 if (obj := cls.from_row(ctx, row)) is not None
             ]
 
@@ -212,7 +212,7 @@ class ScalingGroup(graphene.ObjectType):
         *,
         is_active: bool = None,
     ) -> Sequence[ScalingGroup]:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             j = sa.join(
                 scaling_groups, sgroups_for_domains,
                 scaling_groups.c.name == sgroups_for_domains.c.scaling_group)
@@ -224,7 +224,7 @@ class ScalingGroup(graphene.ObjectType):
             if is_active is not None:
                 query = query.where(scaling_groups.c.is_active == is_active)
             return [
-                obj async for row in conn.execute(query)
+                obj async for row in (await conn.stream(query))
                 if (obj := cls.from_row(ctx, row)) is not None
             ]
 
@@ -236,7 +236,7 @@ class ScalingGroup(graphene.ObjectType):
         *,
         is_active: bool = None,
     ) -> Sequence[ScalingGroup]:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             j = sa.join(
                 scaling_groups, sgroups_for_groups,
                 scaling_groups.c.name == sgroups_for_groups.c.scaling_group
@@ -249,7 +249,7 @@ class ScalingGroup(graphene.ObjectType):
             if is_active is not None:
                 query = query.where(scaling_groups.c.is_active == is_active)
             return [
-                obj async for row in conn.execute(query)
+                obj async for row in (await conn.stream(query))
                 if (obj := cls.from_row(ctx, row)) is not None
             ]
 
@@ -261,7 +261,7 @@ class ScalingGroup(graphene.ObjectType):
         *,
         is_active: bool = None,
     ) -> Sequence[ScalingGroup]:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             j = sa.join(
                 scaling_groups, sgroups_for_keypairs,
                 scaling_groups.c.name == sgroups_for_keypairs.c.scaling_group)
@@ -273,7 +273,7 @@ class ScalingGroup(graphene.ObjectType):
             if is_active is not None:
                 query = query.where(scaling_groups.c.is_active == is_active)
             return [
-                obj async for row in conn.execute(query)
+                obj async for row in (await conn.stream(query))
                 if (obj := cls.from_row(ctx, row)) is not None
             ]
 
@@ -283,7 +283,7 @@ class ScalingGroup(graphene.ObjectType):
         ctx: GraphQueryContext,
         names: Sequence[str],
     ) -> Sequence[ScalingGroup | None]:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             query = (
                 sa.select([scaling_groups])
                 .select_from(scaling_groups)

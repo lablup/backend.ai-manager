@@ -19,11 +19,11 @@ from typing import (
     TYPE_CHECKING,
 )
 
-from aiopg.sa.connection import SAConnection
 import aioredis
 import aioredlock
 from dateutil.tz import tzutc
 import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 from sqlalchemy.sql.expression import true
 
 from ai.backend.common.docker import ImageRef
@@ -207,8 +207,8 @@ class SchedulerDispatcher(aobject):
         # We use short transaction blocks to prevent deadlock timeouts under heavy loads
         # because this scheduling handler will be executed by only one process.
         # It is executed under a globally exclusive context using aioredlock.
-        async with self.dbpool.acquire() as agent_db_conn, \
-                   self.dbpool.acquire() as kernel_db_conn:
+        async with self.dbpool.connect() as agent_db_conn, \
+                   self.dbpool.connect() as kernel_db_conn:
             query = (
                 sa.select([agents.c.scaling_group])
                 .select_from(agents)
@@ -217,7 +217,7 @@ class SchedulerDispatcher(aobject):
             )
             result = await agent_db_conn.execute(query)
             schedulable_scaling_groups = [
-                row.scaling_group for row in await result.fetchall()
+                row.scaling_group for row in result.fetchall()
             ]
             for sgroup_name in schedulable_scaling_groups:
                 try:
@@ -229,7 +229,7 @@ class SchedulerDispatcher(aobject):
                     # Proceed to the next scaling group and come back later.
                     log.debug('schedule({}): instance not available', sgroup_name)
                 except Exception as e:
-                    log.error('schedule({}): scheculing error!\n{}', sgroup_name, repr(e))
+                    log.error('schedule({}): scheduling error!\n{}', sgroup_name, repr(e))
 
         # At this point, all scheduling decisions are made
         # and the resource occupation is committed to the database.
@@ -250,7 +250,7 @@ class SchedulerDispatcher(aobject):
             .where(scaling_groups.c.name == sgroup_name)
         )
         result = await db_conn.execute(query)
-        scheduler_name = await result.scalar()
+        scheduler_name = result.scalar()
         return load_scheduler(scheduler_name, self.shared_config['plugins']['scheduler'])
 
     async def _schedule_in_sgroup(
@@ -617,13 +617,13 @@ class SchedulerDispatcher(aobject):
             status_data = convert_to_status_data(e, self.local_config['debug']['enabled'])
             log.warning(log_fmt + 'failed-starting: {!r}', *log_args, status_data)
             try:
-                async with self.dbpool.acquire() as db_conn, db_conn.begin():
+                async with self.dbpool.connect() as db_conn, db_conn.begin():
                     query = (
                         sa.select([kernels.c.id, kernels.c.container_id])
                         .select_from(kernels)
                         .where(kernels.c.session_id == sess_ctx.session_id)
                     )
-                    rows = await (await db_conn.execute(query)).fetchall()
+                    rows = (await db_conn.execute(query)).fetchall()
                     cid_map = {row['id']: row['container_id'] for row in rows}
                 destroyed_kernels = [
                     {
@@ -637,7 +637,7 @@ class SchedulerDispatcher(aobject):
                 await self.registry.destroy_session_lowlevel(sess_ctx.session_id, destroyed_kernels)
             except Exception as destroy_err:
                 log.error(log_fmt + 'failed-starting.cleanup', *log_args, exc_info=destroy_err)
-            async with self.dbpool.acquire() as db_conn, db_conn.begin():
+            async with self.dbpool.connect() as db_conn, db_conn.begin():
                 for binding in session_agent_binding[1]:
                     await recalc_agent_resource_occupancy(db_conn, binding.agent_alloc_ctx.agent_id)
                 await _invoke_failure_callbacks(db_conn, sched_ctx, sess_ctx, check_results)
@@ -657,7 +657,7 @@ class SchedulerDispatcher(aobject):
             )
         else:
             log.info(log_fmt + 'started', *log_args)
-            async with self.dbpool.acquire() as db_conn, db_conn.begin():
+            async with self.dbpool.connect() as db_conn, db_conn.begin():
                 await _invoke_success_callbacks(db_conn, sched_ctx, sess_ctx, check_results)
 
 
@@ -709,7 +709,7 @@ async def _list_pending_sessions(
         .order_by(kernels.c.created_at)
     )
     items: Dict[SessionId, PendingSession] = {}
-    rows = await (await db_conn.execute(query)).fetchall()
+    rows = (await db_conn.execute(query)).fetchall()
     for row in rows:
         if row['cluster_role'] == "main":
             session = PendingSession(
@@ -802,7 +802,7 @@ async def _list_existing_sessions(
         .order_by(kernels.c.created_at)
     )
     items: Dict[str, ExistingSession] = {}
-    rows = await (await db_conn.execute(query)).fetchall()
+    rows = (await db_conn.execute(query)).fetchall()
     for row in rows:
         if row['cluster_role'] == "main":
             session = ExistingSession(
@@ -922,9 +922,11 @@ async def _unreserve_agent_slots(
             start=ResourceSlot(),
         )
         query = (
-            sa.select([agents.c.occupied_slots], for_update=True)
+            sa.select([agents.c.occupied_slots])
             .select_from(agents)
-            .where(agents.c.id == agent_id))
+            .where(agents.c.id == agent_id)
+            .with_for_update()
+        )
         current_occupied_slots = await db_conn.scalar(query)
         query = (
             sa.update(agents)

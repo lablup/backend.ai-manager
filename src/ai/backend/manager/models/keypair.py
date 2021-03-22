@@ -14,16 +14,15 @@ from typing import (
 )
 import uuid
 
-from aiopg.sa.connection import SAConnection
-from aiopg.sa.result import RowProxy
 from cryptography.hazmat.primitives import serialization as crypto_serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend as crypto_default_backend
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
+from sqlalchemy.engine.row import Row
 from sqlalchemy.sql.expression import false
-import psycopg2 as pg
 
 from ai.backend.common import msgpack
 from ai.backend.common.types import (
@@ -102,7 +101,7 @@ class UserInfo(graphene.ObjectType):
     def from_row(
         cls,
         ctx: GraphQueryContext,
-        row: RowProxy,
+        row: Row,
     ) -> Optional[UserInfo]:
         if row is None:
             return None
@@ -114,7 +113,7 @@ class UserInfo(graphene.ObjectType):
         ctx: GraphQueryContext,
         user_uuids: Sequence[uuid.UUID],
     ) -> Sequence[Optional[UserInfo]]:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             from .user import users
             query = (
                 sa.select([users.c.uuid, users.c.email, users.c.full_name])
@@ -172,7 +171,7 @@ class KeyPair(graphene.ObjectType):
     def from_row(
         cls,
         ctx: GraphQueryContext,
-        row: RowProxy,
+        row: Row,
     ) -> KeyPair:
         return cls(
             id=row['access_key'],
@@ -215,7 +214,7 @@ class KeyPair(graphene.ObjectType):
         limit: int = None,
     ) -> Sequence[KeyPair]:
         from .user import users
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             j = sa.join(
                 keypairs, users,
                 keypairs.c.user == users.c.uuid,
@@ -231,7 +230,7 @@ class KeyPair(graphene.ObjectType):
             if limit is not None:
                 query = query.limit(limit)
             return [
-                obj async for row in conn.execute(query)
+                obj async for row in (await conn.stream(query))
                 if (obj := cls.from_row(ctx, row)) is not None
             ]
 
@@ -244,7 +243,7 @@ class KeyPair(graphene.ObjectType):
         is_active: bool = None,
     ) -> int:
         from .user import users
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
             query = (
                 sa.select([sa.func.count(keypairs.c.access_key)])
@@ -257,7 +256,7 @@ class KeyPair(graphene.ObjectType):
             if is_active is not None:
                 query = query.where(keypairs.c.is_active == is_active)
             result = await conn.execute(query)
-            return await result.scalar()
+            return result.scalar()
 
     @classmethod
     async def load_slice(
@@ -273,7 +272,7 @@ class KeyPair(graphene.ObjectType):
         order_asc: bool = True,
     ) -> Sequence[KeyPair]:
         from .user import users
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             if order_key is None:
                 _ordering = sa.desc(keypairs.c.created_at)
             else:
@@ -294,7 +293,7 @@ class KeyPair(graphene.ObjectType):
             if is_active is not None:
                 query = query.where(keypairs.c.is_active == is_active)
             return [
-                obj async for row in conn.execute(query)
+                obj async for row in (await conn.stream(query))
                 if (obj := cls.from_row(ctx, row)) is not None
             ]
 
@@ -308,7 +307,7 @@ class KeyPair(graphene.ObjectType):
         is_active: bool = None,
     ) -> Sequence[Sequence[Optional[KeyPair]]]:
         from .user import users
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             j = sa.join(
                 keypairs, users,
                 keypairs.c.user == users.c.uuid,
@@ -335,7 +334,7 @@ class KeyPair(graphene.ObjectType):
         *,
         domain_name: str = None,
     ) -> Sequence[Optional[KeyPair]]:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             from .user import users
             j = sa.join(
                 keypairs, users,
@@ -401,7 +400,7 @@ class CreateKeyPair(graphene.Mutation):
         props: KeyPairInput,
     ) -> CreateKeyPair:
         ctx: GraphQueryContext = info.context
-        async with ctx.dbpool.acquire() as conn, conn.begin():
+        async with ctx.dbpool.connect() as conn, conn.begin():
             # Check if user exists with requested email (user_id for legacy).
             from .user import users  # noqa
             query = (
@@ -411,7 +410,7 @@ class CreateKeyPair(graphene.Mutation):
             )
             try:
                 result = await conn.execute(query)
-                user_uuid = await result.scalar()
+                user_uuid = result.scalar()
                 if user_uuid is None:
                     return cls(ok=False, msg=f'User not found: {user_id}', keypair=None)
             except (pg.IntegrityError, sa.exc.IntegrityError) as e:
@@ -445,7 +444,7 @@ class CreateKeyPair(graphene.Mutation):
                     # Read the created key data from DB.
                     checkq = keypairs.select().where(keypairs.c.access_key == ak)
                     result = await conn.execute(checkq)
-                    o = KeyPair.from_row(info.context, await result.first())
+                    o = KeyPair.from_row(info.context, result.first())
                     return cls(ok=True, msg='success', keypair=o)
                 else:
                     return cls(ok=False, msg='failed to create keypair', keypair=None)

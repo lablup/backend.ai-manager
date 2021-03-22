@@ -398,7 +398,7 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
     params = _extract_auth_params(request)
     if params:
         sign_method, access_key, signature = params
-        async with root_ctx.dbpool.acquire() as conn, conn.begin():
+        async with root_ctx.dbpool.connect() as conn, conn.begin():
             j = (
                 keypairs
                 .join(users, keypairs.c.user == users.c.uuid)
@@ -414,7 +414,7 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
                 )
             )
             result = await conn.execute(query)
-            row = await result.first()
+            row = result.first()
             if row is None:
                 raise AuthorizationFailed('Access key not found')
             my_signature = \
@@ -531,9 +531,9 @@ async def get_role(request: web.Request, params: Any) -> web.Response:
                 (association_groups_users.c.user_id == request['user']['uuid'])
             )
         )
-        async with root_ctx.dbpool.acquire() as conn:
+        async with root_ctx.dbpool.connect() as conn:
             result = await conn.execute(query)
-            row = await result.first()
+            row = result.first()
             if row is None:
                 raise GenericNotFound('No such user group or '
                                       'you are not the member of the group.')
@@ -588,7 +588,7 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
         raise AuthorizationFailed('This account needs email verification.')
     if user.get('status') in INACTIVE_USER_STATUSES:
         raise AuthorizationFailed('User credential mismatch.')
-    async with root_ctx.dbpool.acquire() as conn:
+    async with root_ctx.dbpool.connect() as conn:
         query = (sa.select([keypairs.c.access_key, keypairs.c.secret_key])
                    .select_from(keypairs)
                    .where(
@@ -597,7 +597,7 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
                    )
                    .order_by(sa.desc(keypairs.c.is_admin)))
         result = await conn.execute(query)
-        keypair = await result.first()
+        keypair = result.first()
     if keypair is None:
         raise AuthorizationFailed('No API keypairs found.')
     return web.json_response({
@@ -640,13 +640,13 @@ async def signup(request: web.Request, params: Any) -> web.Response:
         # Merge the hook results as a single map.
         user_data_overriden = ChainMap(*cast(Mapping, hook_result.result))
 
-    async with root_ctx.dbpool.acquire() as conn:
+    async with root_ctx.dbpool.connect() as conn:
         # Check if email already exists.
         query = (sa.select([users])
                    .select_from(users)
                    .where((users.c.email == params['email'])))
         result = await conn.execute(query)
-        row = await result.first()
+        row = result.first()
         if row is not None:
             raise GenericBadRequest('Email already exists')
 
@@ -673,7 +673,7 @@ async def signup(request: web.Request, params: Any) -> web.Response:
         if result.rowcount > 0:
             checkq = users.select().where(users.c.email == params['email'])
             result = await conn.execute(checkq)
-            user = await result.first()
+            user = result.first()
             # Create user's first access_key and secret_key.
             ak, sk = _gen_keypair()
             resource_policy = (
@@ -701,7 +701,7 @@ async def signup(request: web.Request, params: Any) -> web.Response:
                        .where(groups.c.domain_name == params['domain'])
                        .where(groups.c.name == group_name))
             result = await conn.execute(query)
-            grp = await result.first()
+            grp = result.first()
             if grp is not None:
                 values = [{'user_id': user.uuid, 'group_id': grp.id}]
                 query = association_groups_users.insert().values(values)
@@ -745,7 +745,7 @@ async def signout(request: web.Request, params: Any) -> web.Response:
         domain_name, params['email'], params['password'])
     if result is None:
         raise GenericBadRequest('Invalid email and/or password')
-    async with root_ctx.dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.dbpool.connect() as conn, conn.begin():
         # Inactivate the user.
         query = (
             users.update()
@@ -801,7 +801,7 @@ async def update_password(request: web.Request, params: Any) -> web.Response:
         hook_result.reason = hook_result.reason or 'invalid password format'
         raise RejectedByHook.from_hook_result(hook_result)
 
-    async with root_ctx.dbpool.acquire() as conn:
+    async with root_ctx.dbpool.connect() as conn:
         # Update user password.
         data = {
             'password': params['new_password'],
@@ -821,7 +821,7 @@ async def get_ssh_keypair(request: web.Request) -> web.Response:
     log_fmt = 'AUTH.GET_SSH_KEYPAIR(d:{}, ak:{})'
     log_args = (domain_name, access_key)
     log.info(log_fmt, *log_args)
-    async with root_ctx.dbpool.acquire() as conn:
+    async with root_ctx.dbpool.connect() as conn:
         # Get SSH public key. Return partial string from the public key just for checking.
         query = (
             sa.select([keypairs.c.ssh_public_key])
@@ -840,7 +840,7 @@ async def refresh_ssh_keypair(request: web.Request) -> web.Response:
     log_args = (domain_name, access_key)
     log.info(log_fmt, *log_args)
     root_ctx: RootContext = request.app['_root.context']
-    async with root_ctx.dbpool.acquire() as conn:
+    async with root_ctx.dbpool.connect() as conn:
         pubkey, privkey = generate_ssh_keypair()
         data = {
             'ssh_public_key': pubkey,

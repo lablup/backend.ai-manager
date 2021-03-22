@@ -16,13 +16,12 @@ from typing import (
 import uuid
 
 import aiohttp
-from aiopg.sa.connection import SAConnection
-from aiopg.sa.result import RowProxy
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
-import psycopg2 as pg
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
+from sqlalchemy.engine.row import Row
+from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
 from ai.backend.common import msgpack
 from ai.backend.common.logging import BraceStyleAdapter
@@ -141,7 +140,7 @@ class Group(graphene.ObjectType):
     scaling_groups = graphene.List(lambda: graphene.String)
 
     @classmethod
-    def from_row(cls, context: GraphQueryContext, row: RowProxy) -> Optional[Group]:
+    def from_row(cls, context: GraphQueryContext, row: Row) -> Optional[Group]:
         if row is None:
             return None
         return cls(
@@ -171,7 +170,7 @@ class Group(graphene.ObjectType):
         domain_name: str = None,
         is_active: bool = None,
     ) -> Sequence[Group]:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             query = (
                 sa.select([groups])
                 .select_from(groups)
@@ -181,7 +180,7 @@ class Group(graphene.ObjectType):
             if is_active is not None:
                 query = query.where(groups.c.is_active == is_active)
             return [
-                obj async for row in conn.execute(query)
+                obj async for row in (await conn.stream(query))
                 if (obj := cls.from_row(ctx, row)) is not None
             ]
 
@@ -193,7 +192,7 @@ class Group(graphene.ObjectType):
         *,
         domain_name: str = None
     ) -> Sequence[Optional[Group]]:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             query = (
                 sa.select([groups])
                 .select_from(groups)
@@ -212,7 +211,7 @@ class Group(graphene.ObjectType):
         ctx: GraphQueryContext,
         user_id: uuid.UUID,
     ) -> Sequence[Group]:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             j = sa.join(
                 groups, association_groups_users,
                 groups.c.id == association_groups_users.c.group_id,
@@ -223,7 +222,7 @@ class Group(graphene.ObjectType):
                 .where(association_groups_users.c.user_id == user_id)
             )
             return [
-                obj async for row in conn.execute(query)
+                obj async for row in (await conn.stream(query))
                 if (obj := cls.from_row(ctx, row)) is not None
             ]
 
@@ -340,7 +339,7 @@ class ModifyGroup(graphene.Mutation):
             props.user_update_mode = None
         if not data and props.user_update_mode is None:
             return cls(ok=False, msg='nothing to update', group=None)
-        async with ctx.dbpool.acquire() as conn, conn.begin():
+        async with ctx.dbpool.connect() as conn, conn.begin():
             try:
                 if props.user_update_mode == 'add':
                     values = [{'user_id': uuid, 'group_id': gid} for uuid in props.user_uuids]
@@ -359,7 +358,7 @@ class ModifyGroup(graphene.Mutation):
                     if result.rowcount > 0:
                         checkq = groups.select().where(groups.c.id == gid)
                         result = await conn.execute(checkq)
-                        o = Group.from_row(ctx, await result.first())
+                        o = Group.from_row(ctx, result.first())
                         return cls(ok=True, msg='success', group=o)
                     return cls(ok=False, msg='no such group', group=None)
                 else:  # updated association_groups_users table
@@ -421,7 +420,7 @@ class PurgeGroup(graphene.Mutation):
     )
     async def mutate(cls, root, info: graphene.ResolveInfo, gid: uuid.UUID) -> PurgeGroup:
         graph_ctx: GraphQueryContext = info.context
-        async with graph_ctx.dbpool.acquire() as conn:
+        async with graph_ctx.dbpool.connect() as conn:
             if await cls.group_vfolder_mounted_to_active_kernels(conn, gid):
                 raise RuntimeError('Some of group\'s virtual folders are mounted to active kernels. '
                                    'Terminate those kernels first')
@@ -454,7 +453,7 @@ class PurgeGroup(graphene.Mutation):
             .where(vfolders.c.group == group_id)
         )
         result = await conn.execute(query)
-        target_vfs = await result.fetchall()
+        target_vfs = result.fetchall()
         query = (vfolders.delete().where(vfolders.c.group == group_id))
         result = await conn.execute(query)
         for row in target_vfs:
@@ -520,7 +519,7 @@ class PurgeGroup(graphene.Mutation):
             .where(vfolders.c.group == group_id)
         )
         result = await conn.execute(query)
-        rows = await result.fetchall()
+        rows = result.fetchall()
         group_vfolder_ids = [row['id'] for row in rows]
         query = (
             sa.select([kernels.c.mounts])
@@ -528,7 +527,7 @@ class PurgeGroup(graphene.Mutation):
             .where((kernels.c.group_id == group_id) &
                    (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)))
         )
-        async for row in conn.execute(query):
+        async for row in (await conn.stream(query)):
             for _mount in row['mounts']:
                 try:
                     vfolder_id = uuid.UUID(_mount[2])

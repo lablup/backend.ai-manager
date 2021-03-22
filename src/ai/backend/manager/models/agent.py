@@ -9,12 +9,12 @@ from typing import (
     TYPE_CHECKING,
 )
 
-from aiopg.sa.connection import SAConnection
-from aiopg.sa.result import RowProxy
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 from sqlalchemy.sql.expression import true
+from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
+from sqlalchemy.engine.row import Row
 from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common import msgpack, redis
@@ -114,7 +114,7 @@ class Agent(graphene.ObjectType):
     def from_row(
         cls,
         ctx: GraphQueryContext,
-        row: RowProxy,
+        row: Row,
     ) -> Agent:
         mega = 2 ** 20
         return cls(
@@ -188,7 +188,7 @@ class Agent(graphene.ObjectType):
         scaling_group: str = None,
         raw_status: str = None,
     ) -> int:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             query = (
                 sa.select([sa.func.count(agents.c.id)])
                 .select_from(agents)
@@ -200,7 +200,7 @@ class Agent(graphene.ObjectType):
                 status = AgentStatus[raw_status]
                 query = query.where(agents.c.status == status)
             result = await conn.execute(query)
-            return await result.scalar()
+            return result.scalar()
 
     @classmethod
     async def load_slice(
@@ -212,7 +212,7 @@ class Agent(graphene.ObjectType):
         order_key: str = None,
         order_asc: bool = True,
     ) -> Sequence[Agent]:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             # TODO: optimization for pagination using subquery, join
             if order_key is None:
                 _ordering = agents.c.id
@@ -232,7 +232,7 @@ class Agent(graphene.ObjectType):
                 status = AgentStatus[raw_status]
                 query = query.where(agents.c.status == status)
             return [
-                cls.from_row(ctx, row) async for row in conn.execute(query)
+                cls.from_row(ctx, row) async for row in (await conn.stream(query))
             ]
 
     @classmethod
@@ -242,7 +242,7 @@ class Agent(graphene.ObjectType):
         scaling_group: str = None,
         raw_status: str = None,
     ) -> Sequence[Agent]:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             query = (
                 sa.select([agents])
                 .select_from(agents)
@@ -253,7 +253,7 @@ class Agent(graphene.ObjectType):
                 status = AgentStatus[raw_status]
                 query = query.where(agents.c.status == status)
             return [
-                cls.from_row(ctx, row) async for row in conn.execute(query)
+                cls.from_row(ctx, row) async for row in (await conn.stream(query))
             ]
 
     @classmethod
@@ -263,7 +263,7 @@ class Agent(graphene.ObjectType):
         agent_ids: Sequence[AgentId], *,
         raw_status: str = None,
     ) -> Sequence[Optional[Agent]]:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             query = (
                 sa.select([agents])
                 .select_from(agents)
@@ -301,7 +301,7 @@ async def recalc_agent_resource_occupancy(db_conn: SAConnection, agent_id: Agent
     )
     occupied_slots = ResourceSlot()
     result = await db_conn.execute(query)
-    async for row in result:
+    for row in result:
         occupied_slots += row['occupied_slots']
     query = (
         sa.update(agents)

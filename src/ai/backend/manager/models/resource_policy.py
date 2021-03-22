@@ -8,10 +8,10 @@ from typing import (
     TYPE_CHECKING,
 )
 
-from aiopg.sa.result import RowProxy
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
+from sqlalchemy.engine.row import Row
 from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common.logging import BraceStyleAdapter
@@ -78,7 +78,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
     def from_row(
         cls,
         ctx: GraphQueryContext,
-        row: RowProxy | None,
+        row: Row | None,
     ) -> KeyPairResourcePolicy | None:
         if row is None:
             return None
@@ -97,11 +97,11 @@ class KeyPairResourcePolicy(graphene.ObjectType):
 
     @classmethod
     async def load_all(cls, ctx: GraphQueryContext) -> Sequence[KeyPairResourcePolicy]:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             query = (sa.select([keypair_resource_policies])
                        .select_from(keypair_resource_policies))
             return [
-                obj async for r in conn.execute(query)
+                obj async for r in (await conn.stream(query))
                 if (obj := cls.from_row(ctx, r)) is not None
             ]
 
@@ -111,14 +111,14 @@ class KeyPairResourcePolicy(graphene.ObjectType):
         ctx: GraphQueryContext,
         access_key: str,
     ) -> Sequence[KeyPairResourcePolicy]:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             query = (
                 sa.select([keypairs.c.user_id])
                 .select_from(keypairs)
                 .where(keypairs.c.access_key == access_key)
             )
             result = await conn.execute(query)
-            row = await result.first()
+            row = result.first()
             user_id = row['user_id']
             j = sa.join(
                 keypairs, keypair_resource_policies,
@@ -130,7 +130,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
                 .where((keypairs.c.user_id == user_id))
             )
             return [
-                obj async for r in conn.execute(query)
+                obj async for r in (await conn.stream(query))
                 if (obj := cls.from_row(ctx, r)) is not None
             ]
 
@@ -140,7 +140,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
         ctx: GraphQueryContext,
         names: Sequence[str],
     ) -> Sequence[KeyPairResourcePolicy | None]:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             query = (
                 sa.select([keypair_resource_policies])
                 .select_from(keypair_resource_policies)
@@ -158,7 +158,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
         ctx: GraphQueryContext,
         names: Sequence[str],
     ) -> Sequence[KeyPairResourcePolicy | None]:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             access_key = ctx.access_key
             j = sa.join(
                 keypairs, keypair_resource_policies,
@@ -183,7 +183,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
         ctx: GraphQueryContext,
         access_keys: Sequence[str],
     ) -> Sequence[KeyPairResourcePolicy]:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             j = sa.join(
                 keypairs, keypair_resource_policies,
                 keypairs.c.resource_policy == keypair_resource_policies.c.name
@@ -193,7 +193,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
                        .where((keypairs.c.access_key.in_(access_keys)))
                        .order_by(keypair_resource_policies.c.name))
             return [
-                obj async for r in conn.execute(query)
+                obj async for r in (await conn.stream(query))
                 if (obj := cls.from_row(ctx, r)) is not None
             ]
 

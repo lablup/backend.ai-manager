@@ -11,11 +11,11 @@ from typing import (
 )
 import uuid
 
-from aiopg.sa.connection import SAConnection
-from aiopg.sa.result import RowProxy
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
+from sqlalchemy.engine.row import Row
+from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 import trafaret as t
 
 from ..defs import RESERVED_VFOLDER_PATTERNS, RESERVED_VFOLDERS
@@ -232,7 +232,7 @@ async def query_accessible_vfolders(
         if extra_vf_user_conds is not None:
             query = query.where(extra_vf_user_conds)
         result = await conn.execute(query)
-        async for row in result:
+        for row in result:
             entries.append({
                 'name': row.name,
                 'id': row.id,
@@ -290,7 +290,7 @@ async def query_accessible_vfolders(
         if extra_vfperm_conds is not None:
             query = query.where(extra_vfperm_conds)
         result = await conn.execute(query)
-        async for row in result:
+        for row in result:
             entries.append({
                 'name': row.name,
                 'id': row.id,
@@ -319,7 +319,7 @@ async def query_accessible_vfolders(
                        .select_from(groups)
                        .where(groups.c.domain_name == domain_name))
             result = await conn.execute(query)
-            grps = await result.fetchall()
+            grps = result.fetchall()
             group_ids = [g.id for g in grps]
         else:
             j = sa.join(agus, users, agus.c.user_id == users.c.uuid)
@@ -327,7 +327,7 @@ async def query_accessible_vfolders(
                        .select_from(j)
                        .where(agus.c.user_id == user_uuid))
             result = await conn.execute(query)
-            grps = await result.fetchall()
+            grps = result.fetchall()
             group_ids = [g.group_id for g in grps]
         j = (vfolders.join(groups, vfolders.c.group == groups.c.id))
         query = (sa.select([
@@ -358,7 +358,7 @@ async def query_accessible_vfolders(
         result = await conn.execute(query)
         is_owner = ((user_role == UserRole.ADMIN or user_role == 'admin') or
                     (user_role == UserRole.SUPERADMIN or user_role == 'superadmin'))
-        async for row in result:
+        for row in result:
             entries.append({
                 'name': row.vfolders_name,
                 'id': row.vfolders_id,
@@ -413,7 +413,7 @@ async def get_allowed_vfolder_hosts_by_group(
         query = (sa.select([groups.c.allowed_vfolder_hosts])
                    .where((groups.c.domain_name == domain_name) &
                           (groups.c.is_active)))
-        async for row in conn.execute(query):
+        async for row in (await conn.stream(query)):
             allowed_hosts.update(row.allowed_vfolder_hosts)
     # Keypair Resource Policy's allowed_vfolder_hosts
     allowed_hosts.update(resource_policy['allowed_vfolder_hosts'])
@@ -447,7 +447,7 @@ async def get_allowed_vfolder_hosts_by_user(
                .where((domains.c.name == domain_name) &
                       (groups.c.is_active)))
     result = await conn.execute(query)
-    rows = await result.fetchall()
+    rows = result.fetchall()
     for row in rows:
         allowed_hosts.update(row['allowed_vfolder_hosts'])
     # Keypair Resource Policy's allowed_vfolder_hosts
@@ -479,7 +479,7 @@ class VirtualFolder(graphene.ObjectType):
     cloneable = graphene.Boolean()
 
     @classmethod
-    def from_row(cls, ctx: GraphQueryContext, row: RowProxy) -> Optional[VirtualFolder]:
+    def from_row(cls, ctx: GraphQueryContext, row: Row) -> Optional[VirtualFolder]:
         if row is None:
             return None
         return cls(
@@ -519,7 +519,7 @@ class VirtualFolder(graphene.ObjectType):
         user_id: uuid.UUID = None,
     ) -> int:
         from .user import users
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             j = sa.join(vfolders, users, vfolders.c.user == users.c.uuid)
             query = (
                 sa.select([sa.func.count(vfolders.c.id)])
@@ -533,7 +533,7 @@ class VirtualFolder(graphene.ObjectType):
             if user_id is not None:
                 query = query.where(vfolders.c.user == user_id)
             result = await conn.execute(query)
-            return await result.scalar()
+            return result.scalar()
 
     @classmethod
     async def load_slice(
@@ -549,7 +549,7 @@ class VirtualFolder(graphene.ObjectType):
         order_asc: bool = True
     ) -> Sequence[VirtualFolder]:
         from .user import users
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             if order_key is None:
                 _ordering = vfolders.c.created_at
             else:
@@ -570,7 +570,7 @@ class VirtualFolder(graphene.ObjectType):
             if user_id is not None:
                 query = query.where(vfolders.c.user == user_id)
             return [
-                obj async for r in conn.execute(query)
+                obj async for r in (await conn.stream(query))
                 if (obj := cls.from_row(ctx, r)) is not None
             ]
 
@@ -584,7 +584,7 @@ class VirtualFolder(graphene.ObjectType):
         group_id: uuid.UUID = None,
     ) -> Sequence[Sequence[VirtualFolder]]:
         from .user import users
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.dbpool.connect() as conn:
             # TODO: num_attached count group-by
             j = sa.join(vfolders, users, vfolders.c.user == users.c.uuid)
             query = (
