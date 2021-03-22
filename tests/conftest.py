@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 import hashlib, hmac
 import json
@@ -16,17 +17,17 @@ from typing import (
     Iterator,
     List,
     Mapping,
-    Optional,
+    Optional, OrderedDict,
     Sequence,
     Tuple,
     Type,
 )
+from urllib.parse import quote_plus as urlquote
 
 import aiohttp
 from aiohttp import web
 from dateutil.tz import tzutc
 import sqlalchemy as sa
-import psycopg2 as pg
 import pytest
 
 from ai.backend.gateway.config import LocalConfig, SharedConfig, load as load_config
@@ -178,29 +179,28 @@ def database(request, local_config, test_db):
     # Create database using low-level psycopg2 API.
     # Temporarily use "testing" dbname until we create our own db.
     if db_pass:
-        # TODO: escape/urlquote db_pass
-        db_url = f'postgresql://{db_user}:{db_pass}@{db_addr}/testing'
+        db_url = f'postgresql+asyncpg://{db_user}:{urlquote(db_pass)}@{db_addr}/testing'
     else:
-        db_url = f'postgresql://{db_user}@{db_addr}/testing'
-    conn = pg.connect(db_url)
-    conn.set_isolation_level(pg.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
-    cur = conn.cursor()
-    cur.execute(f'CREATE DATABASE "{test_db}";')
-    cur.close()
-    conn.close()
+        db_url = f'postgresql+asyncpg://{db_user}@{db_addr}/testing'
 
-    def finalize_db():
-        conn = pg.connect(db_url)
-        conn.set_isolation_level(pg.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
-        cur = conn.cursor()
-        cur.execute(f'REVOKE CONNECT ON DATABASE "{test_db}" FROM public;')
-        cur.execute('SELECT pg_terminate_backend(pid) FROM pg_stat_activity '
-                    'WHERE pid <> pg_backend_pid();')
-        cur.execute(f'DROP DATABASE "{test_db}";')
-        cur.close()
-        conn.close()
+    async def init_db():
+        engine = sa.ext.asyncio.create_async_engine(db_url, isolation_level="AUTOCOMMIT")
+        async with engine.connect() as conn:
+            await conn.execute(sa.text(f'CREATE DATABASE "{test_db}";'))
+        await engine.dispose()
 
-    request.addfinalizer(finalize_db)
+    asyncio.run(init_db())
+
+    async def finalize_db():
+        engine = sa.ext.asyncio.create_async_engine(db_url, isolation_level="AUTOCOMMIT")
+        async with engine.connect() as conn:
+            await conn.execute(sa.text(f'REVOKE CONNECT ON DATABASE "{test_db}" FROM public;'))
+            await conn.execute(sa.text('SELECT pg_terminate_backend(pid) FROM pg_stat_activity '
+                               'WHERE pid <> pg_backend_pid();'))
+            await conn.execute(sa.text(f'DROP DATABASE "{test_db}";'))
+        await engine.dispose()
+
+    request.addfinalizer(lambda: asyncio.run(finalize_db()))
 
     # Load the database schema using CLI function.
     alembic_url = f'postgresql://{db_user}:{db_pass}@{db_addr}/{test_db}'
@@ -213,8 +213,11 @@ def database(request, local_config, test_db):
             alembic_cfg_data, flags=re.M)
         alembic_cfg.write(alembic_cfg_data)
         alembic_cfg.flush()
-        subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'schema', 'oneshot',
-                         '-f', alembic_cfg.name])
+        subprocess.call([
+            'python', '-m', 'ai.backend.manager.cli',
+            'schema', 'oneshot',
+            '-f', alembic_cfg.name,
+        ])
 
 
 @pytest.fixture()
@@ -226,36 +229,45 @@ def database_fixture(local_config, test_db, database):
     db_addr = local_config['db']['addr']
     db_user = local_config['db']['user']
     db_pass = local_config['db']['password']
-    alembic_url = f'postgresql://{db_user}:{db_pass}@{db_addr}/{test_db}'
+    db_url = f'postgresql+asyncpg://{db_user}:{urlquote(db_pass)}@{db_addr}/{test_db}'
 
     fixtures = {}
     fixtures.update(json.loads(
         (Path(__file__).parent.parent /
-         'fixtures' / 'example-keypairs.json').read_text()))
+         'fixtures' / 'example-keypairs.json').read_text(),
+        object_pairs_hook=OrderedDict,
+    ))
     fixtures.update(json.loads(
         (Path(__file__).parent.parent /
-         'fixtures' / 'example-resource-presets.json').read_text()))
-    engine = sa.create_engine(alembic_url)
-    conn = engine.connect()
-    try:
-        populate_fixture(conn, fixtures, ignore_unique_violation=True)
-    finally:
-        conn.close()
-        engine.dispose()
+         'fixtures' / 'example-resource-presets.json').read_text(),
+        object_pairs_hook=OrderedDict,
+    ))
+
+    async def init_fixture():
+        engine = sa.ext.asyncio.create_async_engine(db_url, isolation_level="AUTOCOMMIT")
+        try:
+            async with engine.connect() as conn:
+                await populate_fixture(conn, fixtures, ignore_unique_violation=True)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(init_fixture())
 
     yield
 
-    engine = sa.create_engine(alembic_url)
-    conn = engine.connect()
-    try:
-        conn.execute((vfolders.delete()))
-        conn.execute((kernels.delete()))
-        conn.execute((agents.delete()))
-        conn.execute((keypairs.delete()))
-        conn.execute((scaling_groups.delete()))
-    finally:
-        conn.close()
-        engine.dispose()
+    async def clean_fixture():
+        engine = sa.ext.asyncio.create_async_engine(db_url, isolation_level="AUTOCOMMIT")
+        try:
+            async with engine.connect() as conn:
+                await conn.execute((vfolders.delete()))
+                await conn.execute((kernels.delete()))
+                await conn.execute((agents.delete()))
+                await conn.execute((keypairs.delete()))
+                await conn.execute((scaling_groups.delete()))
+        finally:
+            await engine.dispose()
+
+    asyncio.run(clean_fixture())
 
 
 class Client:
