@@ -28,14 +28,16 @@ import uuid
 
 from aiodataloader import DataLoader
 from aiotools import apartial
-from asyncpg.exceptions import UniqueViolationError
 import graphene
 from graphene.types import Scalar
 from graphql.language import ast
 from graphene.types.scalars import MIN_INT, MAX_INT
 import sqlalchemy as sa
 from sqlalchemy.engine.row import Row
-from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
+from sqlalchemy.ext.asyncio import (
+    AsyncConnection as SAConnection,
+    AsyncEngine as SAEngine,
+)
 from sqlalchemy.types import (
     SchemaType,
     TypeDecorator,
@@ -619,51 +621,20 @@ def set_if_set(src: object, target: MutableMapping[str, Any], name: str, *, clea
 
 
 async def populate_fixture(
-    conn: SAConnection,
+    engine: SAEngine,
     fixture_data: Mapping[str, Sequence[Dict[str, Any]]],
     *,
     ignore_unique_violation: bool = False,
 ) -> None:
-
-    async def insert(table: sa.Table, row: Dict[str, Any]) -> None:
-        # convert enumtype to native values
-        for col in table.columns:
-            if isinstance(col.type, EnumType):
-                row[col.name] = col.type._enum_cls[row[col.name]]
-            elif isinstance(col.type, EnumValueType):
-                row[col.name] = col.type._enum_cls(row[col.name])
-        await conn.execute(table.insert(), [row])
-
     for table_name, rows in fixture_data.items():
         table: sa.Table = getattr(models, table_name)
         assert isinstance(table, sa.Table)
-        print(f"populate_fixture: {table_name}")
-        pk_cols = table.primary_key.columns
-        async with conn.begin():
-            for row in rows:
-                print(f"populate_fixture: Inserting {row} into {table}")
-                if len(pk_cols) == 0:
-                    # some tables may not have primary keys.
-                    # (e.g., m2m relationship)
-                    try:
-                        await insert(table, row)
-                    except sa.exc.IntegrityError as e:
-                        if ignore_unique_violation and isinstance(e.orig, UniqueViolationError):
-                            continue
-                        print(f"populate_fixture: ERROR while inserting {row} into {table}")
-                        raise
-                    continue
-                # compose pk match where clause
-                pk_match = functools.reduce(lambda x, y: x & y, [
-                    (col == row[col.name])
-                    for col in pk_cols
-                ])
-                ret = await conn.execute(
-                    sa.select(pk_cols).select_from(table).where(pk_match)
-                )
-                if ret.rowcount == 0:
-                    await insert(table, row)
-                else:
-                    pk_tuple = tuple(row[col.name] for col in pk_cols)
-                    log.info('skipped inserting {} to {} as the row already exists.',
-                            f"[{','.join(pk_tuple)}]", table_name)
+        async with engine.begin() as conn:
+            for col in table.columns:
+                if isinstance(col.type, EnumType):
+                    for row in rows:
+                        row[col.name] = col.type._enum_cls[row[col.name]]
+                elif isinstance(col.type, EnumValueType):
+                    for row in rows:
+                        row[col.name] = col.type._enum_cls(row[col.name])
+            await conn.execute(sa.dialects.postgresql.insert(table, rows).on_conflict_do_nothing())

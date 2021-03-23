@@ -29,6 +29,7 @@ from aiohttp import web
 from dateutil.tz import tzutc
 import sqlalchemy as sa
 import pytest
+from sqlalchemy.ext.asyncio.engine import AsyncEngine as SAEngine
 
 from ai.backend.gateway.config import LocalConfig, SharedConfig, load as load_config
 from ai.backend.gateway.context import RootContext
@@ -232,22 +233,21 @@ def database_fixture(local_config, test_db, database):
     db_url = f'postgresql+asyncpg://{db_user}:{urlquote(db_pass)}@{db_addr}/{test_db}'
 
     fixtures = {}
+    # NOTE: The fixtures must be loaded in the order that they are present.
+    #       Normal dicts on Python 3.6 or later guarantees the update ordering.
     fixtures.update(json.loads(
         (Path(__file__).parent.parent /
          'fixtures' / 'example-keypairs.json').read_text(),
-        object_pairs_hook=OrderedDict,
     ))
     fixtures.update(json.loads(
         (Path(__file__).parent.parent /
          'fixtures' / 'example-resource-presets.json').read_text(),
-        object_pairs_hook=OrderedDict,
     ))
 
     async def init_fixture():
-        engine = sa.ext.asyncio.create_async_engine(db_url, isolation_level="AUTOCOMMIT")
+        engine: SAEngine = sa.ext.asyncio.create_async_engine(db_url)
         try:
-            async with engine.connect() as conn:
-                await populate_fixture(conn, fixtures, ignore_unique_violation=True)
+            await populate_fixture(engine, fixtures, ignore_unique_violation=True)
         finally:
             await engine.dispose()
 
@@ -256,9 +256,9 @@ def database_fixture(local_config, test_db, database):
     yield
 
     async def clean_fixture():
-        engine = sa.ext.asyncio.create_async_engine(db_url, isolation_level="AUTOCOMMIT")
+        engine: SAEngine = sa.ext.asyncio.create_async_engine(db_url)
         try:
-            async with engine.connect() as conn:
+            async with engine.begin() as conn:
                 await conn.execute((vfolders.delete()))
                 await conn.execute((kernels.delete()))
                 await conn.execute((agents.delete()))
