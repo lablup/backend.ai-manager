@@ -359,7 +359,8 @@ async def match_session_ids(
         match_sid_by_name,
     ]:
         result = await db_connection.execute(match_query)
-        if result.rowcount == 0:
+        rows = result.fetchall()
+        if not rows:
             continue
         return [
             SessionInfo(
@@ -367,7 +368,7 @@ async def match_session_ids(
                 session_name=row['session_name'],
                 status=row['status'],
                 created_at=row['created_at'],
-            ) for row in result.fetchall()
+            ) for row in rows
         ]
     return []
 
