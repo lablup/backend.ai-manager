@@ -17,7 +17,7 @@ from typing import (
     Iterator,
     List,
     Mapping,
-    Optional, OrderedDict,
+    Optional,
     Sequence,
     Tuple,
     Type,
