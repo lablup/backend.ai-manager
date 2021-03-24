@@ -5,7 +5,7 @@ from typing import Sequence, TYPE_CHECKING
 import attr
 
 if TYPE_CHECKING:
-    from aiopg.sa.engine import _PoolAcquireContextManager as SAPool
+    from sqlalchemy.ext.asyncio import AsyncEngine as SAEngine
     from aioredis import Redis
 
     from ai.backend.common.events import EventDispatcher, EventProducer
@@ -28,7 +28,7 @@ class BaseContext:
 @attr.s(slots=True, auto_attribs=True, init=False)
 class RootContext(BaseContext):
     pidx: int
-    dbpool: SAPool
+    db: SAEngine
     event_dispatcher: EventDispatcher
     event_producer: EventProducer
     redis_live: Redis

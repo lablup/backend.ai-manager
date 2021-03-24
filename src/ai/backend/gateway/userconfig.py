@@ -52,7 +52,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
     )
     root_ctx: RootContext = request.app['_root.context']
     user_uuid = request['user']['uuid']
-    async with root_ctx.dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.db.begin() as conn:
         path: str = params['path']
         dotfiles, leftover_space = await query_owned_dotfiles(conn, owner_access_key)
         if leftover_space == 0:
@@ -97,7 +97,7 @@ async def list_or_get(request: web.Request, params: Any) -> web.Response:
         'USERCONFIG.LIST_OR_GET (ak:{0}/{1})', requester_access_key,
         owner_access_key if owner_access_key != requester_access_key else '*'
     )
-    async with root_ctx.dbpool.acquire() as conn:
+    async with root_ctx.db.begin() as conn:
         if params['path']:
             dotfiles, _ = await query_owned_dotfiles(conn, owner_access_key)
             for dotfile in dotfiles:
@@ -132,7 +132,7 @@ async def update(request: web.Request, params: Any) -> web.Response:
         owner_access_key if owner_access_key != requester_access_key else '*'
     )
     root_ctx: RootContext = request.app['_root.context']
-    async with root_ctx.dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.db.begin() as conn:
         path: str = params['path']
         dotfiles, _ = await query_owned_dotfiles(conn, owner_access_key)
         new_dotfiles = [x for x in dotfiles if x['path'] != path]
@@ -167,7 +167,7 @@ async def delete(request: web.Request, params: Any) -> web.Response:
     )
     root_ctx: RootContext = request.app['_root.context']
     path = params['path']
-    async with root_ctx.dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.db.begin() as conn:
         dotfiles, _ = await query_owned_dotfiles(conn, owner_access_key)
         new_dotfiles = [x for x in dotfiles if x['path'] != path]
         if len(new_dotfiles) == len(dotfiles):
@@ -191,7 +191,7 @@ async def update_bootstrap_script(request: web.Request, params: Any) -> web.Resp
     access_key = request['keypair']['access_key']
     log.info('UPDATE_BOOTSTRAP_SCRIPT (ak:{0})', access_key)
     root_ctx: RootContext = request.app['_root.context']
-    async with root_ctx.dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.db.begin() as conn:
         script = params.get('script', '').strip()
         if len(script) > MAXIMUM_DOTFILE_SIZE:
             raise DotfileCreationFailed('Maximum bootstrap script length reached')
@@ -208,7 +208,7 @@ async def get_bootstrap_script(request: web.Request) -> web.Response:
     access_key = request['keypair']['access_key']
     log.info('USERCONFIG.GET_BOOTSTRAP_SCRIPT (ak:{0})', access_key)
     root_ctx: RootContext = request.app['_root.context']
-    async with root_ctx.dbpool.acquire() as conn:
+    async with root_ctx.db.begin() as conn:
         script, _ = await query_bootstrap_script(conn, access_key)
         return web.json_response(script)
 

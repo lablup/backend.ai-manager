@@ -142,10 +142,10 @@ ssl-verify = true
 [logging.pkg-ns]
 "" = "WARNING"
 "aiotools" = "INFO"
-"aiopg" = "WARNING"
 "aiohttp" = "INFO"
 "ai.backend" = "INFO"
 "alembic" = "INFO"
+"sqlalchemy" = "WARNING"
 
 
 [debug]

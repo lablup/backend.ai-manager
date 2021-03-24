@@ -21,12 +21,12 @@ from typing import (
 from uuid import UUID
 import uuid
 
-from aiopg.sa.connection import SAConnection
-from aiopg.sa.result import RowProxy
 from aioredis import Redis
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
+from sqlalchemy.engine.row import Row
+from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common import msgpack, redis
@@ -297,7 +297,7 @@ async def match_session_ids(
         kernels.c.created_at,
     ]
     match_sid_by_id = (
-        sa.select(info_cols, for_update=for_update)
+        sa.select(info_cols)
         .select_from(kernels)
         .where(
             (kernels.c.session_id.in_(
@@ -313,8 +313,10 @@ async def match_session_ids(
         )
         .order_by(sa.desc(kernels.c.created_at))
     )
+    if for_update:
+        match_sid_by_id = match_sid_by_id.with_for_update()
     match_sid_by_name = (
-        sa.select(info_cols, for_update=for_update)
+        sa.select(info_cols)
         .select_from(kernels)
         .where(
             (kernels.c.session_id.in_(
@@ -330,8 +332,10 @@ async def match_session_ids(
         )
         .order_by(sa.desc(kernels.c.created_at))
     )
+    if for_update:
+        match_sid_by_name = match_sid_by_name.with_for_update()
     match_sid_by_session_id = (
-        sa.select(info_cols, for_update=for_update)
+        sa.select(info_cols)
         .select_from(kernels)
         .where(
             (kernels.c.session_id.in_(
@@ -347,13 +351,16 @@ async def match_session_ids(
         )
         .order_by(sa.desc(kernels.c.created_at))
     )
+    if for_update:
+        match_sid_by_session_id = match_sid_by_session_id.with_for_update()
     for match_query in [
-        match_sid_by_id,
         match_sid_by_session_id,
         match_sid_by_name,
+        match_sid_by_id,
     ]:
         result = await db_connection.execute(match_query)
-        if result.rowcount == 0:
+        rows = result.fetchall()
+        if not rows:
             continue
         return [
             SessionInfo(
@@ -361,7 +368,7 @@ async def match_session_ids(
                 session_name=row['session_name'],
                 status=row['status'],
                 created_at=row['created_at'],
-            ) for row in await result.fetchall()
+            ) for row in rows
         ]
     return []
 
@@ -371,7 +378,7 @@ async def get_main_kernels(
     *,
     db_connection: SAConnection,
     for_update: bool = False,
-) -> Sequence[RowProxy]:
+) -> Sequence[Row]:
     """
     Return a list of the main kernels for the given session IDs.
     If a given session ID does not exist, its position will be ``None``.
@@ -388,7 +395,7 @@ async def get_main_kernels(
         )
     )
     result = await db_connection.execute(query)
-    for row in await result.fetchall():
+    for row in result.fetchall():
         session_id_to_rows[row['session_id']] = row
     return [*session_id_to_rows.values()]
 
@@ -398,14 +405,14 @@ async def get_all_kernels(
     *,
     db_connection: SAConnection,
     for_update: bool = False,
-) -> Sequence[Sequence[RowProxy]]:
+) -> Sequence[Sequence[Row]]:
     """
     Return a list of all belonging kernel lists per the given session IDs
     in the order they are given.
     If a given session ID does not exist, an empty list will be returned
     at the position of that session ID.
     """
-    session_id_to_rowsets: Dict[SessionId, List[RowProxy]]
+    session_id_to_rowsets: Dict[SessionId, List[Row]]
     session_id_to_rowsets = OrderedDict(
         (session_id, []) for session_id in session_ids
     )
@@ -421,7 +428,7 @@ async def get_all_kernels(
         if result.rowcount == 0:
             continue
         session_id_to_rowsets[session_id].extend(
-            row for row in await result.fetchall()
+            row for row in result.fetchall()
         )
     return [*session_id_to_rowsets.values()]
 
@@ -461,7 +468,7 @@ class ComputeContainer(graphene.ObjectType):
     last_stat = graphene.JSONString()
 
     @classmethod
-    def parse_row(cls, ctx: GraphQueryContext, row: RowProxy) -> Mapping[str, Any]:
+    def parse_row(cls, ctx: GraphQueryContext, row: Row) -> Mapping[str, Any]:
         assert row is not None
         from .user import UserRole
         is_superadmin = (ctx.user['role'] == UserRole.SUPERADMIN)
@@ -505,7 +512,7 @@ class ComputeContainer(graphene.ObjectType):
         }
 
     @classmethod
-    def from_row(cls, ctx: GraphQueryContext, row: RowProxy) -> Optional[ComputeContainer]:
+    def from_row(cls, ctx: GraphQueryContext, row: Row) -> Optional[ComputeContainer]:
         if row is None:
             return None
         props = cls.parse_row(ctx, row)
@@ -536,23 +543,21 @@ class ComputeContainer(graphene.ObjectType):
         group_id: uuid.UUID = None,
         access_key: str = None,
     ) -> int:
-        async with ctx.dbpool.acquire() as conn:
-            query = (
-                sa.select([sa.func.count(kernels.c.id)])
-                .select_from(kernels)
-                .where(kernels.c.session_id == session_id)
-                .as_scalar()
-            )
-            if cluster_role is not None:
-                query = query.where(kernels.c.cluster_role == cluster_role)
-            if domain_name is not None:
-                query = query.where(kernels.c.domain_name == domain_name)
-            if group_id is not None:
-                query = query.where(kernels.c.group_id == group_id)
-            if access_key is not None:
-                query = query.where(kernels.c.access_key == access_key)
-            result = await conn.execute(query)
-            return await result.scalar()
+        query = (
+            sa.select([sa.func.count(kernels.c.id)])
+            .select_from(kernels)
+            .where(kernels.c.session_id == session_id)
+        )
+        if cluster_role is not None:
+            query = query.where(kernels.c.cluster_role == cluster_role)
+        if domain_name is not None:
+            query = query.where(kernels.c.domain_name == domain_name)
+        if group_id is not None:
+            query = query.where(kernels.c.group_id == group_id)
+        if access_key is not None:
+            query = query.where(kernels.c.access_key == access_key)
+        result = await ctx.db_conn.execute(query)
+        return result.scalar()
 
     @classmethod
     async def load_slice(
@@ -569,29 +574,28 @@ class ComputeContainer(graphene.ObjectType):
         order_key: str = None,
         order_asc: bool = True,
     ) -> Sequence[Optional[ComputeContainer]]:
-        async with ctx.dbpool.acquire() as conn:
-            if order_key is None:
-                _ordering = DEFAULT_SESSION_ORDERING
-            else:
-                _order_func = sa.asc if order_asc else sa.desc
-                _ordering = [_order_func(getattr(kernels.c, order_key))]
-            query = (
-                sa.select([kernels])
-                .select_from(kernels)
-                .where(kernels.c.session_id == session_id)
-                .order_by(*_ordering)
-                .limit(limit)
-                .offset(offset)
-            )
-            if cluster_role is not None:
-                query = query.where(kernels.c.cluster_role == cluster_role)
-            if domain_name is not None:
-                query = query.where(kernels.c.domain_name == domain_name)
-            if group_id is not None:
-                query = query.where(kernels.c.group_id == group_id)
-            if access_key is not None:
-                query = query.where(kernels.c.access_key == access_key)
-            return [cls.from_row(ctx, r) async for r in conn.execute(query)]
+        if order_key is None:
+            _ordering = DEFAULT_SESSION_ORDERING
+        else:
+            _order_func = sa.asc if order_asc else sa.desc
+            _ordering = [_order_func(getattr(kernels.c, order_key))]
+        query = (
+            sa.select([kernels])
+            .select_from(kernels)
+            .where(kernels.c.session_id == session_id)
+            .order_by(*_ordering)
+            .limit(limit)
+            .offset(offset)
+        )
+        if cluster_role is not None:
+            query = query.where(kernels.c.cluster_role == cluster_role)
+        if domain_name is not None:
+            query = query.where(kernels.c.domain_name == domain_name)
+        if group_id is not None:
+            query = query.where(kernels.c.group_id == group_id)
+        if access_key is not None:
+            query = query.where(kernels.c.access_key == access_key)
+        return [cls.from_row(ctx, r) async for r in (await ctx.db_conn.stream(query))]
 
     @classmethod
     async def batch_load_by_session(
@@ -599,17 +603,16 @@ class ComputeContainer(graphene.ObjectType):
         ctx: GraphQueryContext,
         session_ids: Sequence[SessionId],
     ) -> Sequence[Sequence[ComputeContainer]]:
-        async with ctx.dbpool.acquire() as conn:
-            query = (
-                sa.select([kernels])
-                .select_from(kernels)
-                # TODO: use "owner session ID" when we implement multi-container session
-                .where(kernels.c.session_id.in_(session_ids))
-            )
-            return await batch_multiresult(
-                ctx, conn, query, cls,
-                session_ids, lambda row: row['session_id'],
-            )
+        query = (
+            sa.select([kernels])
+            .select_from(kernels)
+            # TODO: use "owner session ID" when we implement multi-container session
+            .where(kernels.c.session_id.in_(session_ids))
+        )
+        return await batch_multiresult(
+            ctx, ctx.db_conn, query, cls,
+            session_ids, lambda row: row['session_id'],
+        )
 
     @classmethod
     async def batch_load_detail(
@@ -620,26 +623,25 @@ class ComputeContainer(graphene.ObjectType):
         domain_name: str = None,
         access_key: AccessKey = None,
     ) -> Sequence[Optional[ComputeContainer]]:
-        async with ctx.dbpool.acquire() as conn:
-            j = (
-                kernels
-                .join(groups, groups.c.id == kernels.c.group_id)
-                .join(users, users.c.uuid == kernels.c.user_uuid)
-            )
-            query = (
-                sa.select([kernels])
-                .select_from(j)
-                .where(
-                    (kernels.c.id.in_(container_ids))
-                ))
-            if domain_name is not None:
-                query = query.where(kernels.c.domain_name == domain_name)
-            if access_key is not None:
-                query = query.where(kernels.c.access_key == access_key)
-            return await batch_result(
-                ctx, conn, query, cls,
-                container_ids, lambda row: row['id'],
-            )
+        j = (
+            kernels
+            .join(groups, groups.c.id == kernels.c.group_id)
+            .join(users, users.c.uuid == kernels.c.user_uuid)
+        )
+        query = (
+            sa.select([kernels])
+            .select_from(j)
+            .where(
+                (kernels.c.id.in_(container_ids))
+            ))
+        if domain_name is not None:
+            query = query.where(kernels.c.domain_name == domain_name)
+        if access_key is not None:
+            query = query.where(kernels.c.access_key == access_key)
+        return await batch_result(
+            ctx, ctx.db_conn, query, cls,
+            container_ids, lambda row: row['id'],
+        )
 
 
 class ComputeSession(graphene.ObjectType):
@@ -697,7 +699,7 @@ class ComputeSession(graphene.ObjectType):
     dependencies = graphene.List(lambda: ComputeSession)
 
     @classmethod
-    def parse_row(cls, ctx: GraphQueryContext, row: RowProxy) -> Mapping[str, Any]:
+    def parse_row(cls, ctx: GraphQueryContext, row: Row) -> Mapping[str, Any]:
         assert row is not None
         return {
             # identity
@@ -746,7 +748,7 @@ class ComputeSession(graphene.ObjectType):
         }
 
     @classmethod
-    def from_row(cls, ctx: GraphQueryContext, row: RowProxy) -> ComputeSession | None:
+    def from_row(cls, ctx: GraphQueryContext, row: Row) -> ComputeSession | None:
         if row is None:
             return None
         props = cls.parse_row(ctx, row)
@@ -798,23 +800,21 @@ class ComputeSession(graphene.ObjectType):
             status_list = [KernelStatus[s] for s in status.split(',')]
         elif isinstance(status, KernelStatus):
             status_list = [status]
-        async with ctx.dbpool.acquire() as conn:
-            query = (
-                sa.select([sa.func.count(kernels.c.id)])
-                .select_from(kernels)
-                .where(kernels.c.cluster_role == DEFAULT_ROLE)
-                .as_scalar()
-            )
-            if domain_name is not None:
-                query = query.where(kernels.c.domain_name == domain_name)
-            if group_id is not None:
-                query = query.where(kernels.c.group_id == group_id)
-            if access_key is not None:
-                query = query.where(kernels.c.access_key == access_key)
-            if status is not None:
-                query = query.where(kernels.c.status.in_(status_list))
-            result = await conn.execute(query)
-            return await result.scalar()
+        query = (
+            sa.select([sa.func.count(kernels.c.id)])
+            .select_from(kernels)
+            .where(kernels.c.cluster_role == DEFAULT_ROLE)
+        )
+        if domain_name is not None:
+            query = query.where(kernels.c.domain_name == domain_name)
+        if group_id is not None:
+            query = query.where(kernels.c.group_id == group_id)
+        if access_key is not None:
+            query = query.where(kernels.c.access_key == access_key)
+        if status is not None:
+            query = query.where(kernels.c.status.in_(status_list))
+        result = await ctx.db_conn.execute(query)
+        return result.scalar()
 
     @classmethod
     async def load_slice(
@@ -834,38 +834,37 @@ class ComputeSession(graphene.ObjectType):
             status_list = [KernelStatus[s] for s in status.split(',')]
         elif isinstance(status, KernelStatus):
             status_list = [status]
-        async with ctx.dbpool.acquire() as conn:
-            if order_key is None:
-                _ordering = DEFAULT_SESSION_ORDERING
-            else:
-                _order_func = sa.asc if order_asc else sa.desc
-                _ordering = [_order_func(getattr(kernels.c, order_key))]
-            j = (
-                kernels
-                .join(groups, groups.c.id == kernels.c.group_id)
-                .join(users, users.c.uuid == kernels.c.user_uuid)
-            )
-            query = (
-                sa.select([
-                    kernels,
-                    groups.c.name.label('group_name'),
-                    users.c.email,
-                ])
-                .select_from(j)
-                .where(kernels.c.cluster_role == DEFAULT_ROLE)
-                .order_by(*_ordering)
-                .limit(limit)
-                .offset(offset)
-            )
-            if domain_name is not None:
-                query = query.where(kernels.c.domain_name == domain_name)
-            if group_id is not None:
-                query = query.where(kernels.c.group_id == group_id)
-            if access_key is not None:
-                query = query.where(kernels.c.access_key == access_key)
-            if status is not None:
-                query = query.where(kernels.c.status.in_(status_list))
-            return [cls.from_row(ctx, r) async for r in conn.execute(query)]
+        if order_key is None:
+            _ordering = DEFAULT_SESSION_ORDERING
+        else:
+            _order_func = sa.asc if order_asc else sa.desc
+            _ordering = [_order_func(getattr(kernels.c, order_key))]
+        j = (
+            kernels
+            .join(groups, groups.c.id == kernels.c.group_id)
+            .join(users, users.c.uuid == kernels.c.user_uuid)
+        )
+        query = (
+            sa.select([
+                kernels,
+                groups.c.name.label('group_name'),
+                users.c.email,
+            ])
+            .select_from(j)
+            .where(kernels.c.cluster_role == DEFAULT_ROLE)
+            .order_by(*_ordering)
+            .limit(limit)
+            .offset(offset)
+        )
+        if domain_name is not None:
+            query = query.where(kernels.c.domain_name == domain_name)
+        if group_id is not None:
+            query = query.where(kernels.c.group_id == group_id)
+        if access_key is not None:
+            query = query.where(kernels.c.access_key == access_key)
+        if status is not None:
+            query = query.where(kernels.c.status.in_(status_list))
+        return [cls.from_row(ctx, r) async for r in (await ctx.db_conn.stream(query))]
 
     @classmethod
     async def batch_load_by_dependency(
@@ -873,23 +872,22 @@ class ComputeSession(graphene.ObjectType):
         ctx: GraphQueryContext,
         session_ids: Sequence[SessionId],
     ) -> Sequence[Sequence[ComputeSession]]:
-        async with ctx.dbpool.acquire() as conn:
-            j = sa.join(
-                kernels, session_dependencies,
-                kernels.c.session_id == session_dependencies.c.depends_on,
+        j = sa.join(
+            kernels, session_dependencies,
+            kernels.c.session_id == session_dependencies.c.depends_on,
+        )
+        query = (
+            sa.select([kernels])
+            .select_from(j)
+            .where(
+                (kernels.c.cluster_role == DEFAULT_ROLE) &
+                (session_dependencies.c.session_id.in_(session_ids))
             )
-            query = (
-                sa.select([kernels])
-                .select_from(j)
-                .where(
-                    (kernels.c.cluster_role == DEFAULT_ROLE) &
-                    (session_dependencies.c.session_id.in_(session_ids))
-                )
-            )
-            return await batch_multiresult(
-                ctx, conn, query, cls,
-                session_ids, lambda row: row['id'],
-            )
+        )
+        return await batch_multiresult(
+            ctx, ctx.db_conn, query, cls,
+            session_ids, lambda row: row['id'],
+        )
 
     @classmethod
     async def batch_load_detail(
@@ -900,31 +898,30 @@ class ComputeSession(graphene.ObjectType):
         domain_name: str = None,
         access_key: str = None,
     ) -> Sequence[ComputeSession | None]:
-        async with ctx.dbpool.acquire() as conn:
-            j = (
-                kernels
-                .join(groups, groups.c.id == kernels.c.group_id)
-                .join(users, users.c.uuid == kernels.c.user_uuid)
-            )
-            query = (
-                sa.select([
-                    kernels,
-                    groups.c.name.label('group_name'),
-                    users.c.email,
-                ])
-                .select_from(j)
-                .where(
-                    (kernels.c.cluster_role == DEFAULT_ROLE) &
-                    (kernels.c.id.in_(session_ids))
-                ))
-            if domain_name is not None:
-                query = query.where(kernels.c.domain_name == domain_name)
-            if access_key is not None:
-                query = query.where(kernels.c.access_key == access_key)
-            return await batch_result(
-                ctx, conn, query, cls,
-                session_ids, lambda row: row['id'],
-            )
+        j = (
+            kernels
+            .join(groups, groups.c.id == kernels.c.group_id)
+            .join(users, users.c.uuid == kernels.c.user_uuid)
+        )
+        query = (
+            sa.select([
+                kernels,
+                groups.c.name.label('group_name'),
+                users.c.email,
+            ])
+            .select_from(j)
+            .where(
+                (kernels.c.cluster_role == DEFAULT_ROLE) &
+                (kernels.c.id.in_(session_ids))
+            ))
+        if domain_name is not None:
+            query = query.where(kernels.c.domain_name == domain_name)
+        if access_key is not None:
+            query = query.where(kernels.c.access_key == access_key)
+        return await batch_result(
+            ctx, ctx.db_conn, query, cls,
+            session_ids, lambda row: row['id'],
+        )
 
 
 class ComputeContainerList(graphene.ObjectType):
@@ -1094,7 +1091,7 @@ class LegacyComputeSession(graphene.ObjectType):
         return await self._resolve_legacy_metric(info, 'io_scratch_size', 'current', int)
 
     @classmethod
-    def parse_row(cls, ctx: GraphQueryContext, row: RowProxy) -> Mapping[str, Any]:
+    def parse_row(cls, ctx: GraphQueryContext, row: Row) -> Mapping[str, Any]:
         assert row is not None
         from .user import UserRole
         mega = 2 ** 20
@@ -1159,7 +1156,7 @@ class LegacyComputeSession(graphene.ObjectType):
         }
 
     @classmethod
-    def from_row(cls, context: GraphQueryContext, row: RowProxy) -> Optional[LegacyComputeSession]:
+    def from_row(cls, context: GraphQueryContext, row: Row) -> Optional[LegacyComputeSession]:
         if row is None:
             return None
         props = cls.parse_row(context, row)
@@ -1179,12 +1176,11 @@ class LegacyComputeSession(graphene.ObjectType):
             status_list = [KernelStatus[s] for s in status.split(',')]
         elif isinstance(status, KernelStatus):
             status_list = [status]
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.db.begin() as conn:
             query = (
                 sa.select([sa.func.count(kernels.c.session_id)])
                 .select_from(kernels)
                 .where(kernels.c.cluster_role == DEFAULT_ROLE)
-                .as_scalar()
             )
             if domain_name is not None:
                 query = query.where(kernels.c.domain_name == domain_name)
@@ -1195,7 +1191,7 @@ class LegacyComputeSession(graphene.ObjectType):
             if status is not None:
                 query = query.where(kernels.c.status.in_(status_list))
             result = await conn.execute(query)
-            return await result.scalar()
+            return result.scalar()
 
     @classmethod
     async def load_slice(
@@ -1215,7 +1211,7 @@ class LegacyComputeSession(graphene.ObjectType):
             status_list = [KernelStatus[s] for s in status.split(',')]
         elif isinstance(status, KernelStatus):
             status_list = [status]
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.db.begin() as conn:
             if order_key is None:
                 _ordering = DEFAULT_SESSION_ORDERING
             else:
@@ -1240,7 +1236,7 @@ class LegacyComputeSession(graphene.ObjectType):
             if status is not None:
                 query = query.where(kernels.c.status.in_(status_list))
             return [
-                obj async for r in conn.execute(query)
+                obj async for r in (await conn.stream(query))
                 if (obj := cls.from_row(ctx, r)) is not None
             ]
 
@@ -1254,7 +1250,7 @@ class LegacyComputeSession(graphene.ObjectType):
         group_id: uuid.UUID = None,
         status: str = None,
     ) -> Sequence[Optional[LegacyComputeSession]]:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.db.begin() as conn:
             j = (kernels.join(groups, groups.c.id == kernels.c.group_id)
                         .join(users, users.c.uuid == kernels.c.user_uuid))
             query = (
@@ -1293,7 +1289,7 @@ class LegacyComputeSession(graphene.ObjectType):
         access_key: AccessKey = None,
         status: str = None,
     ) -> Sequence[Sequence[LegacyComputeSession]]:
-        async with ctx.dbpool.acquire() as conn:
+        async with ctx.db.begin() as conn:
             status_list = []
             if isinstance(status, str):
                 status_list = [KernelStatus[s] for s in status.split(',')]
@@ -1337,7 +1333,7 @@ async def recalc_concurrency_used(db_conn: SAConnection, access_key: AccessKey) 
                     (kernels.c.access_key == access_key) &
                     (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES))
                 )
-                .as_scalar()
+                .scalar_subquery()
             ),
         )
         .where(keypairs.c.access_key == access_key)

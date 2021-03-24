@@ -97,7 +97,7 @@ LABEL ai.backend.kernelspec="1" \
 @admin_required
 async def get_import_image_form(request: web.Request) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
-    async with root_ctx.dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.db.begin() as conn:
         query = (
             sa.select([groups.c.name])
             .select_from(
@@ -111,7 +111,7 @@ async def get_import_image_form(request: web.Request) -> web.Response:
             )
         )
         result = await conn.execute(query)
-        rows = await result.fetchall()
+        rows = result.fetchall()
         accessible_groups = [row['name'] for row in rows]
 
         # FIXME: Currently this only consider domain-level scaling group associations,
@@ -316,14 +316,14 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
     tpl = jinja2.Template(DOCKERFILE_TEMPLATE)
     root_ctx: RootContext = request.app['_root.context']
 
-    async with root_ctx.dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.db.begin() as conn:
         query = (
             sa.select([domains.c.allowed_docker_registries])
             .select_from(domains)
             .where(domains.c.name == request['user']['domain_name'])
         )
         result = await conn.execute(query)
-        allowed_docker_registries = await result.scalar()
+        allowed_docker_registries = result.scalar()
 
     source_image = ImageRef(params['src'], allowed_docker_registries)
     target_image = ImageRef(params['target'], allowed_docker_registries)
@@ -349,7 +349,7 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
     access_key = request['keypair']['access_key']
     resource_policy = request['keypair']['resource_policy']
 
-    async with root_ctx.dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.db.begin() as conn:
         query = (
             sa.select([groups.c.id])
             .select_from(
@@ -364,7 +364,7 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
             )
         )
         result = await conn.execute(query)
-        group_id = await result.scalar()
+        group_id = result.scalar()
         if group_id is None:
             raise InvalidAPIParameters("Invalid domain or group.")
 
@@ -377,7 +377,7 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
             )
         )
         result = await conn.execute(query)
-        row = await result.first()
+        row = result.first()
         if row is None:
             raise InvalidAPIParameters("You do not belong to the given group.")
 

@@ -58,7 +58,7 @@ async def get_access_key_scopes(request: web.Request, params: Any = None) -> Tup
     if owner_access_key is None and params is not None:
         owner_access_key = params.get('owner_access_key', None)
     if owner_access_key is not None and owner_access_key != requester_access_key:
-        async with root_ctx.dbpool.acquire() as conn:
+        async with root_ctx.db.begin() as conn:
             query = (
                 sa.select([users.c.domain_name, users.c.role])
                 .select_from(
@@ -70,7 +70,7 @@ async def get_access_key_scopes(request: web.Request, params: Any = None) -> Tup
                 )
             )
             result = await conn.execute(query)
-            row = await result.first()
+            row = result.first()
             if row is None:
                 raise InvalidAPIParameters('Unknown or inactive owner access key')
             owner_domain = row['domain_name']

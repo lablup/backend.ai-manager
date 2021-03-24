@@ -7,9 +7,12 @@ import attr
 import graphene
 
 if TYPE_CHECKING:
-    from aiopg.sa.engine import _PoolAcquireContextManager as SAPool
     from aioredis import Redis
     from graphql.execution.executors.asyncio import AsyncioExecutor
+    from sqlalchemy.ext.asyncio import (
+        AsyncEngine as SAEngine,
+        AsyncConnection as SAConnection,
+    )
 
     from ai.backend.common.etcd import AsyncEtcd
     from ai.backend.common.types import (
@@ -130,7 +133,8 @@ class GraphQueryContext:
     etcd: AsyncEtcd
     user: Mapping[str, Any]  # TODO: express using typed dict
     access_key: str
-    dbpool: SAPool
+    db: SAEngine
+    db_conn: SAConnection
     redis_stat: Redis
     redis_image: Redis
     manager_status: ManagerStatus

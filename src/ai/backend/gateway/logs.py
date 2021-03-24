@@ -57,7 +57,7 @@ async def append(request: web.Request, params: Any) -> web.Response:
     log.info('CREATE (ak:{0}/{1})',
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*')
 
-    async with root_ctx.dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.db.begin() as conn:
         resp = {
             'success': True
         }
@@ -96,7 +96,7 @@ async def list_logs(request: web.Request, params: Any) -> web.Response:
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
     log.info('LIST (ak:{0}/{1})',
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*')
-    async with root_ctx.dbpool.acquire() as conn:
+    async with root_ctx.db.begin() as conn:
         is_admin = True
         query = (sa.select('*')
                    .select_from(error_logs)
@@ -114,7 +114,7 @@ async def list_logs(request: web.Request, params: Any) -> web.Response:
                            .select_from(j)
                            .where([groups.c.domain_name == domain_name]))
             result = await conn.execute(usr_query)
-            usrs = await result.fetchall()
+            usrs = result.fetchall()
             user_ids = [g.id for g in usrs]
             where = error_logs.c.user.in_(user_ids)
             query = query.where(where)
@@ -127,7 +127,7 @@ async def list_logs(request: web.Request, params: Any) -> web.Response:
             count_query = query.where(where)
 
         result = await conn.execute(query)
-        async for row in result:
+        for row in result:
             result_item = {
                 'log_id': str(row['id']),
                 'created_at': datetime.timestamp(row['created_at']),
@@ -166,7 +166,7 @@ async def mark_cleared(request: web.Request) -> web.Response:
     log_id = uuid.UUID(request.match_info['log_id'])
 
     log.info('CLEAR')
-    async with root_ctx.dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.db.begin() as conn:
         query = (sa.update(error_logs)
                    .values(is_cleared=True))
         if request['is_superadmin']:
@@ -177,7 +177,7 @@ async def mark_cleared(request: web.Request) -> web.Response:
                            .select_from(j)
                            .where([groups.c.domain_name == domain_name]))
             result = await conn.execute(usr_query)
-            usrs = await result.fetchall()
+            usrs = result.fetchall()
             user_ids = [g.id for g in usrs]
             query = query.where((error_logs.c.user.in_(user_ids)) &
                                 (error_logs.c.id == log_id))
@@ -209,13 +209,13 @@ async def log_cleanup_task(app: web.Application, interval):
     try:
         lock = await app_ctx.log_cleanup_lock.lock('gateway.logs')
         async with lock:
-            async with root_ctx.dbpool.acquire() as conn, conn.begin():
+            async with root_ctx.db.begin() as conn:
                 query = (sa.select([error_logs.c.id])
                             .select_from(error_logs)
                             .where(error_logs.c.created_at < boundary))
                 result = await conn.execute(query)
                 log_ids = []
-                async for row in result:
+                for row in result:
                     log_ids.append(row['id'])
                 if len(log_ids) > 0:
                     log.info('Cleaning up {} log{}', len(log_ids), 's' if len(log_ids) > 1 else '')

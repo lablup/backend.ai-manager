@@ -3,13 +3,13 @@ from typing import (
     Protocol,
 )
 
-import sqlalchemy as sa
-from aiopg.sa.connection import SAConnection
+from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
+from sqlalchemy.engine.row import Row
 
 
 class SessionGetter(Protocol):
 
-    def __call__(self, *, db_connection: SAConnection) -> sa.engine.RowProxy:
+    def __call__(self, *, db_connection: SAConnection) -> Row:
         ...
 
 

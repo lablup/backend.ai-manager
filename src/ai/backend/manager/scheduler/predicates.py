@@ -4,9 +4,9 @@ from typing import (
     List,
 )
 
-from aiopg.sa.connection import SAConnection
 from dateutil.tz import tzutc
 import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
@@ -64,10 +64,13 @@ async def check_concurrency(
         .where(keypair_resource_policies.c.name == sess_ctx.resource_policy)
     )
     result = await db_conn.execute(query)
-    resource_policy = await result.first()
-    query = (sa.select([keypairs.c.concurrency_used], for_update=True)
-               .select_from(keypairs)
-               .where(keypairs.c.access_key == sess_ctx.access_key))
+    resource_policy = result.first()
+    query = (
+        sa.select([keypairs.c.concurrency_used])
+        .select_from(keypairs)
+        .where(keypairs.c.access_key == sess_ctx.access_key)
+        .with_for_update()
+    )
     concurrency_used = await db_conn.scalar(query)
     log.debug('access_key: {0} ({1} / {2})',
               sess_ctx.access_key, concurrency_used,
@@ -80,9 +83,11 @@ async def check_concurrency(
         )
 
     # Increment concurrency usage of keypair.
-    query = (sa.update(keypairs)
-               .values(concurrency_used=keypairs.c.concurrency_used + 1)
-               .where(keypairs.c.access_key == sess_ctx.access_key))
+    query = (
+        sa.update(keypairs)
+        .values(concurrency_used=keypairs.c.concurrency_used + 1)
+        .where(keypairs.c.access_key == sess_ctx.access_key)
+    )
     await db_conn.execute(query)
 
     async def rollback(
@@ -120,7 +125,7 @@ async def check_keypair_resource_limit(
         .where(keypair_resource_policies.c.name == sess_ctx.resource_policy)
     )
     result = await db_conn.execute(query)
-    resource_policy = await result.first()
+    resource_policy = result.first()
     if len(sess_ctx.kernels) > resource_policy['max_containers_per_session']:
         return PredicateResult(
             False,

@@ -102,7 +102,7 @@ async def push_session_events(
     if group_name == '*':
         group_id = '*'
     else:
-        async with root_ctx.dbpool.acquire() as conn, conn.begin():
+        async with root_ctx.db.begin() as conn:
             query = (
                 sa.select([groups.c.id])
                 .select_from(groups)
@@ -239,7 +239,7 @@ async def enqueue_kernel_creation_status_update(
     app_ctx: PrivateContext = app['events.context']
 
     async def _fetch():
-        async with root_ctx.dbpool.acquire() as conn, conn.begin():
+        async with root_ctx.db.begin() as conn:
             query = (
                 sa.select([
                     kernels.c.id,
@@ -258,13 +258,13 @@ async def enqueue_kernel_creation_status_update(
                 )
             )
             result = await conn.execute(query)
-            return await result.first()
+            return result.first()
 
     row = await asyncio.shield(_fetch())
     if row is None:
         return
     for q in app_ctx.session_event_queues:
-        q.put_nowait((event.name, row, event.reason))
+        q.put_nowait((event.name, row._mapping, event.reason))
 
 
 async def enqueue_kernel_termination_status_update(
@@ -276,7 +276,7 @@ async def enqueue_kernel_termination_status_update(
     app_ctx: PrivateContext = app['events.context']
 
     async def _fetch():
-        async with root_ctx.dbpool.acquire() as conn, conn.begin():
+        async with root_ctx.db.begin() as conn:
             query = (
                 sa.select([
                     kernels.c.id,
@@ -295,13 +295,13 @@ async def enqueue_kernel_termination_status_update(
                 )
             )
             result = await conn.execute(query)
-            return await result.first()
+            return result.first()
 
     row = await asyncio.shield(_fetch())
     if row is None:
         return
     for q in app_ctx.session_event_queues:
-        q.put_nowait((event.name, row, event.reason))
+        q.put_nowait((event.name, row._mapping, event.reason))
 
 
 async def enqueue_session_creation_status_update(
@@ -313,7 +313,7 @@ async def enqueue_session_creation_status_update(
     app_ctx: PrivateContext = app['events.context']
 
     async def _fetch():
-        async with root_ctx.dbpool.acquire() as conn:
+        async with root_ctx.db.begin() as conn:
             query = (
                 sa.select([
                     kernels.c.id,
@@ -331,13 +331,13 @@ async def enqueue_session_creation_status_update(
                 )
             )
             result = await conn.execute(query)
-            return await result.first()
+            return result.first()
 
     row = await asyncio.shield(_fetch())
     if row is None:
         return
     for q in app_ctx.session_event_queues:
-        q.put_nowait((event.name, row, event.reason))
+        q.put_nowait((event.name, row._mapping, event.reason))
 
 
 async def enqueue_session_termination_status_update(
@@ -349,7 +349,7 @@ async def enqueue_session_termination_status_update(
     app_ctx: PrivateContext = app['events.context']
 
     async def _fetch():
-        async with root_ctx.dbpool.acquire() as conn:
+        async with root_ctx.db.begin() as conn:
             query = (
                 sa.select([
                     kernels.c.id,
@@ -367,13 +367,13 @@ async def enqueue_session_termination_status_update(
                 )
             )
             result = await conn.execute(query)
-            return await result.first()
+            return result.first()
 
     row = await asyncio.shield(_fetch())
     if row is None:
         return
     for q in app_ctx.session_event_queues:
-        q.put_nowait((event.name, row, event.reason))
+        q.put_nowait((event.name, row._mapping, event.reason))
 
 
 async def enqueue_batch_task_result_update(
@@ -385,7 +385,7 @@ async def enqueue_batch_task_result_update(
     app_ctx: PrivateContext = app['events.context']
 
     async def _fetch():
-        async with root_ctx.dbpool.acquire() as conn:
+        async with root_ctx.db.begin() as conn:
             query = (
                 sa.select([
                     kernels.c.id,
@@ -402,13 +402,13 @@ async def enqueue_batch_task_result_update(
                 )
             )
             result = await conn.execute(query)
-            return await result.first()
+            return result.first()
 
     row = await asyncio.shield(_fetch())
     if row is None:
         return
     for q in app_ctx.session_event_queues:
-        q.put_nowait((event.name, row, event.reason))
+        q.put_nowait((event.name, row._mapping, event.reason))
 
 
 async def enqueue_bgtask_status_update(

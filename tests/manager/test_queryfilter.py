@@ -1,5 +1,4 @@
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import create_engine
 from sqlalchemy import Table, Column, Sequence, Integer, String
 import sqlalchemy as sa
 import pytest
@@ -17,7 +16,7 @@ parser = QueryFilterParser()
 
 @pytest.fixture(scope="module")
 def virtual_user_db():
-    engine = create_engine('sqlite:///:memory:', echo=False)
+    engine = sa.engine.create_engine('sqlite:///:memory:', echo=False)
     base = declarative_base()
     metadata = base.metadata
     users = Table(
@@ -28,15 +27,15 @@ def virtual_user_db():
         Column('age', Integer)
     )
     metadata.create_all(engine)
-    conn = engine.connect()
-    conn.execute(users.insert(), [
-        {'name': 'tester', 'full_name': 'tester1', 'age': 30},
-        {'name': 'test\"er', 'full_name': 'tester2', 'age': 30},
-        {'name': 'test\'er', 'full_name': 'tester3', 'age': 30},
-        {'name': 'tester ♪', 'full_name': 'tester4', 'age': 20}
-    ])
-    yield conn, users
-    conn.close()
+    with engine.connect() as conn:
+        conn.execute(users.insert(), [
+            {'name': 'tester', 'full_name': 'tester1', 'age': 30},
+            {'name': 'test\"er', 'full_name': 'tester2', 'age': 30},
+            {'name': 'test\'er', 'full_name': 'tester3', 'age': 30},
+            {'name': 'tester ♪', 'full_name': 'tester4', 'age': 20}
+        ])
+        yield conn, users
+    engine.dispose()
 
 
 def test_example_filter_with_underbar(virtual_user_db):

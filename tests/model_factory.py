@@ -34,31 +34,31 @@ class ModelFactory(ABC):
         self.defaults.update(**kwargs)
         await self.before_creation()
         root_ctx: RootContext = self.app['_root.context']
-        async with root_ctx.dbpool.acquire() as conn:
+        async with root_ctx.db.begin() as conn:
             query = (self.model.insert().returning(self.model).values(self.defaults))
             result = await conn.execute(query)
-            row = await result.first()
+            row = result.first()
         row = dict(row.items())
         row = await self.after_creation(row)
         return row
 
     async def get(self, **kwargs):
         root_ctx: RootContext = self.app['_root.context']
-        async with root_ctx.dbpool.acquire() as conn:
+        async with root_ctx.db.begin() as conn:
             filters = [sa.sql.column(key) == value for key, value in kwargs.items()]
             query = sa.select([self.model]).where(sa.and_(*filters))
             result = await conn.execute(query)
-            rows = await result.fetchall()
+            rows = result.fetchall()
             assert len(rows) < 2, 'Multiple items found'
             return rows[0] if len(rows) == 1 else None
 
     async def list(self, **kwargs):
         root_ctx: RootContext = self.app['_root.context']
-        async with root_ctx.dbpool.acquire() as conn:
+        async with root_ctx.db.begin() as conn:
             filters = [sa.sql.column(key) == value for key, value in kwargs.items()]
             query = sa.select([self.model]).where(sa.and_(*filters))
             result = await conn.execute(query)
-            return await result.fetchall()
+            return result.fetchall()
 
 
 class KeyPairFactory(ModelFactory):
