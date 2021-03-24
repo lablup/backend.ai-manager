@@ -133,7 +133,7 @@ class UserGroup(graphene.ObjectType):
 
     @classmethod
     async def batch_load_by_user_id(cls, ctx: GraphQueryContext, user_ids: Sequence[UUID]):
-        async with ctx.dbpool.connect() as conn:
+        async with ctx.dbpool.begin() as conn:
             from .group import groups, association_groups_users as agus
             j = agus.join(groups, agus.c.group_id == groups.c.id)
             query = (
@@ -1042,7 +1042,7 @@ async def check_credential(
     email: str,
     password: str,
 ) -> Any:
-    async with dbpool.connect() as conn:
+    async with dbpool.begin() as conn:
         query = (
             sa.select([users])
             .select_from(users)

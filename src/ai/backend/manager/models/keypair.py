@@ -113,7 +113,7 @@ class UserInfo(graphene.ObjectType):
         ctx: GraphQueryContext,
         user_uuids: Sequence[uuid.UUID],
     ) -> Sequence[Optional[UserInfo]]:
-        async with ctx.dbpool.connect() as conn:
+        async with ctx.dbpool.begin() as conn:
             from .user import users
             query = (
                 sa.select([users.c.uuid, users.c.email, users.c.full_name])
@@ -431,12 +431,12 @@ class CreateKeyPair(graphene.Mutation):
             'ssh_public_key': pubkey,
             'ssh_private_key': privkey,
         }
-        insert_query = (keypairs.insert().values(data))
+        insert_query = (sa.insert(keypairs).values(data))
         try:
             result = await graph_ctx.db_conn.execute(insert_query)
             if result.rowcount > 0:
                 # Read the created key data from DB.
-                checkq = keypairs.select().where(keypairs.c.access_key == ak)
+                checkq = sa.select([keypairs]).where(keypairs.c.access_key == ak)
                 result = await graph_ctx.db_conn.execute(checkq)
                 o = KeyPair.from_row(info.context, result.first())
                 return cls(ok=True, msg='success', keypair=o)
@@ -476,7 +476,7 @@ class ModifyKeyPair(graphene.Mutation):
         set_if_set(props, data, 'resource_policy')
         set_if_set(props, data, 'rate_limit')
         update_query = (
-            keypairs.update()
+            sa.update(keypairs)
             .values(data)
             .where(keypairs.c.access_key == access_key)
         )
@@ -502,7 +502,7 @@ class DeleteKeyPair(graphene.Mutation):
     ) -> DeleteKeyPair:
         ctx: GraphQueryContext = info.context
         delete_query = (
-            keypairs.delete()
+            sa.delete(keypairs)
             .where(keypairs.c.access_key == access_key)
         )
         return await simple_db_mutate(cls, ctx, delete_query)
@@ -548,9 +548,11 @@ async def query_owned_dotfiles(
     conn: SAConnection,
     access_key: AccessKey,
 ) -> Tuple[List[Dotfile], int]:
-    query = (sa.select([keypairs.c.dotfiles])
-               .select_from(keypairs)
-               .where(keypairs.c.access_key == access_key))
+    query = (
+        sa.select([keypairs.c.dotfiles])
+        .select_from(keypairs)
+        .where(keypairs.c.access_key == access_key)
+    )
     packed_dotfile = await conn.scalar(query)
     rows = msgpack.unpackb(packed_dotfile)
     return rows, MAXIMUM_DOTFILE_SIZE - len(packed_dotfile)
@@ -560,9 +562,11 @@ async def query_bootstrap_script(
     conn: SAConnection,
     access_key: AccessKey,
 ) -> Tuple[str, int]:
-    query = (sa.select([keypairs.c.bootstrap_script])
-               .select_from(keypairs)
-               .where(keypairs.c.access_key == access_key))
+    query = (
+        sa.select([keypairs.c.bootstrap_script])
+        .select_from(keypairs)
+        .where(keypairs.c.access_key == access_key)
+    )
     script = await conn.scalar(query)
     return script, MAXIMUM_DOTFILE_SIZE - len(script)
 

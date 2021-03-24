@@ -127,7 +127,7 @@ class Image(graphene.ObjectType):
         is_operation: bool = None,
     ) -> Sequence[Image]:
         from .domain import domains
-        async with ctx.dbpool.connect() as conn:
+        async with ctx.dbpool.begin() as conn:
             query = (
                 sa.select([domains.c.allowed_docker_registries])
                 .select_from(domains)

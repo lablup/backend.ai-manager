@@ -27,16 +27,14 @@ async def test_handle_heartbeat(mocker) -> None:
     mock_dbpool = MagicMock()
     mock_dbconn = MagicMock()
     mock_dbconn_ctx = MagicMock()
-    mock_dbtxn_ctx = MagicMock()
     mock_dbresult = MagicMock()
     mock_dbresult.rowcount = 1
     mock_dbpool.connect = MagicMock(return_value=mock_dbconn_ctx)
+    mock_dbpool.begin = MagicMock(return_value=mock_dbconn_ctx)
     mock_dbconn_ctx.__aenter__ = AsyncMock(return_value=mock_dbconn)
     mock_dbconn_ctx.__aexit__ = AsyncMock()
     mock_dbconn.execute = AsyncMock(return_value=mock_dbresult)
-    mock_dbconn.begin = MagicMock(return_value=mock_dbtxn_ctx)
-    mock_dbtxn_ctx.__aenter__ = AsyncMock()
-    mock_dbtxn_ctx.__aexit__ = AsyncMock()
+    mock_dbconn.begin = MagicMock(return_value=mock_dbconn_ctx)
     mock_redis_stat = MagicMock()
     mock_redis_live = MagicMock()
     mock_redis_live.hset = AsyncMock()
@@ -141,7 +139,7 @@ async def test_handle_heartbeat(mocker) -> None:
     q_params = q.compile().params
     assert q_params['status'] == AgentStatus.ALIVE
     assert q_params['addr'] == '10.0.0.6'
-    assert q_params['lost_at'] is sa.sql.expression.Null
+    assert q_params['lost_at'] == sa.null()
     assert q_params['available_slots'] == ResourceSlot({'cpu': '4', 'mem': '2g'})
     assert q_params['scaling_group'] == 'sg-testing2'
     assert 'compute_plugins' in q_params

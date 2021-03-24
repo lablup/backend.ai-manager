@@ -64,7 +64,7 @@ class ErrorMonitor(AbstractErrorReporterPlugin):
         else:
             user = context['user']
 
-        async with self.dbpool.connect() as conn, conn.begin():
+        async with self.dbpool.begin() as conn:
             query = error_logs.insert().values({
                 'severity': severity,
                 'source': 'manager',
@@ -83,7 +83,7 @@ class ErrorMonitor(AbstractErrorReporterPlugin):
         source: AgentId,
         event: AgentErrorEvent,
     ) -> None:
-        async with self.dbpool.connect() as conn, conn.begin():
+        async with self.dbpool.begin() as conn:
             query = error_logs.insert().values({
                 'severity': event.severity,
                 'source': source,

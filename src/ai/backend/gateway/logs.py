@@ -57,7 +57,7 @@ async def append(request: web.Request, params: Any) -> web.Response:
     log.info('CREATE (ak:{0}/{1})',
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*')
 
-    async with root_ctx.dbpool.connect() as conn, conn.begin():
+    async with root_ctx.dbpool.begin() as conn:
         resp = {
             'success': True
         }
@@ -96,7 +96,7 @@ async def list_logs(request: web.Request, params: Any) -> web.Response:
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
     log.info('LIST (ak:{0}/{1})',
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*')
-    async with root_ctx.dbpool.connect() as conn:
+    async with root_ctx.dbpool.begin() as conn:
         is_admin = True
         query = (sa.select('*')
                    .select_from(error_logs)
@@ -166,7 +166,7 @@ async def mark_cleared(request: web.Request) -> web.Response:
     log_id = uuid.UUID(request.match_info['log_id'])
 
     log.info('CLEAR')
-    async with root_ctx.dbpool.connect() as conn, conn.begin():
+    async with root_ctx.dbpool.begin() as conn:
         query = (sa.update(error_logs)
                    .values(is_cleared=True))
         if request['is_superadmin']:
@@ -209,7 +209,7 @@ async def log_cleanup_task(app: web.Application, interval):
     try:
         lock = await app_ctx.log_cleanup_lock.lock('gateway.logs')
         async with lock:
-            async with root_ctx.dbpool.connect() as conn, conn.begin():
+            async with root_ctx.dbpool.begin() as conn:
                 query = (sa.select([error_logs.c.id])
                             .select_from(error_logs)
                             .where(error_logs.c.created_at < boundary))

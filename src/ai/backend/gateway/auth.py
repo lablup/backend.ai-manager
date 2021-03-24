@@ -398,7 +398,7 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
     params = _extract_auth_params(request)
     if params:
         sign_method, access_key, signature = params
-        async with root_ctx.dbpool.connect() as conn, conn.begin():
+        async with root_ctx.dbpool.begin() as conn:
             j = (
                 keypairs
                 .join(users, keypairs.c.user == users.c.uuid)
@@ -531,7 +531,7 @@ async def get_role(request: web.Request, params: Any) -> web.Response:
                 (association_groups_users.c.user_id == request['user']['uuid'])
             )
         )
-        async with root_ctx.dbpool.connect() as conn:
+        async with root_ctx.dbpool.begin() as conn:
             result = await conn.execute(query)
             row = result.first()
             if row is None:
@@ -588,7 +588,7 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
         raise AuthorizationFailed('This account needs email verification.')
     if user.get('status') in INACTIVE_USER_STATUSES:
         raise AuthorizationFailed('User credential mismatch.')
-    async with root_ctx.dbpool.connect() as conn:
+    async with root_ctx.dbpool.begin() as conn:
         query = (sa.select([keypairs.c.access_key, keypairs.c.secret_key])
                    .select_from(keypairs)
                    .where(
@@ -640,7 +640,7 @@ async def signup(request: web.Request, params: Any) -> web.Response:
         # Merge the hook results as a single map.
         user_data_overriden = ChainMap(*cast(Mapping, hook_result.result))
 
-    async with root_ctx.dbpool.connect() as conn:
+    async with root_ctx.dbpool.begin() as conn:
         # Check if email already exists.
         query = (sa.select([users])
                    .select_from(users)
@@ -745,7 +745,7 @@ async def signout(request: web.Request, params: Any) -> web.Response:
         domain_name, params['email'], params['password'])
     if result is None:
         raise GenericBadRequest('Invalid email and/or password')
-    async with root_ctx.dbpool.connect() as conn, conn.begin():
+    async with root_ctx.dbpool.begin() as conn:
         # Inactivate the user.
         query = (
             users.update()
@@ -801,7 +801,7 @@ async def update_password(request: web.Request, params: Any) -> web.Response:
         hook_result.reason = hook_result.reason or 'invalid password format'
         raise RejectedByHook.from_hook_result(hook_result)
 
-    async with root_ctx.dbpool.connect() as conn:
+    async with root_ctx.dbpool.begin() as conn:
         # Update user password.
         data = {
             'password': params['new_password'],
@@ -821,7 +821,7 @@ async def get_ssh_keypair(request: web.Request) -> web.Response:
     log_fmt = 'AUTH.GET_SSH_KEYPAIR(d:{}, ak:{})'
     log_args = (domain_name, access_key)
     log.info(log_fmt, *log_args)
-    async with root_ctx.dbpool.connect() as conn:
+    async with root_ctx.dbpool.begin() as conn:
         # Get SSH public key. Return partial string from the public key just for checking.
         query = (
             sa.select([keypairs.c.ssh_public_key])
@@ -840,7 +840,7 @@ async def refresh_ssh_keypair(request: web.Request) -> web.Response:
     log_args = (domain_name, access_key)
     log.info(log_fmt, *log_args)
     root_ctx: RootContext = request.app['_root.context']
-    async with root_ctx.dbpool.connect() as conn:
+    async with root_ctx.dbpool.begin() as conn:
         pubkey, privkey = generate_ssh_keypair()
         data = {
             'ssh_public_key': pubkey,

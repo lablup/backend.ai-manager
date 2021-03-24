@@ -64,7 +64,7 @@ async def handle_gql(request: web.Request, params: Any) -> web.Response:
     app_ctx: PrivateContext = request.app['admin.context']
     manager_status = await root_ctx.shared_config.get_manager_status()
     known_slot_types = await root_ctx.shared_config.get_resource_slots()
-    async with root_ctx.dbpool.connect() as db_conn, db_conn.begin():
+    async with root_ctx.dbpool.begin() as db_conn:
         gql_ctx = GraphQueryContext(
             dataloader_manager=DataLoaderManager(),
             local_config=root_ctx.local_config,

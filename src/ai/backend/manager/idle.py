@@ -126,7 +126,7 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
         event: DoIdleCheckEvent,
     ) -> None:
         log.debug('do_idle_check(): triggered')
-        async with self._dbpool.connect() as conn:
+        async with self._dbpool.begin() as conn:
             query = (
                 sa.select([kernels])
                 .select_from(kernels)

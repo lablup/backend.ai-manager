@@ -97,7 +97,7 @@ LABEL ai.backend.kernelspec="1" \
 @admin_required
 async def get_import_image_form(request: web.Request) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
-    async with root_ctx.dbpool.connect() as conn, conn.begin():
+    async with root_ctx.dbpool.begin() as conn:
         query = (
             sa.select([groups.c.name])
             .select_from(
@@ -316,7 +316,7 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
     tpl = jinja2.Template(DOCKERFILE_TEMPLATE)
     root_ctx: RootContext = request.app['_root.context']
 
-    async with root_ctx.dbpool.connect() as conn, conn.begin():
+    async with root_ctx.dbpool.begin() as conn:
         query = (
             sa.select([domains.c.allowed_docker_registries])
             .select_from(domains)
@@ -349,7 +349,7 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
     access_key = request['keypair']['access_key']
     resource_policy = request['keypair']['resource_policy']
 
-    async with root_ctx.dbpool.connect() as conn, conn.begin():
+    async with root_ctx.dbpool.begin() as conn:
         query = (
             sa.select([groups.c.id])
             .select_from(

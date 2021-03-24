@@ -252,7 +252,7 @@ class AgentRegistry:
         await cleanup_agent_peers()
 
     async def get_instance(self, inst_id: AgentId, field=None):
-        async with self.dbpool.connect() as conn, conn.begin():
+        async with self.dbpool.begin() as conn:
             cols = [agents.c.id]
             if field is not None:
                 cols.append(field)
@@ -266,7 +266,7 @@ class AgentRegistry:
             return row
 
     async def enumerate_instances(self, check_shadow=True):
-        async with self.dbpool.connect() as conn, conn.begin():
+        async with self.dbpool.begin() as conn:
             query = (sa.select('*').select_from(agents))
             if check_shadow:
                 query = query.where(agents.c.status == AgentStatus.ALIVE)
@@ -274,7 +274,7 @@ class AgentRegistry:
                 yield row
 
     async def update_instance(self, inst_id, updated_fields):
-        async with self.dbpool.connect() as conn, conn.begin():
+        async with self.dbpool.begin() as conn:
             query = (sa.update(agents)
                        .values(**updated_fields)
                        .where(agents.c.id == inst_id))
@@ -749,7 +749,7 @@ class AgentRegistry:
         # Check scaling group availability if scaling_group parameter is given.
         # If scaling_group is not provided, it will be selected in scheduling step.
         if scaling_group is not None:
-            async with self.dbpool.connect() as conn, conn.begin():
+            async with self.dbpool.begin() as conn:
                 sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
                 for sgroup in sgroups:
                     if scaling_group == sgroup['name']:
@@ -762,7 +762,7 @@ class AgentRegistry:
         # allowed_vfolder_types = await root_ctx.shared_config.etcd.get('path-to-vfolder-type')
         determined_mounts = []
         matched_mounts = set()
-        async with self.dbpool.connect() as conn, conn.begin():
+        async with self.dbpool.begin() as conn:
             if mounts:
                 extra_vf_conds = (
                     vfolders.c.name.in_(mounts) |
@@ -967,7 +967,7 @@ class AgentRegistry:
             environ = kernel_enqueue_configs[0]['creation_config'].get('environ') or {}
 
             # Create kernel object in PENDING state.
-            async with self.dbpool.connect() as conn, conn.begin():
+            async with self.dbpool.begin() as conn:
                 # Feed SSH keypair and dotfiles if exists.
                 query = (sa.select([keypairs.c.ssh_public_key,
                                     keypairs.c.ssh_private_key,
@@ -1088,7 +1088,7 @@ class AgentRegistry:
 
         # Get resource policy for the session
         # TODO: memoize with TTL
-        async with self.dbpool.connect() as conn, conn.begin():
+        async with self.dbpool.begin() as conn:
             query = (
                 sa.select([keypair_resource_policies])
                 .select_from(keypair_resource_policies)
@@ -1185,7 +1185,7 @@ class AgentRegistry:
                 start_event = self.kernel_creation_tracker[(kernel_creation_id, kernel_id)]
                 await start_event.wait()
                 # Record kernel access information
-                async with self.dbpool.connect() as conn, conn.begin():
+                async with self.dbpool.begin() as conn:
                     agent_host = URL(agent_alloc_ctx.agent_addr).host
                     kernel_host = created_info.get('kernel_host', agent_host)
                     service_ports = created_info.get('service_ports', [])
@@ -1413,7 +1413,7 @@ class AgentRegistry:
         concurrency_used_per_key: MutableMapping[str, int] = defaultdict(lambda: 0)
         occupied_slots_per_agent: MutableMapping[str, ResourceSlot] = \
             defaultdict(lambda: ResourceSlot({'cpu': 0, 'mem': 0}))
-        async with self.dbpool.connect() as conn, conn.begin():
+        async with self.dbpool.begin() as conn:
             # Query running containers and calculate concurrency_used per AK and
             # occupied_slots per agent.
             query = (sa.select([kernels.c.access_key, kernels.c.agent, kernels.c.occupied_slots])
@@ -1518,7 +1518,7 @@ class AgentRegistry:
                        However, PULLING session still cannot be destroyed.
         :param reason: Reason to destroy a session if client wants to specify it manually.
         """
-        async with self.dbpool.connect() as conn:
+        async with self.dbpool.begin() as conn:
             session = await session_getter(db_connection=conn)
         if forced:
             reason = 'force-terminated'
@@ -1533,7 +1533,7 @@ class AgentRegistry:
         async with self.handle_kernel_exception(
             'destroy_session', session['id'], session['access_key'], set_error=True,
         ):
-            async with self.dbpool.connect() as conn, conn.begin():
+            async with self.dbpool.begin() as conn:
                 query = (
                     sa.select([
                         kernels.c.id,
@@ -1599,7 +1599,7 @@ class AgentRegistry:
                                     kernel['id'], kernel['status'])
                         if kernel['container_id'] is not None:
                             destroyed_kernels.append(kernel)
-                        async with self.dbpool.connect() as conn, conn.begin():
+                        async with self.dbpool.begin() as conn:
                             if kernel['cluster_role'] == DEFAULT_ROLE:
                                 # The main session is terminated;
                                 # decrement the user's concurrency counter
@@ -1622,7 +1622,7 @@ class AgentRegistry:
                                 KernelTerminatedEvent(kernel['id'], reason)
                             )
                     else:
-                        async with self.dbpool.connect() as conn, conn.begin():
+                        async with self.dbpool.begin() as conn:
                             if kernel['cluster_role'] == DEFAULT_ROLE:
                                 # The main session is terminated;
                                 # decrement the user's concurrency counter
@@ -1702,7 +1702,7 @@ class AgentRegistry:
         self,
         session_id: SessionId,
     ) -> None:
-        async with self.dbpool.connect() as conn, conn.begin():
+        async with self.dbpool.begin() as conn:
             query = (
                 sa.select([
                     kernels.c.session_id,
@@ -1759,7 +1759,7 @@ class AgentRegistry:
         access_key: AccessKey,
     ) -> None:
         log.warning('restart_session({})', session_name_or_id)
-        async with self.dbpool.connect() as conn, conn.begin():
+        async with self.dbpool.begin() as conn:
             session_infos = await match_session_ids(
                 session_name_or_id,
                 access_key,
@@ -1783,7 +1783,7 @@ class AgentRegistry:
                     (kernel_creation_id, kernel['id'])
                 ] = start_event
                 try:
-                    async with self.dbpool.connect() as conn, conn.begin():
+                    async with self.dbpool.begin() as conn:
                         query = (
                             kernels.update()
                             .values({
@@ -1808,7 +1808,7 @@ class AgentRegistry:
                             updated_config,
                         )
                     await start_event.wait()
-                    async with self.dbpool.connect() as conn, conn.begin():
+                    async with self.dbpool.begin() as conn:
                         query = (
                             kernels.update()
                             .values({
@@ -1880,7 +1880,7 @@ class AgentRegistry:
         self,
         session_id: SessionId,
     ) -> None:
-        async with self.dbpool.connect() as conn, conn.begin():
+        async with self.dbpool.begin() as conn:
             query = (
                 sa.select([
                     kernels.c.id,
@@ -2094,7 +2094,7 @@ class AgentRegistry:
             await self.redis_live.hset('agent.last_seen', agent_id, now.timestamp())
 
             # Check and update status of the agent record in DB
-            async with self.dbpool.connect() as conn, conn.begin():
+            async with self.dbpool.begin() as conn:
                 query = (
                     sa.select([
                         agents.c.status,
@@ -2113,7 +2113,7 @@ class AgentRegistry:
                     # new agent detected!
                     log.info('agent {0} joined!', agent_id)
                     await self.shared_config.update_resource_slots(slot_key_and_units)
-                    query = agents.insert().values({
+                    query = sa.insert(agents).values({
                         'id': agent_id,
                         'status': AgentStatus.ALIVE,
                         'region': agent_info['region'],
@@ -2122,7 +2122,7 @@ class AgentRegistry:
                         'occupied_slots': {},
                         'addr': agent_info['addr'],
                         'first_contact': now,
-                        'lost_at': sa.sql.expression.Null,
+                        'lost_at': sa.null(),
                         'version': agent_info['version'],
                         'compute_plugins': agent_info['compute_plugins'],
                     })
@@ -2155,7 +2155,7 @@ class AgentRegistry:
                             'region': agent_info['region'],
                             'scaling_group': sgroup,
                             'addr': agent_info['addr'],
-                            'lost_at': sa.sql.expression.Null,
+                            'lost_at': sa.null(),
                             'available_slots': available_slots,
                             'version': agent_info['version'],
                             'compute_plugins': agent_info['compute_plugins'],
@@ -2371,7 +2371,7 @@ class AgentRegistry:
         if post_task is not None:
             post_task.cancel()
 
-        async with self.dbpool.connect() as conn, conn.begin():
+        async with self.dbpool.begin() as conn:
             # Check the current status.
             query = (
                 sa.select([
@@ -2417,7 +2417,7 @@ class AgentRegistry:
 
         # Perform statistics sync in a separate transaction block, since
         # it may take a while to fetch stats from Redis.
-        async with self.dbpool.connect() as conn, conn.begin():
+        async with self.dbpool.begin() as conn:
             await self.sync_kernel_stats([kernel_id], db_conn=conn)
 
     async def check_session_terminated(
@@ -2425,7 +2425,7 @@ class AgentRegistry:
         kernel_id: KernelId,
         reason: str,
     ) -> None:
-        async with self.dbpool.connect() as conn, conn.begin():
+        async with self.dbpool.begin() as conn:
             query = (
                 sa.select([
                     kernels.c.session_id,

@@ -195,7 +195,7 @@ class ScalingGroup(graphene.ObjectType):
         *,
         is_active: bool = None,
     ) -> Sequence[ScalingGroup]:
-        async with ctx.dbpool.connect() as conn:
+        async with ctx.dbpool.begin() as conn:
             query = sa.select([scaling_groups]).select_from(scaling_groups)
             if is_active is not None:
                 query = query.where(scaling_groups.c.is_active == is_active)
@@ -212,7 +212,7 @@ class ScalingGroup(graphene.ObjectType):
         *,
         is_active: bool = None,
     ) -> Sequence[ScalingGroup]:
-        async with ctx.dbpool.connect() as conn:
+        async with ctx.dbpool.begin() as conn:
             j = sa.join(
                 scaling_groups, sgroups_for_domains,
                 scaling_groups.c.name == sgroups_for_domains.c.scaling_group)
@@ -236,7 +236,7 @@ class ScalingGroup(graphene.ObjectType):
         *,
         is_active: bool = None,
     ) -> Sequence[ScalingGroup]:
-        async with ctx.dbpool.connect() as conn:
+        async with ctx.dbpool.begin() as conn:
             j = sa.join(
                 scaling_groups, sgroups_for_groups,
                 scaling_groups.c.name == sgroups_for_groups.c.scaling_group
@@ -261,7 +261,7 @@ class ScalingGroup(graphene.ObjectType):
         *,
         is_active: bool = None,
     ) -> Sequence[ScalingGroup]:
-        async with ctx.dbpool.connect() as conn:
+        async with ctx.dbpool.begin() as conn:
             j = sa.join(
                 scaling_groups, sgroups_for_keypairs,
                 scaling_groups.c.name == sgroups_for_keypairs.c.scaling_group)
@@ -283,7 +283,7 @@ class ScalingGroup(graphene.ObjectType):
         ctx: GraphQueryContext,
         names: Sequence[str],
     ) -> Sequence[ScalingGroup | None]:
-        async with ctx.dbpool.connect() as conn:
+        async with ctx.dbpool.begin() as conn:
             query = (
                 sa.select([scaling_groups])
                 .select_from(scaling_groups)

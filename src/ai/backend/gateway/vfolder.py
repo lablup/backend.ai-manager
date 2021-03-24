@@ -130,7 +130,7 @@ def vfolder_permission_required(perm: VFolderPermission):
                 invited_perm_cond = (vfolder_permissions.c.permission == perm)
                 if not request['is_admin']:
                     vf_group_cond = (vfolders.c.permission == perm)
-            async with root_ctx.dbpool.connect() as conn:
+            async with root_ctx.dbpool.begin() as conn:
                 entries = await query_accessible_vfolders(
                     conn, user_uuid,
                     user_role=user_role, domain_name=domain_name,
@@ -164,7 +164,7 @@ def vfolder_check_exists(handler: Callable[..., Awaitable[web.Response]]):
         root_ctx: RootContext = request.app['_root.context']
         user_uuid = request['user']['uuid']
         folder_name = request.match_info['name']
-        async with root_ctx.dbpool.connect() as conn:
+        async with root_ctx.dbpool.begin() as conn:
             j = sa.join(
                 vfolders, vfolder_permissions,
                 vfolders.c.id == vfolder_permissions.c.vfolder, isouter=True)
@@ -241,13 +241,15 @@ async def create(request: web.Request, params: Any) -> web.Response:
         if params['group'] is not None:
             raise InvalidAPIParameters('dot-prefixed vfolders cannot be a group folder.')
 
-    async with root_ctx.dbpool.connect() as conn:
+    async with root_ctx.dbpool.begin() as conn:
         # Convert group name to uuid if group name is given.
         if isinstance(group_id_or_name, str):
-            query = (sa.select([groups.c.id])
-                     .select_from(groups)
-                     .where(groups.c.domain_name == domain_name)
-                     .where(groups.c.name == group_id_or_name))
+            query = (
+                sa.select([groups.c.id])
+                .select_from(groups)
+                .where(groups.c.domain_name == domain_name)
+                .where(groups.c.name == group_id_or_name)
+            )
             group_id = await conn.scalar(query)
         else:
             group_id = group_id_or_name
@@ -292,10 +294,12 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 raise InvalidAPIParameters('group vfolder cannot be created in this host')
             if not request['is_admin']:
                 raise GenericForbidden('no permission')
-            query = (sa.select([groups.c.id])
-                       .select_from(groups)
-                       .where(groups.c.domain_name == domain_name)
-                       .where(groups.c.id == group_id))
+            query = (
+                sa.select([groups.c.id])
+                .select_from(groups)
+                .where(groups.c.domain_name == domain_name)
+                .where(groups.c.id == group_id)
+            )
             _gid = await conn.scalar(query)
             if str(_gid) != str(group_id):
                 raise InvalidAPIParameters('No such group.')
@@ -353,7 +357,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 'unmanaged_path': unmanaged_path
             })
             resp['unmanaged_path'] = unmanaged_path
-        query = (vfolders.insert().values(insert_values))
+        query = (sa.insert(vfolders, insert_values))
         try:
             result = await conn.execute(query)
         except sa.exc.DataError:
@@ -380,14 +384,16 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
 
     log.info('VFOLDER.LIST (ak:{})', access_key)
     entries: List[Mapping[str, Any]] | Sequence[Mapping[str, Any]]
-    async with root_ctx.dbpool.connect() as conn:
+    async with root_ctx.dbpool.begin() as conn:
         allowed_vfolder_types = await root_ctx.shared_config.get_vfolder_types()
         if request['is_superadmin'] and params['all']:
             # List all folders for superadmin if all is specified
             j = (vfolders.join(users, vfolders.c.user == users.c.uuid, isouter=True)
                          .join(groups, vfolders.c.group == groups.c.id, isouter=True))
-            query = (sa.select([vfolders, users.c.email, groups.c.name], use_labels=True)
-                       .select_from(j))
+            query = (
+                sa.select([vfolders, users.c.email, groups.c.name], use_labels=True)
+                .select_from(j)
+            )
             result = await conn.execute(query)
             entries = []
             for row in result:
@@ -456,7 +462,7 @@ async def delete_by_id(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.DELETE_BY_ID (ak:{}, vf:{})', access_key, params['id'])
-    async with root_ctx.dbpool.connect() as conn, conn.begin():
+    async with root_ctx.dbpool.begin() as conn:
         query = (
             sa.select([vfolders.c.host])
             .select_from(vfolders)
@@ -464,7 +470,7 @@ async def delete_by_id(request: web.Request, params: Any) -> web.Response:
         )
         folder_host = await conn.scalar(query)
         folder_id = uuid.UUID(params['id'])
-        query = (vfolders.delete().where(vfolders.c.id == folder_id))
+        query = (sa.delete(vfolders).where(vfolders.c.id == folder_id))
         await conn.execute(query)
     # fs-level deletion may fail or take longer time
     # but let's complete the db transaction to reflect that it's deleted.
@@ -494,7 +500,7 @@ async def list_hosts(request: web.Request) -> web.Response:
     domain_admin = request['user']['role'] == UserRole.ADMIN
     resource_policy = request['keypair']['resource_policy']
     allowed_vfolder_types = await root_ctx.shared_config.get_vfolder_types()
-    async with root_ctx.dbpool.connect() as conn:
+    async with root_ctx.dbpool.begin() as conn:
         allowed_hosts: Set[str] = set()
         if 'user' in allowed_vfolder_types:
             allowed_hosts_by_user = await get_allowed_vfolder_hosts_by_user(
@@ -642,7 +648,7 @@ async def rename_vfolder(request: web.Request, params: Any, row: VFolderRow) -> 
     allowed_vfolder_types = await root_ctx.shared_config.get_vfolder_types()
     log.info('VFOLDER.RENAME (ak:{}, vf.old:{}, vf.new:{})',
              access_key, old_name, new_name)
-    async with root_ctx.dbpool.connect() as conn:
+    async with root_ctx.dbpool.begin() as conn:
         entries = await query_accessible_vfolders(
             conn,
             user_uuid,
@@ -662,7 +668,7 @@ async def rename_vfolder(request: web.Request, params: Any, row: VFolderRow) -> 
                         'Cannot change the name of a vfolder '
                         'that is not owned by myself.')
                 query = (
-                    vfolders.update()
+                    sa.update(vfolders)
                     .values(name=new_name)
                     .where(vfolders.c.id == entry['id']))
                 await conn.execute(query)
@@ -692,7 +698,7 @@ async def update_vfolder_options(request: web.Request, params: Any, row: VFolder
             'that is not owned by myself.')
 
     if len(updated_fields) > 0:
-        async with root_ctx.dbpool.connect() as conn:
+        async with root_ctx.dbpool.begin() as conn:
             query = (
                 sa.update(vfolders)
                 .values(**updated_fields)
@@ -937,13 +943,17 @@ async def list_sent_invitations(request: web.Request) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.LIST_SENT_INVITATIONS (ak:{})', access_key)
-    async with root_ctx.dbpool.connect() as conn:
+    async with root_ctx.dbpool.begin() as conn:
         j = sa.join(vfolders, vfolder_invitations,
                     vfolders.c.id == vfolder_invitations.c.vfolder)
-        query = (sa.select([vfolder_invitations, vfolders.c.name])
-                   .select_from(j)
-                   .where((vfolder_invitations.c.inviter == request['user']['email']) &
-                          (vfolder_invitations.c.state == VFolderInvitationState.PENDING)))
+        query = (
+            sa.select([vfolder_invitations, vfolders.c.name])
+            .select_from(j)
+            .where(
+                (vfolder_invitations.c.inviter == request['user']['email']) &
+                (vfolder_invitations.c.state == VFolderInvitationState.PENDING)
+            )
+        )
         result = await conn.execute(query)
         invitations = result.fetchall()
     invs_info = []
@@ -980,12 +990,16 @@ async def update_invitation(request: web.Request, params: Any) -> web.Response:
     inv_id = request.match_info['inv_id']
     perm = params['perm']
     log.info('VFOLDER.UPDATE_INVITATION (ak:{}, inv:{})', access_key, inv_id)
-    async with root_ctx.dbpool.connect() as conn:
-        query = (sa.update(vfolder_invitations)
-                   .values(permission=perm)
-                   .where(vfolder_invitations.c.id == inv_id)
-                   .where(vfolder_invitations.c.inviter == request['user']['email'])
-                   .where(vfolder_invitations.c.state == VFolderInvitationState.PENDING))
+    async with root_ctx.dbpool.begin() as conn:
+        query = (
+            sa.update(vfolder_invitations)
+            .values(permission=perm)
+            .where(
+                (vfolder_invitations.c.id == inv_id) &
+                (vfolder_invitations.c.inviter == request['user']['email']) &
+                (vfolder_invitations.c.state == VFolderInvitationState.PENDING)
+            )
+        )
         await conn.execute(query)
     resp = {'msg': f'vfolder invitation updated: {inv_id}.'}
     return web.json_response(resp, status=200)
@@ -1011,7 +1025,7 @@ async def invite(request: web.Request, params: Any) -> web.Response:
              access_key, folder_name, ','.join(invitee_emails))
     if folder_name.startswith('.'):
         raise GenericForbidden('Cannot share private dot-prefixed vfolders.')
-    async with root_ctx.dbpool.connect() as conn:
+    async with root_ctx.dbpool.begin() as conn:
         # Get virtual folder.
         query = (sa.select('*')
                    .select_from(vfolders)
@@ -1026,29 +1040,37 @@ async def invite(request: web.Request, params: Any) -> web.Response:
             raise VFolderNotFound()
 
         # Get invited user's keypairs except vfolder owner.
-        query = (sa.select([keypairs.c.user_id, keypairs.c.user])
-                   .select_from(keypairs)
-                   .where(keypairs.c.user_id.in_(invitee_emails))
-                   .where(keypairs.c.user_id != request['user']['email']))
+        query = (
+            sa.select([keypairs.c.user_id, keypairs.c.user])
+            .select_from(keypairs)
+            .where(keypairs.c.user_id.in_(invitee_emails))
+            .where(keypairs.c.user_id != request['user']['email'])
+        )
         try:
             result = await conn.execute(query)
         except sa.exc.DataError:
             raise InvalidAPIParameters
-        if result.rowcount < 1:
-            raise GenericNotFound('No such vfolder invitation')
         kps = result.fetchall()
+        if len(kps) < 1:
+            raise GenericNotFound('No such vfolder invitation')
 
         # Prevent inviting user who already share the target folder.
         invitee_uuids = [kp.user for kp in kps]
         j = sa.join(vfolders, vfolder_permissions,
                     vfolders.c.id == vfolder_permissions.c.vfolder)
-        query = (sa.select([vfolders.c.id])
-                   .select_from(j)
-                   .where((vfolders.c.user.in_(invitee_uuids) |
-                           vfolder_permissions.c.user.in_(invitee_uuids)) &
-                          (vfolders.c.name == folder_name)))
+        query = (
+            sa.select([sa.func.count(vfolders.c.id)])
+            .select_from(j)
+            .where(
+                (
+                    vfolders.c.user.in_(invitee_uuids) |
+                    vfolder_permissions.c.user.in_(invitee_uuids)
+                ) &
+                (vfolders.c.name == folder_name)
+            )
+        )
         result = await conn.execute(query)
-        if result.rowcount > 0:
+        if result.scalar() > 0:
             raise VFolderAlreadyExists
 
         # Create invitation.
@@ -1057,14 +1079,18 @@ async def invite(request: web.Request, params: Any) -> web.Response:
         for invitee in set(invitees):
             inviter = request['user']['id']
             # Do not create invitation if already exists.
-            query = (sa.select('*')
-                       .select_from(vfolder_invitations)
-                       .where((vfolder_invitations.c.inviter == inviter) &
-                              (vfolder_invitations.c.invitee == invitee) &
-                              (vfolder_invitations.c.vfolder == vf.id) &
-                              (vfolder_invitations.c.state == VFolderInvitationState.PENDING)))
+            query = (
+                sa.select([sa.func.count('*')])
+                .select_from(vfolder_invitations)
+                .where(
+                    (vfolder_invitations.c.inviter == inviter) &
+                    (vfolder_invitations.c.invitee == invitee) &
+                    (vfolder_invitations.c.vfolder == vf.id) &
+                    (vfolder_invitations.c.state == VFolderInvitationState.PENDING)
+                )
+            )
             result = await conn.execute(query)
-            if result.rowcount > 0:
+            if result.scalar() > 0:
                 continue
 
             # TODO: insert multiple values with one query.
@@ -1072,7 +1098,7 @@ async def invite(request: web.Request, params: Any) -> web.Response:
             #       sqlalchemy.exc.CompileError: The 'default' dialect with current
             #       database version settings does not support in-place multirow
             #       inserts.
-            query = (vfolder_invitations.insert().values({
+            query = (sa.insert(vfolder_invitations, {
                 'id': uuid.uuid4().hex,
                 'permission': perm,
                 'vfolder': vf.id,
@@ -1096,13 +1122,17 @@ async def invitations(request: web.Request) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.INVITATIONS (ak:{})', access_key)
-    async with root_ctx.dbpool.connect() as conn:
+    async with root_ctx.dbpool.begin() as conn:
         j = sa.join(vfolders, vfolder_invitations,
                     vfolders.c.id == vfolder_invitations.c.vfolder)
-        query = (sa.select([vfolder_invitations, vfolders.c.name])
-                   .select_from(j)
-                   .where((vfolder_invitations.c.invitee == request['user']['id']) &
-                          (vfolder_invitations.c.state == VFolderInvitationState.PENDING)))
+        query = (
+            sa.select([vfolder_invitations, vfolders.c.name])
+            .select_from(j)
+            .where(
+                (vfolder_invitations.c.invitee == request['user']['id']) &
+                (vfolder_invitations.c.state == VFolderInvitationState.PENDING)
+            )
+        )
         result = await conn.execute(query)
         invitations = result.fetchall()
     invs_info = []
@@ -1143,7 +1173,7 @@ async def accept_invitation(request: web.Request, params: Any) -> web.Response:
     user_uuid = request['user']['uuid']
     inv_id = params['inv_id']
     log.info('VFOLDER.ACCEPT_INVITATION (ak:{}, inv:{})', access_key, inv_id)
-    async with root_ctx.dbpool.connect() as conn:
+    async with root_ctx.dbpool.begin() as conn:
         # Get invitation.
         query = (
             sa.select([vfolder_invitations])
@@ -1176,7 +1206,7 @@ async def accept_invitation(request: web.Request, params: Any) -> web.Response:
             isouter=True,
         )
         query = (
-            sa.select([vfolders.c.id])
+            sa.select([sa.func.count(vfolders.c.id)])
             .select_from(j)
             .where(
                 ((vfolders.c.user == user_uuid) |
@@ -1185,11 +1215,11 @@ async def accept_invitation(request: web.Request, params: Any) -> web.Response:
             )
         )
         result = await conn.execute(query)
-        if result.rowcount > 0:
+        if result.scalar() > 0:
             raise VFolderAlreadyExists
 
         # Create permission relation between the vfolder and the invitee.
-        query = (vfolder_permissions.insert().values({
+        query = (sa.insert(vfolder_permissions, {
             'permission': VFolderPermission(invitation.permission),
             'vfolder': invitation.vfolder,
             'user': user_uuid,
@@ -1198,7 +1228,7 @@ async def accept_invitation(request: web.Request, params: Any) -> web.Response:
 
         # Clear used invitation.
         query = (
-            vfolder_invitations.update()
+            sa.update(vfolder_invitations)
             .where(vfolder_invitations.c.id == inv_id)
             .values(state=VFolderInvitationState.ACCEPTED)
         )
@@ -1220,7 +1250,7 @@ async def delete_invitation(request: web.Request, params: Any) -> web.Response:
     inv_id = params['inv_id']
     log.info('VFOLDER.DELETE_INVITATION (ak:{}, inv:{})', access_key, inv_id)
     try:
-        async with root_ctx.dbpool.connect() as conn:
+        async with root_ctx.dbpool.begin() as conn:
             query = (
                 sa.select([
                     vfolder_invitations.c.inviter,
@@ -1243,10 +1273,9 @@ async def delete_invitation(request: web.Request, params: Any) -> web.Response:
             else:
                 raise GenericForbidden('Cannot change other user\'s invitaiton')
             query = (
-                vfolder_invitations
-                .update()
-                .where(vfolder_invitations.c.id == inv_id)
+                sa.update(vfolder_invitations)
                 .values(state=state)
+                .where(vfolder_invitations.c.id == inv_id)
             )
             await conn.execute(query)
     except sa.exc.IntegrityError as e:
@@ -1269,7 +1298,7 @@ async def delete(request: web.Request) -> web.Response:
     user_uuid = request['user']['uuid']
     allowed_vfolder_types = await root_ctx.shared_config.get_vfolder_types()
     log.info('VFOLDER.DELETE (ak:{}, vf:{})', access_key, folder_name)
-    async with root_ctx.dbpool.connect() as conn, conn.begin():
+    async with root_ctx.dbpool.begin() as conn:
         entries = await query_accessible_vfolders(
             conn,
             user_uuid,
@@ -1292,7 +1321,7 @@ async def delete(request: web.Request) -> web.Response:
             raise InvalidAPIParameters('No such vfolder.')
         folder_host = entry['host']
         folder_id = entry['id']
-        query = (vfolders.delete().where(vfolders.c.id == folder_id))
+        query = (sa.delete(vfolders).where(vfolders.c.id == folder_id))
         await conn.execute(query)
     # fs-level deletion may fail or take longer time
     # but let's complete the db transaction to reflect that it's deleted.
@@ -1334,10 +1363,9 @@ async def leave(request: web.Request, row: VFolderRow) -> web.Response:
     perm = None
     log.info('VFOLDER.LEAVE(ak:{}, vfid:{}, uid:{}, perm:{})',
              access_key, vfolder_id, user_uuid, perm)
-    async with root_ctx.dbpool.connect() as conn:
+    async with root_ctx.dbpool.begin() as conn:
         query = (
-            vfolder_permissions
-            .delete()
+            sa.delete(vfolder_permissions)
             .where(vfolder_permissions.c.vfolder == vfolder_id)
             .where(vfolder_permissions.c.user == user_uuid)
         )
@@ -1395,7 +1423,7 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
     if not verify_vfolder_name(params['target_name']):
         raise InvalidAPIParameters(f'{params["target_name"]} is reserved for internal operations.')
 
-    async with root_ctx.dbpool.connect() as conn:
+    async with root_ctx.dbpool.begin() as conn:
         allowed_hosts = await get_allowed_vfolder_hosts_by_user(conn, resource_policy,
                                                                 domain_name, user_uuid)
         # TODO: handle legacy host lists assuming that volume names don't overlap?
@@ -1483,7 +1511,7 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
             'group': group_uuid,
             'cloneable': params['cloneable']
         }
-        query = (vfolders.insert().values(insert_values))
+        query = (sa.insert(vfolders, insert_values))
         try:
             result = await conn.execute(query)
         except sa.exc.DataError:
@@ -1510,7 +1538,7 @@ async def list_shared_vfolders(request: web.Request, params: Any) -> web.Respons
     access_key = request['keypair']['access_key']
     target_vfid = params['vfolder_id']
     log.info('VFOLDER.LIST_SHARED_VFOLDERS (ak:{})', access_key)
-    async with root_ctx.dbpool.connect() as conn:
+    async with root_ctx.dbpool.begin() as conn:
         j = (vfolder_permissions
              .join(vfolders, vfolders.c.id == vfolder_permissions.c.vfolder)
              .join(users, users.c.uuid == vfolder_permissions.c.user))
@@ -1562,7 +1590,7 @@ async def update_shared_vfolder(request: web.Request, params: Any) -> web.Respon
     perm = params['perm']
     log.info('VFOLDER.UPDATE_SHARED_VFOLDER(ak:{}, vfid:{}, uid:{}, perm:{})',
              access_key, vfolder_id, user_uuid, perm)
-    async with root_ctx.dbpool.connect() as conn:
+    async with root_ctx.dbpool.begin() as conn:
         if perm is not None:
             query = (
                 sa.update(vfolder_permissions)
@@ -1572,8 +1600,7 @@ async def update_shared_vfolder(request: web.Request, params: Any) -> web.Respon
             )
         else:
             query = (
-                vfolder_permissions
-                .delete()
+                sa.delete(vfolder_permissions)
                 .where(vfolder_permissions.c.vfolder == vfolder_id)
                 .where(vfolder_permissions.c.user == user_uuid)
             )
@@ -1713,7 +1740,7 @@ async def list_mounts(request: web.Request) -> web.Response:
                           access_key, agent_id)
             raise
 
-    async with root_ctx.dbpool.connect() as conn:
+    async with root_ctx.dbpool.begin() as conn:
         query = (sa.select([agents.c.id])
                    .select_from(agents)
                    .where(agents.c.status == AgentStatus.ALIVE))
@@ -1782,7 +1809,7 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
     }
 
     # Mount on running agents.
-    async with root_ctx.dbpool.connect() as conn:
+    async with root_ctx.dbpool.begin() as conn:
         query = (
             sa.select([agents.c.id])
             .select_from(agents)
@@ -1871,7 +1898,7 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
     mountpoint = Path(mount_prefix) / params['name']
     assert Path(mount_prefix) != mountpoint
 
-    async with root_ctx.dbpool.connect() as conn, conn.begin():
+    async with root_ctx.dbpool.begin() as conn, conn.begin():
         # Prevent unmount if target host is mounted to running kernels.
         query = (
             sa.select([kernels.c.mounts])

@@ -34,7 +34,7 @@ class ModelFactory(ABC):
         self.defaults.update(**kwargs)
         await self.before_creation()
         root_ctx: RootContext = self.app['_root.context']
-        async with root_ctx.dbpool.connect() as conn:
+        async with root_ctx.dbpool.begin() as conn:
             query = (self.model.insert().returning(self.model).values(self.defaults))
             result = await conn.execute(query)
             row = result.first()
@@ -44,7 +44,7 @@ class ModelFactory(ABC):
 
     async def get(self, **kwargs):
         root_ctx: RootContext = self.app['_root.context']
-        async with root_ctx.dbpool.connect() as conn:
+        async with root_ctx.dbpool.begin() as conn:
             filters = [sa.sql.column(key) == value for key, value in kwargs.items()]
             query = sa.select([self.model]).where(sa.and_(*filters))
             result = await conn.execute(query)
@@ -54,7 +54,7 @@ class ModelFactory(ABC):
 
     async def list(self, **kwargs):
         root_ctx: RootContext = self.app['_root.context']
-        async with root_ctx.dbpool.connect() as conn:
+        async with root_ctx.dbpool.begin() as conn:
             filters = [sa.sql.column(key) == value for key, value in kwargs.items()]
             query = sa.select([self.model]).where(sa.and_(*filters))
             result = await conn.execute(query)

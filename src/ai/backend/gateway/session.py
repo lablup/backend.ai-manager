@@ -406,7 +406,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     try:
         requested_image_ref = \
             await ImageRef.resolve_alias(params['image'], root_ctx.shared_config.etcd)
-        async with dbpool.connect() as conn, conn.begin():
+        async with dbpool.begin() as conn:
             query = (sa.select([domains.c.allowed_docker_registries])
                        .select_from(domains)
                        .where(domains.c.name == params['domain']))
@@ -463,7 +463,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     session_creation_tracker = app_ctx.session_creation_tracker
     session_creation_tracker[session_creation_id] = start_event
 
-    async with dbpool.connect() as conn, conn.begin():
+    async with dbpool.begin() as conn:
         owner_uuid, group_id, resource_policy = await _query_userinfo(request, params, conn)
 
         # Use keypair bootstrap_script if it is not delivered as a parameter
@@ -519,7 +519,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
                 resp['status'] = 'TIMEOUT'
             else:
                 await asyncio.sleep(0.5)
-                async with root_ctx.dbpool.connect() as conn, conn.begin():
+                async with root_ctx.dbpool.begin() as conn:
                     query = (
                         sa.select([
                             kernels.c.status,
@@ -613,7 +613,7 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
         log.debug('Validation error: {0}', e.as_dict())
         raise InvalidAPIParameters('Input validation error',
                                    extra_data=e.as_dict())
-    async with root_ctx.dbpool.connect() as conn, conn.begin():
+    async with root_ctx.dbpool.begin() as conn:
         query = (
                     sa.select([session_templates.c.template])
                       .select_from(session_templates)
@@ -807,7 +807,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
     else:
         raise SessionAlreadyExists
 
-    async with root_ctx.dbpool.connect() as conn, conn.begin():
+    async with root_ctx.dbpool.begin() as conn:
         query = (
             sa.select([session_templates.c.template])
             .select_from(session_templates)
@@ -912,7 +912,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
                 requested_image_ref = \
                     await ImageRef.resolve_alias(kernel_config['image_ref'],
                                                  root_ctx.shared_config.etcd)
-                async with root_ctx.dbpool.connect() as conn, conn.begin():
+                async with root_ctx.dbpool.begin() as conn:
                     query = (sa.select([domains.c.allowed_docker_registries])
                              .select_from(domains)
                              .where(domains.c.name == params['domain']))
@@ -938,7 +938,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
     assert current_task is not None
 
     try:
-        async with root_ctx.dbpool.connect() as conn, conn.begin():
+        async with root_ctx.dbpool.begin() as conn:
             owner_uuid, group_id, resource_policy = await _query_userinfo(request, params, conn)
 
         session_id = await asyncio.shield(root_ctx.registry.enqueue_session(
@@ -974,7 +974,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
                 resp['status'] = 'TIMEOUT'
             else:
                 await asyncio.sleep(0.5)
-                async with root_ctx.dbpool.connect() as conn, conn.begin():
+                async with root_ctx.dbpool.begin() as conn:
                     query = (
                         sa.select([
                             kernels.c.status,
@@ -1227,7 +1227,7 @@ async def handle_kernel_log(
             chunk = await redis.execute_with_retries(lambda: redis_conn.lpop(log_key))
             log_buffer.write(chunk)
         try:
-            async with root_ctx.dbpool.connect() as conn, conn.begin():
+            async with root_ctx.dbpool.begin() as conn:
                 query = (sa.update(kernels)
                            .values(container_log=log_buffer.getvalue())
                            .where(kernels.c.id == event.kernel_id))
@@ -1254,7 +1254,7 @@ async def report_stats(root_ctx: RootContext) -> None:
     await stats_monitor.report_metric(
         GAUGE, 'ai.backend.gateway.agent_instances', len(all_inst_ids))
 
-    async with root_ctx.dbpool.connect() as conn, conn.begin():
+    async with root_ctx.dbpool.begin() as conn:
         query = (sa.select([sa.func.sum(keypairs.c.concurrency_used)])
                    .select_from(keypairs))
         n = await conn.scalar(query)
@@ -1348,7 +1348,7 @@ async def match_sessions(request: web.Request, params: Any) -> web.Response:
     log.info('MATCH_SESSIONS(ak:{0}/{1}, prefix:{2})',
              requester_access_key, owner_access_key, id_or_name_prefix)
     matches: List[Dict[str, Any]] = []
-    async with root_ctx.dbpool.connect() as conn:
+    async with root_ctx.dbpool.begin() as conn:
         session_infos = await match_session_ids(
             id_or_name_prefix,
             owner_access_key,
@@ -1769,7 +1769,7 @@ async def get_container_logs(request: web.Request, params: Any) -> web.Response:
     log.info('GET_CONTAINER_LOG (ak:{}/{}, s:{})',
              requester_access_key, owner_access_key, session_name)
     resp = {'result': {'logs': ''}}
-    async with root_ctx.dbpool.connect() as conn, conn.begin():
+    async with root_ctx.dbpool.begin() as conn:
         compute_session = await root_ctx.registry.get_session(
             session_name, owner_access_key,
             allow_stale=True,
@@ -1808,7 +1808,7 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
     user_role = request['user']['role']
     user_uuid = request['user']['uuid']
     kernel_id_str = params['kernel_id'].hex
-    async with root_ctx.dbpool.connect() as conn, conn.begin():
+    async with root_ctx.dbpool.begin() as conn:
         matched_vfolders = await query_accessible_vfolders(
             conn, user_uuid,
             user_role=user_role, domain_name=domain_name,
