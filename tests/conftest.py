@@ -335,9 +335,9 @@ async def app(local_config, event_loop):
 
 @pytest.fixture
 async def create_app_and_client(local_config, event_loop) -> AsyncIterator:
-    client: Optional[Client] = None
-    client_session: Optional[aiohttp.ClientSession] = None
-    runner: Optional[web.BaseRunner] = None
+    client: Client
+    client_session: aiohttp.ClientSession
+    runner: web.BaseRunner
     _outer_ctxs: List[AsyncContextManager] = []
 
     async def app_builder(
@@ -390,10 +390,8 @@ async def create_app_and_client(local_config, event_loop) -> AsyncIterator:
 
     yield app_builder
 
-    if client_session:
-        await client_session.close()
-    if runner:
-        await runner.cleanup()
+    await client_session.close()
+    await runner.cleanup()
     for octx in reversed(_outer_ctxs):
         await octx.__aexit__(None, None, None)
 

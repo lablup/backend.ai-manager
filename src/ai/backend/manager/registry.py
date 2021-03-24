@@ -2077,6 +2077,15 @@ class AgentRegistry:
 
     async def handle_heartbeat(self, agent_id, agent_info):
         now = datetime.now(tzutc())
+        slot_key_and_units = {
+            SlotName(k): SlotTypes(v[0]) for k, v in
+            agent_info['resource_slots'].items()}
+        available_slots = ResourceSlot({
+            SlotName(k): v[1] for k, v in
+            agent_info['resource_slots'].items()})
+        current_addr = agent_info['addr']
+        sgroup = agent_info.get('scaling_group', 'default')
+
         async with self.heartbeat_lock:
 
             instance_rejoin = False
@@ -2100,15 +2109,6 @@ class AgentRegistry:
                 result = await conn.execute(query)
                 row = result.first()
 
-                slot_key_and_units = {
-                    SlotName(k): SlotTypes(v[0]) for k, v in
-                    agent_info['resource_slots'].items()}
-                available_slots = ResourceSlot({
-                    SlotName(k): v[1] for k, v in
-                    agent_info['resource_slots'].items()})
-                current_addr = agent_info['addr']
-                sgroup = agent_info.get('scaling_group', 'default')
-
                 if row is None or row['status'] is None:
                     # new agent detected!
                     log.info('agent {0} joined!', agent_id)
@@ -2122,7 +2122,7 @@ class AgentRegistry:
                         'occupied_slots': {},
                         'addr': agent_info['addr'],
                         'first_contact': now,
-                        'lost_at': None,
+                        'lost_at': sa.sql.expression.Null,
                         'version': agent_info['version'],
                         'compute_plugins': agent_info['compute_plugins'],
                     })
@@ -2155,7 +2155,7 @@ class AgentRegistry:
                             'region': agent_info['region'],
                             'scaling_group': sgroup,
                             'addr': agent_info['addr'],
-                            'lost_at': None,
+                            'lost_at': sa.sql.expression.Null,
                             'available_slots': available_slots,
                             'version': agent_info['version'],
                             'compute_plugins': agent_info['compute_plugins'],
