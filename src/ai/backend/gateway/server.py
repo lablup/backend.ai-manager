@@ -325,7 +325,6 @@ async def database_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     url = f"postgresql+asyncpg://{urlquote(username)}:{urlquote(password)}@{address}/{urlquote(dbname)}"
     root_ctx.dbpool = create_async_engine(
         url,
-        echo=bool(root_ctx.local_config['logging']['level'] == 'DEBUG'),
         connect_args=pgsql_connect_opts,
         pool_size=8,
         max_overflow=64,

@@ -179,9 +179,9 @@ def database(request, local_config, test_db):
     # Create database using low-level psycopg2 API.
     # Temporarily use "testing" dbname until we create our own db.
     if db_pass:
-        db_url = f'postgresql+asyncpg://{db_user}:{urlquote(db_pass)}@{db_addr}/testing'
+        db_url = f'postgresql+asyncpg://{urlquote(db_user)}:{urlquote(db_pass)}@{db_addr}/testing'
     else:
-        db_url = f'postgresql+asyncpg://{db_user}@{db_addr}/testing'
+        db_url = f'postgresql+asyncpg://{urlquote(db_user)}@{db_addr}/testing'
 
     async def init_db():
         engine = sa.ext.asyncio.create_async_engine(

@@ -41,7 +41,7 @@ def populate(cli_ctx: CLIContext, fixture_path) -> None:
         db_addr = cli_ctx.local_config['db']['addr']
         db_name = cli_ctx.local_config['db']['name']
         engine = sa.ext.asyncio.create_async_engine(
-            f"postgresql+asyncpg://{db_username}:{urlquote(db_password)}@{db_addr}/{db_name}",
+            f"postgresql+asyncpg://{urlquote(db_username)}:{urlquote(db_password)}@{db_addr}/{db_name}",
         )
         try:
             await populate_fixture(engine, fixture)
