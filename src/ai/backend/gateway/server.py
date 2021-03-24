@@ -330,7 +330,7 @@ async def database_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
         result = await conn.execute(sa.text("show server_version"))
         major, minor = map(int, result.scalar().split("."))
         if (major, minor) < (11, 0):
-            pgsql_connect_opts.pop("jit")
+            pgsql_connect_opts['server_settings'].pop("jit")
     await version_check_db.dispose()
 
     root_ctx.db = create_async_engine(

@@ -78,7 +78,9 @@ convention = {
 }
 metadata = sa.MetaData(naming_convention=convention)
 
-pgsql_connect_opts = {'server_settings': {'jit': 'off'}}
+pgsql_connect_opts = {
+    'server_settings': {'jit': 'off'}
+}
 
 
 # helper functions
