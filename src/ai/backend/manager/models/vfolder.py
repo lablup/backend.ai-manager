@@ -207,26 +207,28 @@ async def query_accessible_vfolders(
     if 'user' in allowed_vfolder_types:
         # Scan my owned vfolders.
         j = (vfolders.join(users, vfolders.c.user == users.c.uuid))
-        query = (sa.select([
-                       vfolders.c.name,
-                       vfolders.c.id,
-                       vfolders.c.host,
-                       vfolders.c.usage_mode,
-                       vfolders.c.permission,
-                       vfolders.c.created_at,
-                       vfolders.c.last_used,
-                       vfolders.c.max_files,
-                       vfolders.c.max_size,
-                       vfolders.c.ownership_type,
-                       vfolders.c.user,
-                       vfolders.c.group,
-                       vfolders.c.creator,
-                       vfolders.c.unmanaged_path,
-                       vfolders.c.cloneable,
-                       users.c.email,
-                   ])
-                   .select_from(j)
-                   .where(vfolders.c.user == user_uuid))
+        query = (
+            sa.select([
+                vfolders.c.name,
+                vfolders.c.id,
+                vfolders.c.host,
+                vfolders.c.usage_mode,
+                vfolders.c.permission,
+                vfolders.c.created_at,
+                vfolders.c.last_used,
+                vfolders.c.max_files,
+                vfolders.c.max_size,
+                vfolders.c.ownership_type,
+                vfolders.c.user,
+                vfolders.c.group,
+                vfolders.c.creator,
+                vfolders.c.unmanaged_path,
+                vfolders.c.cloneable,
+                users.c.email,
+            ])
+            .select_from(j)
+            .where(vfolders.c.user == user_uuid)
+        )
         if extra_vf_conds is not None:
             query = query.where(extra_vf_conds)
         if extra_vf_user_conds is not None:
@@ -250,7 +252,7 @@ async def query_accessible_vfolders(
                 'group_name': None,
                 'is_owner': True,
                 'permission': row.permission,
-                'unmanaged_path': row.get('unmanaged_path'),
+                'unmanaged_path': row.unmanaged_path,
                 'cloneable': row.cloneable,
             })
         # Scan vfolders shared with me.
@@ -308,7 +310,7 @@ async def query_accessible_vfolders(
                 'group_name': None,
                 'is_owner': False,
                 'permission': row.permission,  # not vfolders.c.permission!
-                'unmanaged_path': row.get('unmanaged_path'),
+                'unmanaged_path': row.unmanaged_path,
                 'cloneable': row.cloneable,
             })
 
@@ -376,7 +378,7 @@ async def query_accessible_vfolders(
                 'group_name': row.groups_name,
                 'is_owner': is_owner,
                 'permission': row.vfolders_permission,
-                'unmanaged_path': row.get('unmanaged_path'),
+                'unmanaged_path': row.unmanaged_path,
                 'cloneable': row.vfolders_cloneable,
             })
     return entries

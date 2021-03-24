@@ -264,7 +264,7 @@ async def enqueue_kernel_creation_status_update(
     if row is None:
         return
     for q in app_ctx.session_event_queues:
-        q.put_nowait((event.name, row, event.reason))
+        q.put_nowait((event.name, row._mapping, event.reason))
 
 
 async def enqueue_kernel_termination_status_update(
@@ -301,7 +301,7 @@ async def enqueue_kernel_termination_status_update(
     if row is None:
         return
     for q in app_ctx.session_event_queues:
-        q.put_nowait((event.name, row, event.reason))
+        q.put_nowait((event.name, row._mapping, event.reason))
 
 
 async def enqueue_session_creation_status_update(
@@ -337,7 +337,7 @@ async def enqueue_session_creation_status_update(
     if row is None:
         return
     for q in app_ctx.session_event_queues:
-        q.put_nowait((event.name, row, event.reason))
+        q.put_nowait((event.name, row._mapping, event.reason))
 
 
 async def enqueue_session_termination_status_update(
@@ -373,7 +373,7 @@ async def enqueue_session_termination_status_update(
     if row is None:
         return
     for q in app_ctx.session_event_queues:
-        q.put_nowait((event.name, row, event.reason))
+        q.put_nowait((event.name, row._mapping, event.reason))
 
 
 async def enqueue_batch_task_result_update(
@@ -408,7 +408,7 @@ async def enqueue_batch_task_result_update(
     if row is None:
         return
     for q in app_ctx.session_event_queues:
-        q.put_nowait((event.name, row, event.reason))
+        q.put_nowait((event.name, row._mapping, event.reason))
 
 
 async def enqueue_bgtask_status_update(
