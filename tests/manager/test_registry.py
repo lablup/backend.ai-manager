@@ -23,13 +23,13 @@ async def test_handle_heartbeat(mocker) -> None:
     mock_shared_config = MagicMock()
     mock_shared_config.update_resource_slots = AsyncMock()
     mock_shared_config.etcd = None
-    mock_dbpool = MagicMock()
+    mock_db = MagicMock()
     mock_dbconn = MagicMock()
     mock_dbconn_ctx = MagicMock()
     mock_dbresult = MagicMock()
     mock_dbresult.rowcount = 1
-    mock_dbpool.connect = MagicMock(return_value=mock_dbconn_ctx)
-    mock_dbpool.begin = MagicMock(return_value=mock_dbconn_ctx)
+    mock_db.connect = MagicMock(return_value=mock_dbconn_ctx)
+    mock_db.begin = MagicMock(return_value=mock_dbconn_ctx)
     mock_dbconn_ctx.__aenter__ = AsyncMock(return_value=mock_dbconn)
     mock_dbconn_ctx.__aexit__ = AsyncMock()
     mock_dbconn.execute = AsyncMock(return_value=mock_dbresult)
@@ -62,7 +62,7 @@ async def test_handle_heartbeat(mocker) -> None:
 
     registry = AgentRegistry(
         shared_config=mock_shared_config,
-        dbpool=mock_dbpool,
+        db=mock_db,
         redis_stat=mock_redis_stat,
         redis_live=mock_redis_live,
         redis_image=mock_redis_image,

@@ -67,7 +67,7 @@ class ResourcePreset(graphene.ObjectType):
 
     @classmethod
     async def load_all(cls, ctx: GraphQueryContext) -> Sequence[ResourcePreset]:
-        async with ctx.dbpool.begin() as conn:
+        async with ctx.db.begin() as conn:
             query = (
                 sa.select([resource_presets])
                 .select_from(resource_presets)
@@ -83,7 +83,7 @@ class ResourcePreset(graphene.ObjectType):
         ctx: GraphQueryContext,
         names: Sequence[str],
     ) -> Sequence[ResourcePreset | None]:
-        async with ctx.dbpool.begin() as conn:
+        async with ctx.db.begin() as conn:
             query = (
                 sa.select([resource_presets])
                 .select_from(resource_presets)

@@ -146,7 +146,7 @@ class SchedulerDispatcher(aobject):
         self.event_dispatcher = event_dispatcher
         self.event_producer = event_producer
         self.registry = registry
-        self.dbpool = registry.dbpool
+        self.db = registry.db
         self.schedule_lock_timeout = 120.0
 
     async def __ainit__(self) -> None:
@@ -207,8 +207,8 @@ class SchedulerDispatcher(aobject):
         # We use short transaction blocks to prevent deadlock timeouts under heavy loads
         # because this scheduling handler will be executed by only one process.
         # It is executed under a globally exclusive context using aioredlock.
-        async with self.dbpool.connect() as agent_db_conn, \
-                   self.dbpool.connect() as kernel_db_conn:
+        async with self.db.connect() as agent_db_conn, \
+                   self.db.connect() as kernel_db_conn:
             async with agent_db_conn.begin():
                 query = (
                     sa.select([agents.c.scaling_group])
@@ -618,7 +618,7 @@ class SchedulerDispatcher(aobject):
             status_data = convert_to_status_data(e, self.local_config['debug']['enabled'])
             log.warning(log_fmt + 'failed-starting: {!r}', *log_args, status_data)
             try:
-                async with self.dbpool.begin() as db_conn:
+                async with self.db.begin() as db_conn:
                     query = (
                         sa.select([kernels.c.id, kernels.c.container_id])
                         .select_from(kernels)
@@ -638,7 +638,7 @@ class SchedulerDispatcher(aobject):
                 await self.registry.destroy_session_lowlevel(sess_ctx.session_id, destroyed_kernels)
             except Exception as destroy_err:
                 log.error(log_fmt + 'failed-starting.cleanup', *log_args, exc_info=destroy_err)
-            async with self.dbpool.begin() as db_conn:
+            async with self.db.begin() as db_conn:
                 for binding in session_agent_binding[1]:
                     await recalc_agent_resource_occupancy(db_conn, binding.agent_alloc_ctx.agent_id)
                 await _invoke_failure_callbacks(db_conn, sched_ctx, sess_ctx, check_results)
@@ -658,7 +658,7 @@ class SchedulerDispatcher(aobject):
             )
         else:
             log.info(log_fmt + 'started', *log_args)
-            async with self.dbpool.begin() as db_conn:
+            async with self.db.begin() as db_conn:
                 await _invoke_success_callbacks(db_conn, sched_ctx, sess_ctx, check_results)
 
 

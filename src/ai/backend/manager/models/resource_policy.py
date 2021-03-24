@@ -97,7 +97,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
 
     @classmethod
     async def load_all(cls, ctx: GraphQueryContext) -> Sequence[KeyPairResourcePolicy]:
-        async with ctx.dbpool.begin() as conn:
+        async with ctx.db.begin() as conn:
             query = (sa.select([keypair_resource_policies])
                        .select_from(keypair_resource_policies))
             return [
@@ -111,7 +111,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
         ctx: GraphQueryContext,
         access_key: str,
     ) -> Sequence[KeyPairResourcePolicy]:
-        async with ctx.dbpool.begin() as conn:
+        async with ctx.db.begin() as conn:
             query = (
                 sa.select([keypairs.c.user_id])
                 .select_from(keypairs)
@@ -140,7 +140,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
         ctx: GraphQueryContext,
         names: Sequence[str],
     ) -> Sequence[KeyPairResourcePolicy | None]:
-        async with ctx.dbpool.begin() as conn:
+        async with ctx.db.begin() as conn:
             query = (
                 sa.select([keypair_resource_policies])
                 .select_from(keypair_resource_policies)
@@ -158,7 +158,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
         ctx: GraphQueryContext,
         names: Sequence[str],
     ) -> Sequence[KeyPairResourcePolicy | None]:
-        async with ctx.dbpool.begin() as conn:
+        async with ctx.db.begin() as conn:
             access_key = ctx.access_key
             j = sa.join(
                 keypairs, keypair_resource_policies,
@@ -183,7 +183,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
         ctx: GraphQueryContext,
         access_keys: Sequence[str],
     ) -> Sequence[KeyPairResourcePolicy]:
-        async with ctx.dbpool.begin() as conn:
+        async with ctx.db.begin() as conn:
             j = sa.join(
                 keypairs, keypair_resource_policies,
                 keypairs.c.resource_policy == keypair_resource_policies.c.name

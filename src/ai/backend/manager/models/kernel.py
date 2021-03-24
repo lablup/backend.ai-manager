@@ -1176,7 +1176,7 @@ class LegacyComputeSession(graphene.ObjectType):
             status_list = [KernelStatus[s] for s in status.split(',')]
         elif isinstance(status, KernelStatus):
             status_list = [status]
-        async with ctx.dbpool.begin() as conn:
+        async with ctx.db.begin() as conn:
             query = (
                 sa.select([sa.func.count(kernels.c.session_id)])
                 .select_from(kernels)
@@ -1211,7 +1211,7 @@ class LegacyComputeSession(graphene.ObjectType):
             status_list = [KernelStatus[s] for s in status.split(',')]
         elif isinstance(status, KernelStatus):
             status_list = [status]
-        async with ctx.dbpool.begin() as conn:
+        async with ctx.db.begin() as conn:
             if order_key is None:
                 _ordering = DEFAULT_SESSION_ORDERING
             else:
@@ -1250,7 +1250,7 @@ class LegacyComputeSession(graphene.ObjectType):
         group_id: uuid.UUID = None,
         status: str = None,
     ) -> Sequence[Optional[LegacyComputeSession]]:
-        async with ctx.dbpool.begin() as conn:
+        async with ctx.db.begin() as conn:
             j = (kernels.join(groups, groups.c.id == kernels.c.group_id)
                         .join(users, users.c.uuid == kernels.c.user_uuid))
             query = (
@@ -1289,7 +1289,7 @@ class LegacyComputeSession(graphene.ObjectType):
         access_key: AccessKey = None,
         status: str = None,
     ) -> Sequence[Sequence[LegacyComputeSession]]:
-        async with ctx.dbpool.begin() as conn:
+        async with ctx.db.begin() as conn:
             status_list = []
             if isinstance(status, str):
                 status_list = [KernelStatus[s] for s in status.split(',')]

@@ -121,7 +121,7 @@ PUBLIC_INTERFACES: Final = [
     'background_task_manager',
     'local_config',
     'shared_config',
-    'dbpool',
+    'db',
     'registry',
     'redis_live',
     'redis_stat',
@@ -323,7 +323,7 @@ async def database_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     address = root_ctx.local_config['db']['addr']
     dbname = root_ctx.local_config['db']['name']
     url = f"postgresql+asyncpg://{urlquote(username)}:{urlquote(password)}@{address}/{urlquote(dbname)}"
-    root_ctx.dbpool = create_async_engine(
+    root_ctx.db = create_async_engine(
         url,
         connect_args=pgsql_connect_opts,
         pool_size=8,
@@ -331,7 +331,7 @@ async def database_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
         json_serializer=functools.partial(json.dumps, cls=ExtendedJSONEncoder)
     )
     yield
-    await root_ctx.dbpool.dispose()
+    await root_ctx.db.dispose()
 
 
 @aiotools.actxmgr
@@ -354,7 +354,7 @@ async def event_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 @aiotools.actxmgr
 async def idle_checker_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     root_ctx.idle_checkers = await create_idle_checkers(
-        root_ctx.dbpool,
+        root_ctx.db,
         root_ctx.shared_config,
         root_ctx.event_dispatcher,
         root_ctx.event_producer,
@@ -393,7 +393,7 @@ async def hook_plugin_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 async def agent_registry_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     root_ctx.registry = AgentRegistry(
         root_ctx.shared_config,
-        root_ctx.dbpool,
+        root_ctx.db,
         root_ctx.redis_stat,
         root_ctx.redis_live,
         root_ctx.redis_image,

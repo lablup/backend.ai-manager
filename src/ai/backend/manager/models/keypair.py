@@ -113,7 +113,7 @@ class UserInfo(graphene.ObjectType):
         ctx: GraphQueryContext,
         user_uuids: Sequence[uuid.UUID],
     ) -> Sequence[Optional[UserInfo]]:
-        async with ctx.dbpool.begin() as conn:
+        async with ctx.db.begin() as conn:
             from .user import users
             query = (
                 sa.select([users.c.uuid, users.c.email, users.c.full_name])

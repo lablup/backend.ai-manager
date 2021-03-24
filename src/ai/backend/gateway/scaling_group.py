@@ -42,7 +42,7 @@ async def list_available_sgroups(request: web.Request, params: Any) -> web.Respo
     domain_name = request['user']['domain_name']
     group_id_or_name = params['group']
     log.info('SGROUPS.LIST(ak:{}, g:{}, d:{})', access_key, group_id_or_name, domain_name)
-    async with root_ctx.dbpool.begin() as conn:
+    async with root_ctx.db.begin() as conn:
         sgroups = await query_allowed_sgroups(
             conn, domain_name, group_id_or_name, access_key)
         return web.json_response({

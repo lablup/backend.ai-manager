@@ -25,7 +25,7 @@ class ErrorMonitor(AbstractErrorReporterPlugin):
         root_ctx: RootContext = context['_root.context']  # type: ignore
         self.event_dispatcher = root_ctx.event_dispatcher
         self._evh = self.event_dispatcher.consume(AgentErrorEvent, None, self.handle_agent_error)
-        self.dbpool = root_ctx.dbpool
+        self.db = root_ctx.db
 
     async def cleanup(self) -> None:
         self.event_dispatcher.unconsume(self._evh)
@@ -64,7 +64,7 @@ class ErrorMonitor(AbstractErrorReporterPlugin):
         else:
             user = context['user']
 
-        async with self.dbpool.begin() as conn:
+        async with self.db.begin() as conn:
             query = error_logs.insert().values({
                 'severity': severity,
                 'source': 'manager',
@@ -83,7 +83,7 @@ class ErrorMonitor(AbstractErrorReporterPlugin):
         source: AgentId,
         event: AgentErrorEvent,
     ) -> None:
-        async with self.dbpool.begin() as conn:
+        async with self.db.begin() as conn:
             query = error_logs.insert().values({
                 'severity': event.severity,
                 'source': source,

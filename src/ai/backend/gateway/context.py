@@ -28,7 +28,7 @@ class BaseContext:
 @attr.s(slots=True, auto_attribs=True, init=False)
 class RootContext(BaseContext):
     pidx: int
-    dbpool: SAEngine
+    db: SAEngine
     event_dispatcher: EventDispatcher
     event_producer: EventProducer
     redis_live: Redis

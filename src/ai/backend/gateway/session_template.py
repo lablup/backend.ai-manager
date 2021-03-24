@@ -59,7 +59,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
     )
     user_uuid = request['user']['uuid']
     root_ctx: RootContext = request.app['_root.context']
-    async with root_ctx.dbpool.begin() as conn:
+    async with root_ctx.db.begin() as conn:
         if requester_access_key != owner_access_key:
             # Admin or superadmin is creating sessions for another user.
             # The check for admin privileges is already done in get_access_key_scope().
@@ -183,7 +183,7 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
     user_uuid = request['user']['uuid']
     log.info('SESSION_TEMPLATE.LIST (ak:{})', access_key)
     root_ctx: RootContext = request.app['_root.context']
-    async with root_ctx.dbpool.begin() as conn:
+    async with root_ctx.db.begin() as conn:
         entries: List[Mapping[str, Any]]
         if request['is_superadmin'] and params['all']:
             j = (
@@ -262,7 +262,7 @@ async def get(request: web.Request, params: Any) -> web.Response:
     )
     template_id = request.match_info['template_id']
     root_ctx: RootContext = request.app['_root.context']
-    async with root_ctx.dbpool.begin() as conn:
+    async with root_ctx.db.begin() as conn:
         query = (
             sa.select([session_templates.c.template])
             .select_from(session_templates)
@@ -302,7 +302,7 @@ async def put(request: web.Request, params: Any) -> web.Response:
     )
     root_ctx: RootContext = request.app['_root.context']
 
-    async with root_ctx.dbpool.begin() as conn:
+    async with root_ctx.db.begin() as conn:
         query = (
             sa.select([session_templates.c.id])
             .select_from(session_templates)
@@ -349,7 +349,7 @@ async def delete(request: web.Request, params: Any) -> web.Response:
         owner_access_key if owner_access_key != requester_access_key else '*'
     )
     root_ctx: RootContext = request.app['_root.context']
-    async with root_ctx.dbpool.begin() as conn:
+    async with root_ctx.db.begin() as conn:
         query = (
             sa.select([session_templates.c.id])
             .select_from(session_templates)

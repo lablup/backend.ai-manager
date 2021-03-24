@@ -113,7 +113,7 @@ class Domain(graphene.ObjectType):
         *,
         is_active: bool = None,
     ) -> Sequence[Domain]:
-        async with ctx.dbpool.begin() as conn:
+        async with ctx.db.begin() as conn:
             query = sa.select([domains]).select_from(domains)
             if is_active is not None:
                 query = query.where(domains.c.is_active == is_active)
@@ -130,7 +130,7 @@ class Domain(graphene.ObjectType):
         *,
         is_active: bool = None
     ) -> Sequence[Optional[Domain]]:
-        async with ctx.dbpool.begin() as conn:
+        async with ctx.db.begin() as conn:
             query = (
                 sa.select([domains])
                 .select_from(domains)
@@ -294,7 +294,7 @@ class PurgeDomain(graphene.Mutation):
     async def mutate(cls, root, info: graphene.ResolveInfo, name: str) -> PurgeDomain:
         from . import users, groups
         ctx: GraphQueryContext = info.context
-        async with ctx.dbpool.begin() as conn:
+        async with ctx.db.begin() as conn:
             if await cls.domain_has_active_kernels(conn, name):
                 raise RuntimeError('Domain has some active kernels. Terminate them first.')
             query = (

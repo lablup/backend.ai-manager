@@ -64,7 +64,7 @@ async def handle_gql(request: web.Request, params: Any) -> web.Response:
     app_ctx: PrivateContext = request.app['admin.context']
     manager_status = await root_ctx.shared_config.get_manager_status()
     known_slot_types = await root_ctx.shared_config.get_resource_slots()
-    async with root_ctx.dbpool.begin() as db_conn:
+    async with root_ctx.db.begin() as db_conn:
         gql_ctx = GraphQueryContext(
             dataloader_manager=DataLoaderManager(),
             local_config=root_ctx.local_config,
@@ -72,7 +72,7 @@ async def handle_gql(request: web.Request, params: Any) -> web.Response:
             etcd=root_ctx.shared_config.etcd,
             user=request['user'],
             access_key=request['keypair']['access_key'],
-            dbpool=root_ctx.dbpool,
+            db=root_ctx.db,
             db_conn=db_conn,
             redis_stat=root_ctx.redis_stat,
             redis_image=root_ctx.redis_image,

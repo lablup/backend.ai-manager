@@ -133,7 +133,7 @@ class GraphQueryContext:
     etcd: AsyncEtcd
     user: Mapping[str, Any]  # TODO: express using typed dict
     access_key: str
-    dbpool: SAEngine
+    db: SAEngine
     db_conn: SAConnection
     redis_stat: Redis
     redis_image: Redis

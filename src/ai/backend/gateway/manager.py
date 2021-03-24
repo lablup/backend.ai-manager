@@ -110,7 +110,7 @@ async def fetch_manager_status(request: web.Request) -> web.Response:
         etcd_info = await root_ctx.shared_config.get_manager_nodes_info()
         configs = root_ctx.local_config['manager']
 
-        async with root_ctx.dbpool.begin() as conn:
+        async with root_ctx.db.begin() as conn:
             query = (
                 sa.select([sa.func.count(kernels.c.id)])
                 .select_from(kernels)
@@ -229,7 +229,7 @@ async def perform_scheduler_ops(request: web.Request, params: Any) -> web.Respon
         )
     if params['op'] in (SchedulerOps.INCLUDE_AGENTS, SchedulerOps.EXCLUDE_AGENTS):
         schedulable = (params['op'] == SchedulerOps.INCLUDE_AGENTS)
-        async with root_ctx.dbpool.begin() as conn:
+        async with root_ctx.db.begin() as conn:
             query = (
                 agents.update()
                 .values(schedulable=schedulable)

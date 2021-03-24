@@ -421,7 +421,7 @@ class PurgeGroup(graphene.Mutation):
     )
     async def mutate(cls, root, info: graphene.ResolveInfo, gid: uuid.UUID) -> PurgeGroup:
         graph_ctx: GraphQueryContext = info.context
-        async with graph_ctx.dbpool.begin() as conn:
+        async with graph_ctx.db.begin() as conn:
             if await cls.group_vfolder_mounted_to_active_kernels(conn, gid):
                 raise RuntimeError('Some of group\'s virtual folders are mounted to active kernels. '
                                    'Terminate those kernels first')

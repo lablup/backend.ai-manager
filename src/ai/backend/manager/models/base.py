@@ -528,7 +528,7 @@ def privileged_mutation(required_role, target_func=None):
                         if ctx.user['domain_name'] == target_domain:
                             permit_chains.append(True)
                     if target_group is not None:
-                        async with ctx.dbpool.begin() as conn:
+                        async with ctx.db.begin() as conn:
                             # check if the group is part of the requester's domain.
                             query = (
                                 groups.select()

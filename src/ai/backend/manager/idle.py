@@ -66,19 +66,19 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
 
     name: ClassVar[str] = "base"
 
-    _dbpool: SAEngine
+    _db: SAEngine
     _shared_config: SharedConfig
     _event_dispatcher: EventDispatcher
     _event_producer: EventProducer
 
     def __init__(
         self,
-        dbpool: SAEngine,
+        db: SAEngine,
         shared_config: SharedConfig,
         event_dispatcher: EventDispatcher,
         event_producer: EventProducer,
     ) -> None:
-        self._dbpool = dbpool
+        self._db = db
         self._shared_config = shared_config
         self._event_dispatcher = event_dispatcher
         self._event_producer = event_producer
@@ -126,7 +126,7 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
         event: DoIdleCheckEvent,
     ) -> None:
         log.debug('do_idle_check(): triggered')
-        async with self._dbpool.begin() as conn:
+        async with self._db.begin() as conn:
             query = (
                 sa.select([kernels])
                 .select_from(kernels)
@@ -333,7 +333,7 @@ checker_registry: Mapping[str, Type[BaseIdleChecker]] = {
 
 
 async def create_idle_checkers(
-    dbpool: SAEngine,
+    db: SAEngine,
     shared_config: SharedConfig,
     event_dispatcher: EventDispatcher,
     event_producer: EventProducer,
@@ -352,6 +352,6 @@ async def create_idle_checkers(
             log.warning("ignoring an unknown idle checker name: {checker_name}")
             continue
         log.info(f"Initializing idle checker: {checker_name}")
-        checker_instance = await checker_cls.new(dbpool, shared_config, event_dispatcher, event_producer)
+        checker_instance = await checker_cls.new(db, shared_config, event_dispatcher, event_producer)
         instances.append(checker_instance)
     return instances
