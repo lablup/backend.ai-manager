@@ -139,7 +139,7 @@ async def test_handle_heartbeat(mocker) -> None:
     q_params = q.compile().params
     assert q_params['status'] == AgentStatus.ALIVE
     assert q_params['addr'] == '10.0.0.6'
-    assert q_params['lost_at'] == sa.null()
+    assert "lost_at=NULL" in str(q)  # stringified and removed from bind params
     assert q_params['available_slots'] == ResourceSlot({'cpu': '4', 'mem': '2g'})
     assert q_params['scaling_group'] == 'sg-testing2'
     assert 'compute_plugins' in q_params
