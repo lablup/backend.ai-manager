@@ -50,6 +50,7 @@ from ..manager import __version__
 from ..manager.background import BackgroundTaskManager
 from ..manager.exceptions import InvalidArgument
 from ..manager.idle import create_idle_checkers
+from ..manager.models.base import pgsql_connect_opts
 from ..manager.models.storage import StorageSessionManager
 from ..manager.plugin.webapp import WebappPluginContext
 from ..manager.registry import AgentRegistry
@@ -324,11 +325,10 @@ async def database_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     url = f"postgresql+asyncpg://{urlquote(username)}:{urlquote(password)}@{address}/{urlquote(dbname)}"
     root_ctx.dbpool = create_async_engine(
         url,
-        echo=False,
-        # echo=bool(root_ctx.local_config['logging']['level'] == 'DEBUG'),
+        echo=bool(root_ctx.local_config['logging']['level'] == 'DEBUG'),
+        connect_args=pgsql_connect_opts,
         pool_size=8,
-        pool_recycle=120,
-        # timeout=60,
+        max_overflow=64,
         json_serializer=functools.partial(json.dumps, cls=ExtendedJSONEncoder)
     )
     yield

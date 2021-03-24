@@ -78,6 +78,8 @@ convention = {
 }
 metadata = sa.MetaData(naming_convention=convention)
 
+pgsql_connect_opts = {'server_settings': {'jit': 'off'}}
+
 
 # helper functions
 def zero_if_none(val):
@@ -367,8 +369,8 @@ class _SQLBasedGQLObject(Protocol):
 
 
 async def batch_result(
-    ctx: GraphQueryContext,
-    conn: SAConnection,
+    graph_ctx: GraphQueryContext,
+    db_conn: SAConnection,
     query: sa.sql.Select,
     obj_type: Type[_GenericSQLBasedGQLObject],
     key_list: Iterable[_Key],
@@ -381,14 +383,14 @@ async def batch_result(
     objs_per_key = collections.OrderedDict()
     for key in key_list:
         objs_per_key[key] = None
-    async for row in (await conn.stream(query)):
-        objs_per_key[key_getter(row)] = obj_type.from_row(ctx, row)
+    async for row in (await db_conn.stream(query)):
+        objs_per_key[key_getter(row)] = obj_type.from_row(graph_ctx, row)
     return [*objs_per_key.values()]
 
 
 async def batch_multiresult(
-    ctx: GraphQueryContext,
-    conn: SAConnection,
+    graph_ctx: GraphQueryContext,
+    db_conn: SAConnection,
     query: sa.sql.Select,
     obj_type: Type[_GenericSQLBasedGQLObject],
     key_list: Iterable[_Key],
@@ -401,9 +403,9 @@ async def batch_multiresult(
     objs_per_key = collections.OrderedDict()
     for key in key_list:
         objs_per_key[key] = list()
-    async for row in (await conn.stream(query)):
+    async for row in (await db_conn.stream(query)):
         objs_per_key[key_getter(row)].append(
-            obj_type.from_row(ctx, row)
+            obj_type.from_row(graph_ctx, row)
         )
     return [*objs_per_key.values()]
 
@@ -567,47 +569,45 @@ ItemType = TypeVar('ItemType', bound=graphene.ObjectType)
 
 async def simple_db_mutate(
     result_cls: Type[ResultType],
-    ctx: GraphQueryContext,
+    graph_ctx: GraphQueryContext,
     mutation_query: sa.sql.Update | sa.sql.Insert,
 ) -> ResultType:
-    async with ctx.dbpool.connect() as conn, conn.begin():
-        try:
-            result = await conn.execute(mutation_query)
-            if result.rowcount > 0:
-                return result_cls(True, 'success')
-            else:
-                return result_cls(False, 'no matching record')
-        except sa.exc.IntegrityError as e:
-            return result_cls(False, f'integrity error: {e}')
-        except (asyncio.CancelledError, asyncio.TimeoutError):
-            raise
-        except Exception as e:
-            return result_cls(False, f'unexpected error: {e}')
+    try:
+        result = await graph_ctx.db_conn.execute(mutation_query)
+        if result.rowcount > 0:
+            return result_cls(True, 'success')
+        else:
+            return result_cls(False, 'no matching record')
+    except sa.exc.IntegrityError as e:
+        return result_cls(False, f'integrity error: {e}')
+    except (asyncio.CancelledError, asyncio.TimeoutError):
+        raise
+    except Exception as e:
+        return result_cls(False, f'unexpected error: {e}')
 
 
 async def simple_db_mutate_returning_item(
     result_cls: Type[ResultType],
-    ctx: GraphQueryContext,
+    graph_ctx: GraphQueryContext,
     mutation_query: sa.sql.Update | sa.sql.Insert,
     *,
     item_query: sa.sql.Select,
     item_cls: Type[ItemType],
 ) -> ResultType:
-    async with ctx.dbpool.connect() as conn, conn.begin():
-        try:
-            result = await conn.execute(mutation_query)
-            if result.rowcount > 0:
-                result = await conn.execute(item_query)
-                item = result.first()
-                return result_cls(True, 'success', item_cls.from_row(ctx, item))
-            else:
-                return result_cls(False, 'no matching record', None)
-        except sa.exc.IntegrityError as e:
-            return result_cls(False, f'integrity error: {e}', None)
-        except (asyncio.CancelledError, asyncio.TimeoutError):
-            raise
-        except Exception as e:
-            return result_cls(False, f'unexpected error: {e}', None)
+    try:
+        result = await graph_ctx.db_conn.execute(mutation_query)
+        if result.rowcount > 0:
+            result = await graph_ctx.db_conn.execute(item_query)
+            item = result.first()
+            return result_cls(True, 'success', item_cls.from_row(graph_ctx, item))
+        else:
+            return result_cls(False, 'no matching record', None)
+    except sa.exc.IntegrityError as e:
+        return result_cls(False, f'integrity error: {e}', None)
+    except (asyncio.CancelledError, asyncio.TimeoutError):
+        raise
+    except Exception as e:
+        return result_cls(False, f'unexpected error: {e}', None)
 
 
 def set_if_set(src: object, target: MutableMapping[str, Any], name: str, *, clean_func=None) -> None:

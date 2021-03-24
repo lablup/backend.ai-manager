@@ -4,7 +4,6 @@ import enum
 from typing import (
     Any,
     Mapping,
-    Optional,
     Sequence,
     TYPE_CHECKING,
 )
@@ -184,100 +183,98 @@ class Agent(graphene.ObjectType):
 
     @staticmethod
     async def load_count(
-        ctx: GraphQueryContext, *,
+        graph_ctx: GraphQueryContext, *,
         scaling_group: str = None,
         raw_status: str = None,
     ) -> int:
-        async with ctx.dbpool.connect() as conn:
-            query = (
-                sa.select([sa.func.count(agents.c.id)])
-                .select_from(agents)
-            )
-            if scaling_group is not None:
-                query = query.where(agents.c.scaling_group == scaling_group)
-            if raw_status is not None:
-                status = AgentStatus[raw_status]
-                query = query.where(agents.c.status == status)
-            result = await conn.execute(query)
-            return result.scalar()
+        query = (
+            sa.select([sa.func.count(agents.c.id)])
+            .select_from(agents)
+        )
+        if scaling_group is not None:
+            query = query.where(agents.c.scaling_group == scaling_group)
+        if raw_status is not None:
+            status = AgentStatus[raw_status]
+            query = query.where(agents.c.status == status)
+        result = await graph_ctx.db_conn.execute(query)
+        return result.scalar()
 
     @classmethod
     async def load_slice(
         cls,
-        ctx: GraphQueryContext,
+        graph_ctx: GraphQueryContext,
         limit: int, offset: int, *,
         scaling_group: str = None,
         raw_status: str = None,
         order_key: str = None,
         order_asc: bool = True,
     ) -> Sequence[Agent]:
-        async with ctx.dbpool.connect() as conn:
-            # TODO: optimization for pagination using subquery, join
-            if order_key is None:
-                _ordering = agents.c.id
-            else:
-                _order_func = sa.asc if order_asc else sa.desc
-                _ordering = _order_func(getattr(agents.c, order_key))
-            query = (
-                sa.select([agents])
-                .select_from(agents)
-                .order_by(_ordering)
-                .limit(limit)
-                .offset(offset)
-            )
-            if scaling_group is not None:
-                query = query.where(agents.c.scaling_group == scaling_group)
-            if raw_status is not None:
-                status = AgentStatus[raw_status]
-                query = query.where(agents.c.status == status)
-            return [
-                cls.from_row(ctx, row) async for row in (await conn.stream(query))
-            ]
+        # TODO: optimization for pagination using subquery, join
+        if order_key is None:
+            _ordering = agents.c.id
+        else:
+            _order_func = sa.asc if order_asc else sa.desc
+            _ordering = _order_func(getattr(agents.c, order_key))
+        query = (
+            sa.select([agents])
+            .select_from(agents)
+            .order_by(_ordering)
+            .limit(limit)
+            .offset(offset)
+        )
+        if scaling_group is not None:
+            query = query.where(agents.c.scaling_group == scaling_group)
+        if raw_status is not None:
+            status = AgentStatus[raw_status]
+            query = query.where(agents.c.status == status)
+        return [
+            cls.from_row(graph_ctx, row)
+            async for row in (await graph_ctx.db_conn.stream(query))
+        ]
 
     @classmethod
     async def load_all(
         cls,
-        ctx: GraphQueryContext, *,
+        graph_ctx: GraphQueryContext, *,
         scaling_group: str = None,
         raw_status: str = None,
     ) -> Sequence[Agent]:
-        async with ctx.dbpool.connect() as conn:
-            query = (
-                sa.select([agents])
-                .select_from(agents)
-            )
-            if scaling_group is not None:
-                query = query.where(agents.c.scaling_group == scaling_group)
-            if raw_status is not None:
-                status = AgentStatus[raw_status]
-                query = query.where(agents.c.status == status)
-            return [
-                cls.from_row(ctx, row) async for row in (await conn.stream(query))
-            ]
+        query = (
+            sa.select([agents])
+            .select_from(agents)
+        )
+        if scaling_group is not None:
+            query = query.where(agents.c.scaling_group == scaling_group)
+        if raw_status is not None:
+            status = AgentStatus[raw_status]
+            query = query.where(agents.c.status == status)
+        return [
+            cls.from_row(graph_ctx, row)
+            async for row in (await graph_ctx.db_conn.stream(query))
+        ]
 
     @classmethod
     async def batch_load(
         cls,
-        ctx: GraphQueryContext,
+        graph_ctx: GraphQueryContext,
         agent_ids: Sequence[AgentId], *,
         raw_status: str = None,
-    ) -> Sequence[Optional[Agent]]:
-        async with ctx.dbpool.connect() as conn:
-            query = (
-                sa.select([agents])
-                .select_from(agents)
-                .where(agents.c.id.in_(agent_ids))
-                .order_by(
-                    agents.c.id
-                )
+    ) -> Sequence[Agent | None]:
+        query = (
+            sa.select([agents])
+            .select_from(agents)
+            .where(agents.c.id.in_(agent_ids))
+            .order_by(
+                agents.c.id
             )
-            if raw_status is not None:
-                status = AgentStatus[raw_status]
-                query = query.where(agents.c.status == status)
-            return await batch_result(
-                ctx, conn, query, cls,
-                agent_ids, lambda row: row['id'],
-            )
+        )
+        if raw_status is not None:
+            status = AgentStatus[raw_status]
+            query = query.where(agents.c.status == status)
+        return await batch_result(
+            graph_ctx, graph_ctx.db_conn, query, cls,
+            agent_ids, lambda row: row['id'],
+        )
 
 
 class AgentList(graphene.ObjectType):

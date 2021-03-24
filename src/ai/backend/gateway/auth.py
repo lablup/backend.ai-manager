@@ -429,27 +429,27 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
                     .where(keypairs.c.access_key == access_key)
                 )
                 await conn.execute(query)
-                request['is_authorized'] = True
-                request['keypair'] = {
-                    col.name: row[f'keypairs_{col.name}']
-                    for col in keypairs.c
-                    if col.name != 'secret_key'
-                }
-                request['keypair']['resource_policy'] = {
-                    col.name: row[f'keypair_resource_policies_{col.name}']
-                    for col in keypair_resource_policies.c
-                }
-                request['user'] = {
-                    col.name: row[f'users_{col.name}']
-                    for col in users.c
-                    if col.name not in ('password', 'description', 'created_at')
-                }
-                request['user']['id'] = row['keypairs_user_id']  # legacy
-                # if request['role'] in ['admin', 'superadmin']:
-                if row['keypairs_is_admin']:
-                    request['is_admin'] = True
-                if request['user']['role'] == 'superadmin':
-                    request['is_superadmin'] = True
+        request['is_authorized'] = True
+        request['keypair'] = {
+            col.name: row[f'keypairs_{col.name}']
+            for col in keypairs.c
+            if col.name != 'secret_key'
+        }
+        request['keypair']['resource_policy'] = {
+            col.name: row[f'keypair_resource_policies_{col.name}']
+            for col in keypair_resource_policies.c
+        }
+        request['user'] = {
+            col.name: row[f'users_{col.name}']
+            for col in users.c
+            if col.name not in ('password', 'description', 'created_at')
+        }
+        request['user']['id'] = row['keypairs_user_id']  # legacy
+        # if request['role'] in ['admin', 'superadmin']:
+        if row['keypairs_is_admin']:
+            request['is_admin'] = True
+        if request['user']['role'] == 'superadmin':
+            request['is_superadmin'] = True
 
     # No matter if authenticated or not, pass-through to the handler.
     # (if it's required, auth_required decorator will handle the situation.)

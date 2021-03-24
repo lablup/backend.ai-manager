@@ -38,7 +38,7 @@ from ai.backend.gateway.server import (
 from ai.backend.gateway.types import (
     CleanupContext,
 )
-from ai.backend.manager.models.base import populate_fixture
+from ai.backend.manager.models.base import populate_fixture, pgsql_connect_opts
 from ai.backend.manager.models import (
     scaling_groups,
     agents,
@@ -184,7 +184,11 @@ def database(request, local_config, test_db):
         db_url = f'postgresql+asyncpg://{db_user}@{db_addr}/testing'
 
     async def init_db():
-        engine = sa.ext.asyncio.create_async_engine(db_url, isolation_level="AUTOCOMMIT")
+        engine = sa.ext.asyncio.create_async_engine(
+            db_url,
+            connect_args=pgsql_connect_opts,
+            isolation_level="AUTOCOMMIT",
+        )
         async with engine.connect() as conn:
             await conn.execute(sa.text(f'CREATE DATABASE "{test_db}";'))
         await engine.dispose()
@@ -192,7 +196,11 @@ def database(request, local_config, test_db):
     asyncio.run(init_db())
 
     async def finalize_db():
-        engine = sa.ext.asyncio.create_async_engine(db_url, isolation_level="AUTOCOMMIT")
+        engine = sa.ext.asyncio.create_async_engine(
+            db_url,
+            connect_args=pgsql_connect_opts,
+            isolation_level="AUTOCOMMIT",
+        )
         async with engine.connect() as conn:
             await conn.execute(sa.text(f'REVOKE CONNECT ON DATABASE "{test_db}" FROM public;'))
             await conn.execute(sa.text('SELECT pg_terminate_backend(pid) FROM pg_stat_activity '
@@ -244,9 +252,12 @@ def database_fixture(local_config, test_db, database):
     ))
 
     async def init_fixture():
-        engine: SAEngine = sa.ext.asyncio.create_async_engine(db_url)
+        engine: SAEngine = sa.ext.asyncio.create_async_engine(
+            db_url,
+            connect_args=pgsql_connect_opts,
+        )
         try:
-            await populate_fixture(engine, fixtures, ignore_unique_violation=True)
+            await populate_fixture(engine, fixtures)
         finally:
             await engine.dispose()
 
@@ -255,7 +266,10 @@ def database_fixture(local_config, test_db, database):
     yield
 
     async def clean_fixture():
-        engine: SAEngine = sa.ext.asyncio.create_async_engine(db_url)
+        engine: SAEngine = sa.ext.asyncio.create_async_engine(
+            db_url,
+            connect_args=pgsql_connect_opts,
+        )
         try:
             async with engine.begin() as conn:
                 await conn.execute((vfolders.delete()))
