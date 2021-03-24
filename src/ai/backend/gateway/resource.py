@@ -66,7 +66,7 @@ async def list_presets(request: web.Request) -> web.Response:
     log.info('LIST_PRESETS (ak:{})', request['keypair']['access_key'])
     root_ctx: RootContext = request.app['_root.context']
     await root_ctx.shared_config.get_resource_slots()
-    async with root_ctx.dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.db.begin() as conn:
         query = (
             sa.select([resource_presets])
             .select_from(resource_presets)
@@ -76,7 +76,7 @@ async def list_presets(request: web.Request) -> web.Response:
         # if scaling_group is not None:
         #     query = query.where(resource_presets.c.scaling_group == scaling_group)
         resp: MutableMapping[str, Any] = {'presets': []}
-        async for row in conn.execute(query):
+        async for row in (await conn.stream(query)):
             preset_slots = row['resource_slots'].normalize_slots(ignore_unknown=True)
             resp['presets'].append({
                 'name': row['name'],
@@ -122,7 +122,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
     log.info('CHECK_PRESETS (ak:{}, g:{}, sg:{})',
              request['keypair']['access_key'], params['group'], params['scaling_group'])
 
-    async with root_ctx.dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.db.begin() as conn:
         # Check keypair resource limit.
         keypair_limits = ResourceSlot.from_policy(resource_policy, known_slot_types)
         keypair_occupied = await root_ctx.registry.get_keypair_occupancy(access_key, conn=conn)
@@ -143,7 +143,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             )
         )
         result = await conn.execute(query)
-        row = await result.first()
+        row = result.first()
         group_id = row['id']
         group_resource_slots = row['total_resource_slots']
         if group_id is None:
@@ -201,7 +201,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
                 (kernels.c.scaling_group.in_(sgroup_names))
             )
         )
-        async for row in conn.execute(query):
+        async for row in (await conn.stream(query)):
             per_sgroup[row['scaling_group']]['using'] += row['occupied_slots']
 
         # Per scaling group resource remaining from agents stats.
@@ -215,7 +215,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             )
         )
         agent_slots = []
-        async for row in conn.execute(query):
+        async for row in (await conn.stream(query)):
             remaining = row['available_slots'] - row['occupied_slots']
             remaining += ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
             sgroup_remaining += remaining
@@ -238,7 +238,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             sa.select([resource_presets])
             .select_from(resource_presets)
         )
-        async for row in conn.execute(query):
+        async for row in (await conn.stream(query)):
             # Check if there are any agent that can allocate each preset.
             allocatable = False
             preset_slots = row['resource_slots'].normalize_slots(ignore_unknown=True)
@@ -291,7 +291,7 @@ async def recalculate_usage(request: web.Request) -> web.Response:
 
 async def get_container_stats_for_period(request: web.Request, start_date, end_date, group_ids=None):
     root_ctx: RootContext = request.app['_root.context']
-    async with root_ctx.dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.db.begin() as conn:
         j = (
             kernels
             .join(groups, groups.c.id == kernels.c.group_id)
@@ -312,7 +312,7 @@ async def get_container_stats_for_period(request: web.Request, start_date, end_d
         if group_ids:
             query = query.where(kernels.c.group_id.in_(group_ids))
         result = await conn.execute(query)
-        rows = await result.fetchall()
+        rows = result.fetchall()
 
     objs_per_group = {}
     local_tz = root_ctx.shared_config['system']['timezone']
@@ -512,7 +512,7 @@ async def get_time_binned_monthly_stats(request: web.Request, user_uuid=None):
     now = datetime.now(tzutc())
     start_date = now - timedelta(days=30)
     root_ctx: RootContext = request.app['_root.context']
-    async with root_ctx.dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.db.begin() as conn:
         query = (
             sa.select([kernels])
             .select_from(kernels)
@@ -525,7 +525,7 @@ async def get_time_binned_monthly_stats(request: web.Request, user_uuid=None):
         if user_uuid is not None:
             query = query.where(kernels.c.user_uuid == user_uuid)
         result = await conn.execute(query)
-        rows = await result.fetchall()
+        rows = result.fetchall()
 
     # Build time-series of time-binned stats.
     rowcount = result.rowcount

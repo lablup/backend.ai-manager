@@ -28,14 +28,16 @@ import uuid
 
 from aiodataloader import DataLoader
 from aiotools import apartial
-from aiopg.sa.connection import SAConnection
-from aiopg.sa.result import RowProxy
 import graphene
 from graphene.types import Scalar
 from graphql.language import ast
 from graphene.types.scalars import MIN_INT, MAX_INT
-import psycopg2 as pg
 import sqlalchemy as sa
+from sqlalchemy.engine.row import Row
+from sqlalchemy.ext.asyncio import (
+    AsyncConnection as SAConnection,
+    AsyncEngine as SAEngine,
+)
 from sqlalchemy.types import (
     SchemaType,
     TypeDecorator,
@@ -75,6 +77,8 @@ convention = {
     "pk": "pk_%(table_name)s",
 }
 metadata = sa.MetaData(naming_convention=convention)
+
+pgsql_connect_opts = {'server_settings': {'jit': 'off'}}
 
 
 # helper functions
@@ -359,18 +363,18 @@ class _SQLBasedGQLObject(Protocol):
     def from_row(
         cls: Type[_GenericSQLBasedGQLObject],
         ctx: GraphQueryContext,
-        row: RowProxy,
+        row: Row,
     ) -> _GenericSQLBasedGQLObject:
         ...
 
 
 async def batch_result(
-    ctx: GraphQueryContext,
-    conn: SAConnection,
+    graph_ctx: GraphQueryContext,
+    db_conn: SAConnection,
     query: sa.sql.Select,
     obj_type: Type[_GenericSQLBasedGQLObject],
     key_list: Iterable[_Key],
-    key_getter: Callable[[RowProxy], _Key],
+    key_getter: Callable[[Row], _Key],
 ) -> Sequence[Optional[_GenericSQLBasedGQLObject]]:
     """
     A batched query adaptor for (key -> item) resolving patterns.
@@ -379,18 +383,18 @@ async def batch_result(
     objs_per_key = collections.OrderedDict()
     for key in key_list:
         objs_per_key[key] = None
-    async for row in conn.execute(query):
-        objs_per_key[key_getter(row)] = obj_type.from_row(ctx, row)
+    async for row in (await db_conn.stream(query)):
+        objs_per_key[key_getter(row)] = obj_type.from_row(graph_ctx, row)
     return [*objs_per_key.values()]
 
 
 async def batch_multiresult(
-    ctx: GraphQueryContext,
-    conn: SAConnection,
+    graph_ctx: GraphQueryContext,
+    db_conn: SAConnection,
     query: sa.sql.Select,
     obj_type: Type[_GenericSQLBasedGQLObject],
     key_list: Iterable[_Key],
-    key_getter: Callable[[RowProxy], _Key],
+    key_getter: Callable[[Row], _Key],
 ) -> Sequence[Sequence[_GenericSQLBasedGQLObject]]:
     """
     A batched query adaptor for (key -> [item]) resolving patterns.
@@ -399,9 +403,9 @@ async def batch_multiresult(
     objs_per_key = collections.OrderedDict()
     for key in key_list:
         objs_per_key[key] = list()
-    async for row in conn.execute(query):
+    async for row in (await db_conn.stream(query)):
         objs_per_key[key_getter(row)].append(
-            obj_type.from_row(ctx, row)
+            obj_type.from_row(graph_ctx, row)
         )
     return [*objs_per_key.values()]
 
@@ -524,7 +528,7 @@ def privileged_mutation(required_role, target_func=None):
                         if ctx.user['domain_name'] == target_domain:
                             permit_chains.append(True)
                     if target_group is not None:
-                        async with ctx.dbpool.acquire() as conn, conn.begin():
+                        async with ctx.db.begin() as conn:
                             # check if the group is part of the requester's domain.
                             query = (
                                 groups.select()
@@ -565,47 +569,45 @@ ItemType = TypeVar('ItemType', bound=graphene.ObjectType)
 
 async def simple_db_mutate(
     result_cls: Type[ResultType],
-    ctx: GraphQueryContext,
+    graph_ctx: GraphQueryContext,
     mutation_query: sa.sql.Update | sa.sql.Insert,
 ) -> ResultType:
-    async with ctx.dbpool.acquire() as conn, conn.begin():
-        try:
-            result = await conn.execute(mutation_query)
-            if result.rowcount > 0:
-                return result_cls(True, 'success')
-            else:
-                return result_cls(False, 'no matching record')
-        except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-            return result_cls(False, f'integrity error: {e}')
-        except (asyncio.CancelledError, asyncio.TimeoutError):
-            raise
-        except Exception as e:
-            return result_cls(False, f'unexpected error: {e}')
+    try:
+        result = await graph_ctx.db_conn.execute(mutation_query)
+        if result.rowcount > 0:
+            return result_cls(True, 'success')
+        else:
+            return result_cls(False, 'no matching record')
+    except sa.exc.IntegrityError as e:
+        return result_cls(False, f'integrity error: {e}')
+    except (asyncio.CancelledError, asyncio.TimeoutError):
+        raise
+    except Exception as e:
+        return result_cls(False, f'unexpected error: {e}')
 
 
 async def simple_db_mutate_returning_item(
     result_cls: Type[ResultType],
-    ctx: GraphQueryContext,
+    graph_ctx: GraphQueryContext,
     mutation_query: sa.sql.Update | sa.sql.Insert,
     *,
     item_query: sa.sql.Select,
     item_cls: Type[ItemType],
 ) -> ResultType:
-    async with ctx.dbpool.acquire() as conn, conn.begin():
-        try:
-            result = await conn.execute(mutation_query)
-            if result.rowcount > 0:
-                result = await conn.execute(item_query)
-                item = await result.first()
-                return result_cls(True, 'success', item_cls.from_row(ctx, item))
-            else:
-                return result_cls(False, 'no matching record', None)
-        except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-            return result_cls(False, f'integrity error: {e}', None)
-        except (asyncio.CancelledError, asyncio.TimeoutError):
-            raise
-        except Exception as e:
-            return result_cls(False, f'unexpected error: {e}', None)
+    try:
+        result = await graph_ctx.db_conn.execute(mutation_query)
+        if result.rowcount > 0:
+            result = await graph_ctx.db_conn.execute(item_query)
+            item = result.first()
+            return result_cls(True, 'success', item_cls.from_row(graph_ctx, item))
+        else:
+            return result_cls(False, 'no matching record', None)
+    except sa.exc.IntegrityError as e:
+        return result_cls(False, f'integrity error: {e}', None)
+    except (asyncio.CancelledError, asyncio.TimeoutError):
+        raise
+    except Exception as e:
+        return result_cls(False, f'unexpected error: {e}', None)
 
 
 def set_if_set(src: object, target: MutableMapping[str, Any], name: str, *, clean_func=None) -> None:
@@ -618,42 +620,21 @@ def set_if_set(src: object, target: MutableMapping[str, Any], name: str, *, clea
             target[name] = v
 
 
-def populate_fixture(db_connection, fixture_data, *,
-                     ignore_unique_violation: bool = False):
-
-    def insert(table, row):
-        # convert enumtype to native values
-        for col in table.columns:
-            if isinstance(col.type, EnumType):
-                row[col.name] = col.type._enum_cls[row[col.name]]
-            elif isinstance(col.type, EnumValueType):
-                row[col.name] = col.type._enum_cls(row[col.name])
-        db_connection.execute(table.insert(), [row])
-
+async def populate_fixture(
+    engine: SAEngine,
+    fixture_data: Mapping[str, Sequence[Dict[str, Any]]],
+    *,
+    ignore_unique_violation: bool = False,
+) -> None:
     for table_name, rows in fixture_data.items():
-        table = getattr(models, table_name)
-        pk_cols = table.primary_key.columns
-        for row in rows:
-            if len(pk_cols) == 0:
-                # some tables may not have primary keys.
-                # (e.g., m2m relationship)
-                try:
-                    insert(table, row)
-                except sa.exc.IntegrityError as e:
-                    if ignore_unique_violation and isinstance(e.orig, pg.errors.UniqueViolation):
-                        continue
-                    raise
-                continue
-            # compose pk match where clause
-            pk_match = functools.reduce(lambda x, y: x & y, [
-                (col == row[col.name])
-                for col in pk_cols
-            ])
-            ret = db_connection.execute(
-                sa.select(pk_cols).select_from(table).where(pk_match))
-            if ret.rowcount == 0:
-                insert(table, row)
-            else:
-                pk_tuple = tuple(row[col.name] for col in pk_cols)
-                log.info('skipped inserting {} to {} as the row already exists.',
-                         f"[{','.join(pk_tuple)}]", table_name)
+        table: sa.Table = getattr(models, table_name)
+        assert isinstance(table, sa.Table)
+        async with engine.begin() as conn:
+            for col in table.columns:
+                if isinstance(col.type, EnumType):
+                    for row in rows:
+                        row[col.name] = col.type._enum_cls[row[col.name]]
+                elif isinstance(col.type, EnumValueType):
+                    for row in rows:
+                        row[col.name] = col.type._enum_cls(row[col.name])
+            await conn.execute(sa.dialects.postgresql.insert(table, rows).on_conflict_do_nothing())

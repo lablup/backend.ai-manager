@@ -60,7 +60,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
 
     root_ctx: RootContext = request.app['_root.context']
 
-    async with root_ctx.dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.db.begin() as conn:
         if requester_access_key != owner_access_key:
             # Admin or superadmin is creating sessions for another user.
             # The check for admin privileges is already done in get_access_key_scope().
@@ -70,7 +70,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 .where(keypairs.c.access_key == owner_access_key)
             )
             result = await conn.execute(query)
-            row = await result.first()
+            row = result.first()
             owner_domain = row['domain_name']
             owner_uuid = row['user']
             owner_role = row['role']
@@ -89,7 +89,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             )
         )
         qresult = await conn.execute(query)
-        domain_name = await qresult.scalar()
+        domain_name = qresult.scalar()
         if domain_name is None:
             raise InvalidAPIParameters('Invalid domain')
 
@@ -104,7 +104,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                     (groups.c.is_active)
                 ))
             qresult = await conn.execute(query)
-            group_id = await qresult.scalar()
+            group_id = qresult.scalar()
         elif owner_role == UserRole.ADMIN:
             # domain-admin can spawn container in any group in the same domain.
             if params['domain'] != owner_domain:
@@ -118,7 +118,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                     (groups.c.is_active)
                 ))
             qresult = await conn.execute(query)
-            group_id = await qresult.scalar()
+            group_id = qresult.scalar()
         else:
             # normal users can spawn containers in their group and domain.
             if params['domain'] != owner_domain:
@@ -133,7 +133,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                     (groups.c.is_active)
                 ))
             qresult = await conn.execute(query)
-            group_id = await qresult.scalar()
+            group_id = qresult.scalar()
         if group_id is None:
             raise InvalidAPIParameters('Invalid group')
 
@@ -182,7 +182,7 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
     user_uuid = request['user']['uuid']
 
     log.info('CLUSTER_TEMPLATE.LIST (ak:{})', access_key)
-    async with root_ctx.dbpool.acquire() as conn:
+    async with root_ctx.db.begin() as conn:
         entries: List[Mapping[str, Any]]
         if request['is_superadmin'] and params['all']:
             j = (
@@ -200,7 +200,7 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
             )
             result = await conn.execute(query)
             entries = []
-            async for row in result:
+            for row in result:
                 is_owner = True if row.session_templates_user == user_uuid else False
                 entries.append({
                     'name': row.session_templates_name,
@@ -263,7 +263,7 @@ async def get(request: web.Request, params: Any) -> web.Response:
     template_id = request.match_info['template_id']
     root_ctx: RootContext = request.app['_root.context']
 
-    async with root_ctx.dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.db.begin() as conn:
         query = (sa.select([session_templates.c.template])
                    .select_from(session_templates)
                    .where((session_templates.c.id == template_id) &
@@ -299,7 +299,7 @@ async def put(request: web.Request, params: Any) -> web.Response:
         owner_access_key if owner_access_key != requester_access_key else '*'
     )
 
-    async with root_ctx.dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.db.begin() as conn:
         query = (sa.select([session_templates.c.id])
                    .select_from(session_templates)
                    .where((session_templates.c.id == template_id) &
@@ -342,7 +342,7 @@ async def delete(request: web.Request, params: Any) -> web.Response:
         owner_access_key if owner_access_key != requester_access_key else '*'
     )
 
-    async with root_ctx.dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.db.begin() as conn:
         query = (sa.select([session_templates.c.id])
                    .select_from(session_templates)
                    .where((session_templates.c.id == template_id) &

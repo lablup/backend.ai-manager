@@ -45,7 +45,7 @@ import sqlalchemy as sa
 from sqlalchemy.sql.expression import true, null
 import trafaret as t
 if TYPE_CHECKING:
-    from aiopg.sa.connection import SAConnection
+    from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
 from ai.backend.common import redis, validators as tx
 from ai.backend.common.docker import ImageRef
@@ -287,7 +287,7 @@ async def _query_userinfo(
             .where(keypairs.c.access_key == owner_access_key)
         )
         result = await conn.execute(query)
-        row = await result.first()
+        row = result.first()
         owner_domain = row['domain_name']
         owner_uuid = row['user']
         owner_role = row['role']
@@ -297,7 +297,7 @@ async def _query_userinfo(
             .where(keypair_resource_policies.c.name == row['resource_policy'])
         )
         result = await conn.execute(query)
-        resource_policy = await result.first()
+        resource_policy = result.first()
     else:
         # Normal case when the user is creating her/his own session.
         owner_domain = request['user']['domain_name']
@@ -314,7 +314,7 @@ async def _query_userinfo(
         )
     )
     qresult = await conn.execute(query)
-    domain_name = await qresult.scalar()
+    domain_name = qresult.scalar()
     if domain_name is None:
         raise InvalidAPIParameters('Invalid domain')
 
@@ -329,7 +329,7 @@ async def _query_userinfo(
                 (groups.c.is_active)
             ))
         qresult = await conn.execute(query)
-        group_id = await qresult.scalar()
+        group_id = qresult.scalar()
     elif owner_role == UserRole.ADMIN:
         # domain-admin can spawn container in any group in the same domain.
         if params['domain'] != owner_domain:
@@ -343,7 +343,7 @@ async def _query_userinfo(
                 (groups.c.is_active)
             ))
         qresult = await conn.execute(query)
-        group_id = await qresult.scalar()
+        group_id = qresult.scalar()
     else:
         # normal users can spawn containers in their group and domain.
         if params['domain'] != owner_domain:
@@ -358,14 +358,14 @@ async def _query_userinfo(
                 (groups.c.is_active)
             ))
         qresult = await conn.execute(query)
-        group_id = await qresult.scalar()
+        group_id = qresult.scalar()
     if group_id is None:
         raise InvalidAPIParameters('Invalid group')
 
     return owner_uuid, group_id, resource_policy
 
 
-async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
+async def _create(request: web.Request, params: Any, db) -> web.Response:
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
     scopes_param = {
@@ -406,7 +406,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     try:
         requested_image_ref = \
             await ImageRef.resolve_alias(params['image'], root_ctx.shared_config.etcd)
-        async with dbpool.acquire() as conn, conn.begin():
+        async with db.begin() as conn:
             query = (sa.select([domains.c.allowed_docker_registries])
                        .select_from(domains)
                        .where(domains.c.name == params['domain']))
@@ -463,15 +463,16 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     session_creation_tracker = app_ctx.session_creation_tracker
     session_creation_tracker[session_creation_id] = start_event
 
-    try:
-        async with dbpool.acquire() as conn, conn.begin():
-            owner_uuid, group_id, resource_policy = await _query_userinfo(request, params, conn)
+    async with db.begin() as conn:
+        owner_uuid, group_id, resource_policy = await _query_userinfo(request, params, conn)
 
-            # Use keypair bootstrap_script if it is not delivered as a parameter
-            # (only for INTERACTIVE sessions).
-            if params['session_type'] == SessionTypes.INTERACTIVE and not params['bootstrap_script']:
-                script, _ = await query_bootstrap_script(conn, owner_access_key)
-                params['bootstrap_script'] = script
+        # Use keypair bootstrap_script if it is not delivered as a parameter
+        # (only for INTERACTIVE sessions).
+        if params['session_type'] == SessionTypes.INTERACTIVE and not params['bootstrap_script']:
+            script, _ = await query_bootstrap_script(conn, owner_access_key)
+            params['bootstrap_script'] = script
+
+    try:
 
         kernel_id = await asyncio.shield(root_ctx.registry.enqueue_session(
             session_creation_id,
@@ -518,7 +519,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
                 resp['status'] = 'TIMEOUT'
             else:
                 await asyncio.sleep(0.5)
-                async with root_ctx.dbpool.acquire() as conn, conn.begin():
+                async with root_ctx.db.begin() as conn:
                     query = (
                         sa.select([
                             kernels.c.status,
@@ -528,7 +529,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
                         .where(kernels.c.id == kernel_id)
                     )
                     result = await conn.execute(query)
-                    row = await result.first()
+                    row = result.first()
                 if row['status'] == KernelStatus.RUNNING:
                     resp['status'] = 'RUNNING'
                     for item in row['service_ports']:
@@ -612,7 +613,7 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
         log.debug('Validation error: {0}', e.as_dict())
         raise InvalidAPIParameters('Input validation error',
                                    extra_data=e.as_dict())
-    async with root_ctx.dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.db.begin() as conn:
         query = (
                     sa.select([session_templates.c.template])
                       .select_from(session_templates)
@@ -708,7 +709,7 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
         bootstrap += '\n'
         bootstrap += cmd_builder
         params['bootstrap_script'] = base64.b64encode(bootstrap.encode()).decode()
-    return await _create(request, params, root_ctx.dbpool)
+    return await _create(request, params, root_ctx.db)
 
 
 @server_status_required(ALL_ALLOWED)
@@ -757,7 +758,7 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
         raise InvalidAPIParameters('API version not supported')
     params['config'] = creation_config
 
-    return await _create(request, params, root_ctx.dbpool)
+    return await _create(request, params, root_ctx.db)
 
 
 @server_status_required(ALL_ALLOWED)
@@ -806,7 +807,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
     else:
         raise SessionAlreadyExists
 
-    async with root_ctx.dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.db.begin() as conn:
         query = (
             sa.select([session_templates.c.template])
             .select_from(session_templates)
@@ -911,7 +912,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
                 requested_image_ref = \
                     await ImageRef.resolve_alias(kernel_config['image_ref'],
                                                  root_ctx.shared_config.etcd)
-                async with root_ctx.dbpool.acquire() as conn, conn.begin():
+                async with root_ctx.db.begin() as conn:
                     query = (sa.select([domains.c.allowed_docker_registries])
                              .select_from(domains)
                              .where(domains.c.name == params['domain']))
@@ -937,7 +938,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
     assert current_task is not None
 
     try:
-        async with root_ctx.dbpool.acquire() as conn, conn.begin():
+        async with root_ctx.db.begin() as conn:
             owner_uuid, group_id, resource_policy = await _query_userinfo(request, params, conn)
 
         session_id = await asyncio.shield(root_ctx.registry.enqueue_session(
@@ -973,7 +974,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
                 resp['status'] = 'TIMEOUT'
             else:
                 await asyncio.sleep(0.5)
-                async with root_ctx.dbpool.acquire() as conn, conn.begin():
+                async with root_ctx.db.begin() as conn:
                     query = (
                         sa.select([
                             kernels.c.status,
@@ -983,7 +984,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
                         .where(kernels.c.id == kernel_id)
                     )
                     result = await conn.execute(query)
-                    row = await result.first()
+                    row = result.first()
                 if row['status'] == KernelStatus.RUNNING:
                     resp['status'] = 'RUNNING'
                     for item in row['service_ports']:
@@ -1226,7 +1227,7 @@ async def handle_kernel_log(
             chunk = await redis.execute_with_retries(lambda: redis_conn.lpop(log_key))
             log_buffer.write(chunk)
         try:
-            async with root_ctx.dbpool.acquire() as conn, conn.begin():
+            async with root_ctx.db.begin() as conn:
                 query = (sa.update(kernels)
                            .values(container_log=log_buffer.getvalue())
                            .where(kernels.c.id == event.kernel_id))
@@ -1253,7 +1254,7 @@ async def report_stats(root_ctx: RootContext) -> None:
     await stats_monitor.report_metric(
         GAUGE, 'ai.backend.gateway.agent_instances', len(all_inst_ids))
 
-    async with root_ctx.dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.db.begin() as conn:
         query = (sa.select([sa.func.sum(keypairs.c.concurrency_used)])
                    .select_from(keypairs))
         n = await conn.scalar(query)
@@ -1347,7 +1348,7 @@ async def match_sessions(request: web.Request, params: Any) -> web.Response:
     log.info('MATCH_SESSIONS(ak:{0}/{1}, prefix:{2})',
              requester_access_key, owner_access_key, id_or_name_prefix)
     matches: List[Dict[str, Any]] = []
-    async with root_ctx.dbpool.acquire() as conn:
+    async with root_ctx.db.begin() as conn:
         session_infos = await match_session_ids(
             id_or_name_prefix,
             owner_access_key,
@@ -1768,7 +1769,7 @@ async def get_container_logs(request: web.Request, params: Any) -> web.Response:
     log.info('GET_CONTAINER_LOG (ak:{}/{}, s:{})',
              requester_access_key, owner_access_key, session_name)
     resp = {'result': {'logs': ''}}
-    async with root_ctx.dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.db.begin() as conn:
         compute_session = await root_ctx.registry.get_session(
             session_name, owner_access_key,
             allow_stale=True,
@@ -1807,7 +1808,7 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
     user_role = request['user']['role']
     user_uuid = request['user']['uuid']
     kernel_id_str = params['kernel_id'].hex
-    async with root_ctx.dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.db.begin() as conn:
         matched_vfolders = await query_accessible_vfolders(
             conn, user_uuid,
             user_role=user_role, domain_name=domain_name,
