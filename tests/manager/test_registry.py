@@ -5,7 +5,6 @@ from typing import (
 from unittest.mock import MagicMock, AsyncMock
 
 import snappy
-import sqlalchemy as sa
 from sqlalchemy.sql.dml import Insert, Update
 
 from ai.backend.manager.registry import AgentRegistry
