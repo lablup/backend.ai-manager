@@ -584,9 +584,9 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
         )
     if user is None:
         raise AuthorizationFailed('User credential mismatch.')
-    if user.get('status') == UserStatus.BEFORE_VERIFICATION:
+    if user['status'] == UserStatus.BEFORE_VERIFICATION:
         raise AuthorizationFailed('This account needs email verification.')
-    if user.get('status') in INACTIVE_USER_STATUSES:
+    if user['status'] in INACTIVE_USER_STATUSES:
         raise AuthorizationFailed('User credential mismatch.')
     async with root_ctx.db.begin() as conn:
         query = (sa.select([keypairs.c.access_key, keypairs.c.secret_key])
