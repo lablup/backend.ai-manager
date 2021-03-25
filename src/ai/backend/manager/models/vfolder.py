@@ -384,7 +384,7 @@ async def query_accessible_vfolders(
                 'group_name': row.groups_name,
                 'is_owner': is_owner,
                 'permission': row.vfolders_permission,
-                'unmanaged_path': row.unmanaged_path,
+                'unmanaged_path': row.vfolders_unmanaged_path,
                 'cloneable': row.vfolders_cloneable,
             })
     return entries
