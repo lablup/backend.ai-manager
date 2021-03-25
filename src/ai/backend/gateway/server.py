@@ -31,6 +31,7 @@ import aiotools
 import click
 from pathlib import Path
 from setproctitle import setproctitle
+import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from ai.backend.common import redis
@@ -323,6 +324,15 @@ async def database_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     address = root_ctx.local_config['db']['addr']
     dbname = root_ctx.local_config['db']['name']
     url = f"postgresql+asyncpg://{urlquote(username)}:{urlquote(password)}@{address}/{urlquote(dbname)}"
+
+    version_check_db = create_async_engine(url)
+    async with version_check_db.connect() as conn:
+        result = await conn.execute(sa.text("show server_version"))
+        major, minor, *_ = map(int, result.scalar().split("."))
+        if (major, minor) < (11, 0):
+            pgsql_connect_opts['server_settings'].pop("jit")
+    await version_check_db.dispose()
+
     root_ctx.db = create_async_engine(
         url,
         connect_args=pgsql_connect_opts,
@@ -549,8 +559,12 @@ def build_root_app(
         # aiohttp's cleanup contexts are just async generators, not async context managers.
         cctx_instance = cctx(app['_root.context'])
         app['_cctx_instances'].append(cctx_instance)
-        async with cctx_instance:
-            yield
+        try:
+            async with cctx_instance:
+                yield
+        except Exception as e:
+            exc_info = (type(e), e, e.__traceback__)
+            log.error('Error initializing cleanup_contexts: {0}', cctx.__name__, exc_info=exc_info)
 
     async def _call_cleanup_context_shutdown_handlers(app: web.Application) -> None:
         for cctx in app['_cctx_instances']:
