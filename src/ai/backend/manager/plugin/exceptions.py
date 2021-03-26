@@ -2,7 +2,7 @@
 This module defines a series of Backend.AI's plugin-specific errors.
 """
 from aiohttp import web
-from ai.backend.gateway.exceptions import BackendError
+from ai.backend.manager.api.exceptions import BackendError
 
 
 class PluginError(web.HTTPBadRequest, BackendError):

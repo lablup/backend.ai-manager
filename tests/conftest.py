@@ -30,12 +30,14 @@ import sqlalchemy as sa
 import pytest
 from sqlalchemy.ext.asyncio.engine import AsyncEngine as SAEngine
 
-from ai.backend.gateway.config import LocalConfig, SharedConfig, load as load_config
-from ai.backend.gateway.context import RootContext
-from ai.backend.gateway.server import (
+from ai.backend.common.config import redis_config_iv
+from ai.backend.common.types import HostPortPair
+from ai.backend.manager.api.context import RootContext
+from ai.backend.manager.config import LocalConfig, SharedConfig, load as load_config
+from ai.backend.manager.server import (
     build_root_app,
 )
-from ai.backend.gateway.types import (
+from ai.backend.manager.types import (
     CleanupContext,
 )
 from ai.backend.manager.models.base import populate_fixture, pgsql_connect_opts
@@ -44,8 +46,6 @@ from ai.backend.manager.models import (
     agents,
     kernels, keypairs, vfolders,
 )
-from ai.backend.common.config import redis_config_iv
-from ai.backend.common.types import HostPortPair
 
 here = Path(__file__).parent
 

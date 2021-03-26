@@ -97,7 +97,7 @@ to keep the codebase up-to-date.
 
 ```console
 $ cd manager
-$ pip install -U -e ../common
+$ pip install -U -e ../common -r requirements/dev.txt
 ```
 
 #### Steps
@@ -110,41 +110,43 @@ $ cp config/halfstack.alembic.ini ./alembic.ini
 
 Set up Redis:
 ```console
-$ python -m ai.backend.manager.cli etcd put config/redis/addr 127.0.0.1:8110
+$ backend.ai mgr etcd put config/redis/addr 127.0.0.1:8110
 ```
+
+> ℹ️ NOTE: You may replace `backend.ai mgr` with `python -m ai.backend.manager.cli` in case your `PATH` is unmodifiable.
 
 Set up the public Docker registry:
 ```console
-$ python -m ai.backend.manager.cli etcd put config/docker/registry/index.docker.io "https://registry-1.docker.io"
-$ python -m ai.backend.manager.cli etcd put config/docker/registry/index.docker.io/username "lablup"
-$ python -m ai.backend.manager.cli etcd rescan-images index.docker.io
+$ backend.ai mgr etcd put config/docker/registry/index.docker.io "https://registry-1.docker.io"
+$ backend.ai mgr etcd put config/docker/registry/index.docker.io/username "lablup"
+$ backend.ai mgr etcd rescan-images index.docker.io
 ```
 
 Set up the vfolder paths:
 ```console
 $ mkdir -p "$HOME/vfroot/local"
-$ python -m ai.backend.manager.cli etcd put volumes/_mount "$HOME/vfroot"
-$ python -m ai.backend.manager.cli etcd put volumes/_default_host local
+$ backend.ai mgr etcd put volumes/_mount "$HOME/vfroot"
+$ backend.ai mgr etcd put volumes/_default_host local
 ```
 
 Set up the allowed types of vfolder. Allowed values are "user" or "group".
 If none is specified, "user" type is set implicitly:
 ```console
-$ python -m ai.backend.manager.cli etcd put volumes/_types/user ""   # enable user vfolder
-$ python -m ai.backend.manager.cli etcd put volumes/_types/group ""  # enable group vfolder
+$ backend.ai mgr etcd put volumes/_types/user ""   # enable user vfolder
+$ backend.ai mgr etcd put volumes/_types/group ""  # enable group vfolder
 ```
 
 Set up the database:
 ```console
-$ python -m ai.backend.manager.cli schema oneshot
-$ python -m ai.backend.manager.cli fixture populate sample-configs/example-keypairs.json
-$ python -m ai.backend.manager.cli fixture populate sample-configs/example-resource-presets.json
+$ backend.ai mgr schema oneshot
+$ backend.ai mgr fixture populate sample-configs/example-keypairs.json
+$ backend.ai mgr fixture populate sample-configs/example-resource-presets.json
 ```
 
 Then, run it (for debugging, append a `--debug` flag):
 
 ```console
-$ python -m ai.backend.gateway.server
+$ backend.ai mgr start-server
 ```
 
 To run tests:

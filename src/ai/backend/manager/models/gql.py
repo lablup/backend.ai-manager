@@ -23,8 +23,8 @@ if TYPE_CHECKING:
         SessionId,
     )
 
-    from ai.backend.gateway.config import LocalConfig, SharedConfig
-    from ai.backend.gateway.manager import ManagerStatus
+    from ..api.manager import ManagerStatus
+    from ..config import LocalConfig, SharedConfig
     from ..registry import AgentRegistry
     from ..background import BackgroundTaskManager
     from .storage import StorageSessionManager
@@ -116,7 +116,7 @@ from .vfolder import (
     VirtualFolder,
     VirtualFolderList,
 )
-from ...gateway.exceptions import (
+from ..api.exceptions import (
     GenericNotFound,
     ImageNotFound,
     InsufficientPrivilege,

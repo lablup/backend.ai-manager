@@ -27,6 +27,8 @@ from ai.backend.common import msgpack
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ResourceSlot
 
+from ..api.exceptions import VFolderOperationFailed
+from ..defs import RESERVED_DOTFILES
 from .base import (
     metadata, GUID, IDColumn, ResourceSlotColumn,
     privileged_mutation,
@@ -35,12 +37,11 @@ from .base import (
     simple_db_mutate_returning_item,
     batch_result,
 )
-from ai.backend.gateway.exceptions import VFolderOperationFailed
 from .storage import StorageSessionManager
 from .user import ModifyUserInput, UserRole
-from ..defs import RESERVED_DOTFILES
+
 if TYPE_CHECKING:
-    from ai.backend.manager.models.gql import GraphQueryContext
+    from .gql import GraphQueryContext
     from .scaling_group import ScalingGroup
 
 log = BraceStyleAdapter(logging.getLogger(__file__))
