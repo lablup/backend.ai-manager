@@ -47,12 +47,13 @@ import ai.backend.common.validators as tx
 if TYPE_CHECKING:
     from ai.backend.common.types import AgentId, SessionId
 
+from .defs import REDIS_LIVE_DB
 from .distributed import GlobalTimer
 from .models import kernels, keypairs, keypair_resource_policies
 from .models.kernel import LIVE_STATUS
-from ..gateway.defs import REDIS_LIVE_DB
+
 if TYPE_CHECKING:
-    from ..gateway.config import SharedConfig
+    from .config import SharedConfig
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.idle'))
 

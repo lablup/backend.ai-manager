@@ -46,15 +46,10 @@ from ai.backend.common.types import (
     SessionId,
 )
 
-from ai.backend.manager.exceptions import convert_to_status_data
-if TYPE_CHECKING:
-    from ai.backend.gateway.config import LocalConfig, SharedConfig
-
-from ai.backend.manager.distributed import GlobalTimer
-from ...gateway.defs import REDIS_STREAM_DB
-from ...gateway.exceptions import InstanceNotAvailable
-if TYPE_CHECKING:
-    from ..registry import AgentRegistry
+from ..api.exceptions import InstanceNotAvailable
+from ..distributed import GlobalTimer
+from ..defs import REDIS_STREAM_DB
+from ..exceptions import convert_to_status_data
 from ..models import (
     agents, kernels, keypairs, scaling_groups,
     recalc_agent_resource_occupancy,
@@ -82,6 +77,10 @@ from .predicates import (
     check_domain_resource_limit,
     check_scaling_group,
 )
+
+if TYPE_CHECKING:
+    from ..config import LocalConfig, SharedConfig
+    from ..registry import AgentRegistry
 
 __all__ = (
     'load_scheduler',

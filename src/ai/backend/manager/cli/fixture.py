@@ -13,8 +13,9 @@ import sqlalchemy as sa
 from ai.backend.common.logging import BraceStyleAdapter
 
 from ..models.base import populate_fixture
+
 if TYPE_CHECKING:
-    from .__main__ import CLIContext
+    from .context import CLIContext
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 

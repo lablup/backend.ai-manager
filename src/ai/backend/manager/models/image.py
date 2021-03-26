@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from ..background import ProgressReporter
     from .gql import GraphQueryContext
 
-log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
+log = BraceStyleAdapter(logging.getLogger(__name__))
 
 __all__ = (
     'Image',

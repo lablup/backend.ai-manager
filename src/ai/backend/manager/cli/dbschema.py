@@ -14,7 +14,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 
 from ..models.base import metadata
 if TYPE_CHECKING:
-    from .__main__ import CLIContext
+    from .context import CLIContext
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 

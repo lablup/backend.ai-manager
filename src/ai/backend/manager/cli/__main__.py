@@ -8,20 +8,15 @@ import subprocess
 import sys
 from pathlib import Path
 
-import attr
 import click
 
 from ai.backend.common.cli import LazyGroup
 from ai.backend.common.logging import Logger, BraceStyleAdapter
-from ai.backend.gateway.config import LocalConfig, load as load_config
+
+from ..config import load as load_config
+from .context import CLIContext
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.cli'))
-
-
-@attr.s(auto_attribs=True, frozen=True)
-class CLIContext:
-    logger: Logger
-    local_config: LocalConfig
 
 
 @click.group(invoke_without_command=True, context_settings={'help_option_names': ['-h', '--help']})
