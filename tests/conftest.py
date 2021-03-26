@@ -37,7 +37,7 @@ from ai.backend.manager.config import LocalConfig, SharedConfig, load as load_co
 from ai.backend.manager.server import (
     build_root_app,
 )
-from ai.backend.manager.types import (
+from ai.backend.manager.api.types import (
     CleanupContext,
 )
 from ai.backend.manager.models.base import populate_fixture, pgsql_connect_opts
