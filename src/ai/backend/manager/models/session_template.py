@@ -1,13 +1,18 @@
+from __future__ import annotations
+
 import enum
 from typing import (
     Any,
+    Iterable,
     List,
     Mapping,
     Sequence,
 )
+import uuid
 
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
+from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 import trafaret as t
 
 from ai.backend.common import validators as tx
@@ -132,31 +137,41 @@ def check_cluster_template(raw_data: Mapping[str, Any]) -> Mapping[str, Any]:
     return data
 
 
-async def query_accessible_session_templates(conn, user_uuid, template_type: TemplateType, *,
-                                             user_role=None, domain_name=None,
-                                             allowed_types=['user'],
-                                             extra_conds=None):
+async def query_accessible_session_templates(
+    conn: SAConnection,
+    user_uuid: uuid.UUID,
+    template_type: TemplateType,
+    *,
+    user_role: UserRole = None,
+    domain_name: str = None,
+    allowed_types: Iterable[str] = ['user'],
+    extra_conds=None,
+) -> List[Mapping[str, Any]]:
     from ai.backend.manager.models import groups, users, association_groups_users as agus
-    entries = []
+    entries: List[Mapping[str, Any]] = []
     if 'user' in allowed_types:
         # Query user templates
         j = (session_templates.join(users, session_templates.c.user_uuid == users.c.uuid))
-        query = (sa.select([
-                        session_templates.c.name,
-                        session_templates.c.id,
-                        session_templates.c.created_at,
-                        session_templates.c.user_uuid,
-                        session_templates.c.group_id,
-                        users.c.email
-                    ])
-                    .select_from(j)
-                    .where((session_templates.c.user_uuid == user_uuid) &
-                           session_templates.c.is_active &
-                           (session_templates.c.type == template_type)))
+        query = (
+            sa.select([
+                session_templates.c.name,
+                session_templates.c.id,
+                session_templates.c.created_at,
+                session_templates.c.user_uuid,
+                session_templates.c.group_id,
+                users.c.email
+            ])
+            .select_from(j)
+            .where(
+                (session_templates.c.user_uuid == user_uuid) &
+                session_templates.c.is_active &
+                (session_templates.c.type == template_type)
+            )
+        )
         if extra_conds is not None:
             query = query.where(extra_conds)
         result = await conn.execute(query)
-        async for row in result:
+        for row in result:
             entries.append({
                 'name': row.name,
                 'id': row.id,
@@ -170,39 +185,47 @@ async def query_accessible_session_templates(conn, user_uuid, template_type: Tem
     if 'group' in allowed_types:
         # Query group session_templates
         if user_role == UserRole.ADMIN or user_role == 'admin':
-            query = (sa.select([groups.c.id])
-                        .select_from(groups)
-                        .where(groups.c.domain_name == domain_name))
+            query = (
+                sa.select([groups.c.id])
+                .select_from(groups)
+                .where(groups.c.domain_name == domain_name)
+            )
             result = await conn.execute(query)
-            grps = await result.fetchall()
+            grps = result.fetchall()
             group_ids = [g.id for g in grps]
         else:
             j = sa.join(agus, users, agus.c.user_id == users.c.uuid)
-            query = (sa.select([agus.c.group_id])
-                        .select_from(j)
-                        .where(agus.c.user_id == user_uuid))
+            query = (
+                sa.select([agus.c.group_id])
+                .select_from(j)
+                .where(agus.c.user_id == user_uuid)
+            )
             result = await conn.execute(query)
-            grps = await result.fetchall()
+            grps = result.fetchall()
             group_ids = [g.group_id for g in grps]
         j = (session_templates.join(groups, session_templates.c.group_id == groups.c.id))
-        query = (sa.select([
-                        session_templates.c.name,
-                        session_templates.c.id,
-                        session_templates.c.created_at,
-                        session_templates.c.user_uuid,
-                        session_templates.c.group_id,
-                        groups.c.name
-                    ], use_labels=True)
-                    .where(session_templates.c.group_id.in_(group_ids) &
-                           session_templates.c.is_active &
-                           (session_templates.c.type == template_type)))
+        query = (
+            sa.select([
+                session_templates.c.name,
+                session_templates.c.id,
+                session_templates.c.created_at,
+                session_templates.c.user_uuid,
+                session_templates.c.group_id,
+                groups.c.name
+            ], use_labels=True)
+            .where(
+                session_templates.c.group_id.in_(group_ids) &
+                session_templates.c.is_active &
+                (session_templates.c.type == template_type)
+            )
+        )
         if extra_conds is not None:
             query = query.where(extra_conds)
         if 'user' in allowed_types:
             query = query.where(session_templates.c.user_uuid != user_uuid)
         result = await conn.execute(query)
         is_owner = (user_role == UserRole.ADMIN or user_role == 'admin')
-        async for row in result:
+        for row in result:
             entries.append({
                 'name': row.session_templates_name,
                 'id': row.session_templates_id,

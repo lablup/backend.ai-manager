@@ -14,8 +14,8 @@ from typing import (
 )
 import uuid
 
-from aiopg.sa.connection import SAConnection
 import attr
+from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.docker import (

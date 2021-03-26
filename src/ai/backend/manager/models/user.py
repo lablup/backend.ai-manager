@@ -5,24 +5,29 @@ import enum
 import logging
 from typing import (
     Any,
+    Dict,
     Iterable,
-    Mapping,
     Optional,
     Sequence,
+    TYPE_CHECKING,
 )
-import uuid
+from uuid import UUID, uuid4
 
 import aiohttp
-from aiopg.sa.connection import SAConnection
-from aiopg.sa.result import RowProxy
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 from passlib.hash import bcrypt
-import psycopg2 as pg
 import sqlalchemy as sa
+from sqlalchemy.engine.row import Row
+from sqlalchemy.ext.asyncio import (
+    AsyncConnection as SAConnection,
+    AsyncEngine as SAEngine,
+)
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
 from ai.backend.common.logging import BraceStyleAdapter
+
+from ..api.exceptions import VFolderOperationFailed
 from .base import (
     EnumValueType,
     IDColumn,
@@ -33,8 +38,10 @@ from .base import (
     batch_result,
     batch_multiresult,
 )
-from ai.backend.gateway.exceptions import VFolderOperationFailed
 from .storage import StorageSessionManager
+
+if TYPE_CHECKING:
+    from .gql import GraphQueryContext
 
 log = BraceStyleAdapter(logging.getLogger(__file__))
 
@@ -117,7 +124,7 @@ class UserGroup(graphene.ObjectType):
     name = graphene.String()
 
     @classmethod
-    def from_row(cls, context, row):
+    def from_row(cls, ctx: GraphQueryContext, row: Row) -> Optional[UserGroup]:
         if row is None:
             return None
         return cls(
@@ -126,8 +133,8 @@ class UserGroup(graphene.ObjectType):
         )
 
     @classmethod
-    async def batch_load_by_user_id(cls, context, user_ids):
-        async with context['dbpool'].acquire() as conn:
+    async def batch_load_by_user_id(cls, ctx: GraphQueryContext, user_ids: Sequence[UUID]):
+        async with ctx.db.begin() as conn:
             from .group import groups, association_groups_users as agus
             j = agus.join(groups, agus.c.group_id == groups.c.id)
             query = (
@@ -136,7 +143,7 @@ class UserGroup(graphene.ObjectType):
                 .where(agus.c.user_id.in_(user_ids))
             )
             return await batch_multiresult(
-                context, conn, query, cls,
+                ctx, conn, query, cls,
                 user_ids, lambda row: row['user_id'],
             )
 
@@ -167,15 +174,16 @@ class User(graphene.ObjectType):
         self,
         info: graphene.ResolveInfo,
     ) -> Iterable[UserGroup]:
-        manager = info.context['dlmgr']
-        loader = manager.get_loader('UserGroup.by_user_id')
+        ctx: GraphQueryContext = info.context
+        manager = ctx.dataloader_manager
+        loader = manager.get_loader(ctx, 'UserGroup.by_user_id')
         return await loader.load(self.id)
 
     @classmethod
     def from_row(
         cls,
-        context: Mapping[str, Any],
-        row: RowProxy,
+        ctx: GraphQueryContext,
+        row: Row,
     ) -> User:
         return cls(
             id=row['uuid'],
@@ -196,172 +204,182 @@ class User(graphene.ObjectType):
 
     @classmethod
     async def load_all(
-        cls, context, *,
-        domain_name=None,
-        group_id=None,
-        is_active=None,
-        status=None,
-        limit=None,
+        cls,
+        ctx: GraphQueryContext,
+        *,
+        domain_name: str = None,
+        group_id: UUID = None,
+        is_active: bool = None,
+        status: str = None,
+        limit: int = None,
     ) -> Sequence[User]:
         """
         Load user's information. Group names associated with the user are also returned.
         """
-        async with context['dbpool'].acquire() as conn:
-            if group_id is not None:
-                from .group import association_groups_users as agus
-                j = (users.join(agus, agus.c.user_id == users.c.uuid))
-                query = (
-                    sa.select([users])
-                    .select_from(j)
-                    .where(agus.c.group_id == group_id)
-                )
-            else:
-                query = (
-                    sa.select([users])
-                    .select_from(users)
-                )
-            if context['user']['role'] != UserRole.SUPERADMIN:
-                query = query.where(users.c.domain_name == context['user']['domain_name'])
-            if domain_name is not None:
-                query = query.where(users.c.domain_name == domain_name)
-            if status is not None:
-                query = query.where(users.c.status == UserStatus(status))
-            elif is_active is not None:  # consider is_active field only if status is empty
-                _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
-                query = query.where(users.c.status.in_(_statuses))
-            if limit is not None:
-                query = query.limit(limit)
-            return [cls.from_row(context, row) async for row in conn.execute(query)]
+        if group_id is not None:
+            from .group import association_groups_users as agus
+            j = (users.join(agus, agus.c.user_id == users.c.uuid))
+            query = (
+                sa.select([users])
+                .select_from(j)
+                .where(agus.c.group_id == group_id)
+            )
+        else:
+            query = (
+                sa.select([users])
+                .select_from(users)
+            )
+        if ctx.user['role'] != UserRole.SUPERADMIN:
+            query = query.where(users.c.domain_name == ctx.user['domain_name'])
+        if domain_name is not None:
+            query = query.where(users.c.domain_name == domain_name)
+        if status is not None:
+            query = query.where(users.c.status == UserStatus(status))
+        elif is_active is not None:  # consider is_active field only if status is empty
+            _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
+            query = query.where(users.c.status.in_(_statuses))
+        if limit is not None:
+            query = query.limit(limit)
+        return [cls.from_row(ctx, row) async for row in (await ctx.db_conn.stream(query))]
 
     @staticmethod
     async def load_count(
-        context, *,
-        domain_name=None,
-        group_id=None,
-        is_active=None,
-        status=None,
+        ctx: GraphQueryContext,
+        *,
+        domain_name: str = None,
+        group_id: UUID = None,
+        is_active: bool = None,
+        status: str = None,
     ) -> int:
-        async with context['dbpool'].acquire() as conn:
-            if group_id is not None:
-                from .group import association_groups_users as agus
-                j = (users.join(agus, agus.c.user_id == users.c.uuid))
-                query = (
-                    sa.select([sa.func.count(users.c.uuid)])
-                    .select_from(j)
-                    .where(agus.c.group_id == group_id)
-                    .as_scalar()
-                )
-            else:
-                query = (
-                    sa.select([sa.func.count(users.c.uuid)])
-                    .select_from(users)
-                    .as_scalar()
-                )
-            if domain_name is not None:
-                query = query.where(users.c.domain_name == domain_name)
-            if status is not None:
-                query = query.where(users.c.status == UserStatus(status))
-            elif is_active is not None:  # consider is_active field only if status is empty
-                _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
-                query = query.where(users.c.status.in_(_statuses))
-            result = await conn.execute(query)
-            return await result.scalar()
+        if group_id is not None:
+            from .group import association_groups_users as agus
+            j = (users.join(agus, agus.c.user_id == users.c.uuid))
+            query = (
+                sa.select([sa.func.count(users.c.uuid)])
+                .select_from(j)
+                .where(agus.c.group_id == group_id)
+            )
+        else:
+            query = (
+                sa.select([sa.func.count(users.c.uuid)])
+                .select_from(users)
+            )
+        if domain_name is not None:
+            query = query.where(users.c.domain_name == domain_name)
+        if status is not None:
+            query = query.where(users.c.status == UserStatus(status))
+        elif is_active is not None:  # consider is_active field only if status is empty
+            _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
+            query = query.where(users.c.status.in_(_statuses))
+        result = await ctx.db_conn.execute(query)
+        return result.scalar()
 
     @classmethod
     async def load_slice(
-        cls, context, limit, offset, *,
-        domain_name=None,
-        group_id=None,
-        is_active=None,
-        status=None,
-        order_key=None,
-        order_asc=True,
+        cls,
+        ctx: GraphQueryContext,
+        limit: int,
+        offset: int,
+        *,
+        domain_name: str = None,
+        group_id: UUID = None,
+        is_active: bool = None,
+        status: str = None,
+        order_key: str = None,
+        order_asc: bool = True,
     ) -> Sequence[User]:
-        async with context['dbpool'].acquire() as conn:
-            if order_key is None:
-                _ordering = sa.desc(users.c.created_at)
-            else:
-                _order_func = sa.asc if order_asc else sa.desc
-                _ordering = _order_func(getattr(users.c, order_key))
-            if group_id is not None:
-                from .group import association_groups_users as agus
-                j = (users.join(agus, agus.c.user_id == users.c.uuid))
-                query = (
-                    sa.select([users])
-                    .select_from(j)
-                    .where(agus.c.group_id == group_id)
-                    .order_by(_ordering)
-                    .limit(limit)
-                    .offset(offset)
-                )
-            else:
-                query = (
-                    sa.select([users])
-                    .select_from(users)
-                    .order_by(_ordering)
-                    .limit(limit)
-                    .offset(offset)
-                )
-            if domain_name is not None:
-                query = query.where(users.c.domain_name == domain_name)
-            if status is not None:
-                query = query.where(users.c.status == UserStatus(status))
-            elif is_active is not None:  # consider is_active field only if status is empty
-                _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
-                query = query.where(users.c.status.in_(_statuses))
-            return [
-                cls.from_row(context, row) async for row in conn.execute(query)
-            ]
+        if order_key is None:
+            _ordering = sa.desc(users.c.created_at)
+        else:
+            _order_func = sa.asc if order_asc else sa.desc
+            _ordering = _order_func(getattr(users.c, order_key))
+        if group_id is not None:
+            from .group import association_groups_users as agus
+            j = (users.join(agus, agus.c.user_id == users.c.uuid))
+            query = (
+                sa.select([users])
+                .select_from(j)
+                .where(agus.c.group_id == group_id)
+                .order_by(_ordering)
+                .limit(limit)
+                .offset(offset)
+            )
+        else:
+            query = (
+                sa.select([users])
+                .select_from(users)
+                .order_by(_ordering)
+                .limit(limit)
+                .offset(offset)
+            )
+        if domain_name is not None:
+            query = query.where(users.c.domain_name == domain_name)
+        if status is not None:
+            query = query.where(users.c.status == UserStatus(status))
+        elif is_active is not None:  # consider is_active field only if status is empty
+            _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
+            query = query.where(users.c.status.in_(_statuses))
+        return [
+            cls.from_row(ctx, row) async for row in (await ctx.db_conn.stream(query))
+        ]
 
     @classmethod
     async def batch_load_by_email(
-        cls, context, emails=None, *,
-        domain_name=None,
-        is_active=None,
-        status=None,
+        cls,
+        ctx: GraphQueryContext,
+        emails: Sequence[str] = None,
+        *,
+        domain_name: str = None,
+        is_active: bool = None,
+        status: str = None,
     ) -> Sequence[Optional[User]]:
-        async with context['dbpool'].acquire() as conn:
-            query = (
-                sa.select([users])
-                .select_from(users)
-                .where(users.c.email.in_(emails))
-            )
-            if domain_name is not None:
-                query = query.where(users.c.domain_name == domain_name)
-            if status is not None:
-                query = query.where(users.c.status == UserStatus(status))
-            elif is_active is not None:  # consider is_active field only if status is empty
-                _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
-                query = query.where(users.c.status.in_(_statuses))
-            return await batch_result(
-                context, conn, query, cls,
-                emails, lambda row: row['email'],
-            )
+        if not emails:
+            return []
+        query = (
+            sa.select([users])
+            .select_from(users)
+            .where(users.c.email.in_(emails))
+        )
+        if domain_name is not None:
+            query = query.where(users.c.domain_name == domain_name)
+        if status is not None:
+            query = query.where(users.c.status == UserStatus(status))
+        elif is_active is not None:  # consider is_active field only if status is empty
+            _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
+            query = query.where(users.c.status.in_(_statuses))
+        return await batch_result(
+            ctx, ctx.db_conn, query, cls,
+            emails, lambda row: row['email'],
+        )
 
     @classmethod
     async def batch_load_by_uuid(
-        cls, context, user_ids=None, *,
-        domain_name=None,
-        is_active=None,
-        status=None,
+        cls,
+        ctx: GraphQueryContext,
+        user_ids: Sequence[UUID] = None,
+        *,
+        domain_name: str = None,
+        is_active: bool = None,
+        status: str = None,
     ) -> Sequence[Optional[User]]:
-        async with context['dbpool'].acquire() as conn:
-            query = (
-                sa.select([users])
-                .select_from(users)
-                .where(users.c.uuid.in_(user_ids))
-            )
-            if domain_name is not None:
-                query = query.where(users.c.domain_name == domain_name)
-            if status is not None:
-                query = query.where(users.c.status == UserStatus(status))
-            elif is_active is not None:  # consider is_active field only if status is empty
-                _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
-                query = query.where(users.c.status.in_(_statuses))
-            return await batch_result(
-                context, conn, query, cls,
-                user_ids, lambda row: row['uuid'],
-            )
+        if not user_ids:
+            return []
+        query = (
+            sa.select([users])
+            .select_from(users)
+            .where(users.c.uuid.in_(user_ids))
+        )
+        if domain_name is not None:
+            query = query.where(users.c.domain_name == domain_name)
+        if status is not None:
+            query = query.where(users.c.status == UserStatus(status))
+        elif is_active is not None:  # consider is_active field only if status is empty
+            _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
+            query = query.where(users.c.status.in_(_statuses))
+        return await batch_result(
+            ctx, ctx.db_conn, query, cls,
+            user_ids, lambda row: row['uuid'],
+        )
 
 
 class UserList(graphene.ObjectType):
@@ -417,78 +435,84 @@ class CreateUser(graphene.Mutation):
     user = graphene.Field(lambda: User, required=False)
 
     @classmethod
-    async def mutate(cls, root, info, email, props):
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
-            username = props.username if props.username else email
-            if props.status is None and props.is_active is not None:
-                _status = UserStatus.ACTIVE if props.is_active else UserStatus.INACTIVE
+    async def mutate(
+        cls,
+        root,
+        info: graphene.ResolveInfo,
+        email: str,
+        props: UserInput,
+    ) -> CreateUser:
+        graph_ctx: GraphQueryContext = info.context
+        username = props.username if props.username else email
+        if props.status is None and props.is_active is not None:
+            _status = UserStatus.ACTIVE if props.is_active else UserStatus.INACTIVE
+        else:
+            _status = UserStatus(props.status)
+        data = {
+            'username': username,
+            'email': email,
+            'password': props.password,
+            'need_password_change': props.need_password_change,
+            'full_name': props.full_name,
+            'description': props.description,
+            'status': _status,
+            'status_info': 'admin-requested',  # user mutation is only for admin
+            'domain_name': props.domain_name,
+            'role': UserRole(props.role),
+        }
+        try:
+            query = (users.insert().values(data))
+            result = await graph_ctx.db_conn.execute(query)
+            if result.rowcount > 0:
+                # Read the created user data from DB.
+                checkq = users.select().where(users.c.email == email)
+                result = await graph_ctx.db_conn.execute(checkq)
+                o = User.from_row(info.context, result.first())
+
+                # Create user's first access_key and secret_key.
+                from .keypair import generate_keypair, generate_ssh_keypair, keypairs
+                ak, sk = generate_keypair()
+                pubkey, privkey = generate_ssh_keypair()
+                is_admin = True if data['role'] in [UserRole.SUPERADMIN, UserRole.ADMIN] else False
+                kp_data = {
+                    'user_id': email,
+                    'access_key': ak,
+                    'secret_key': sk,
+                    'is_active': True if _status == UserStatus.ACTIVE else False,
+                    'is_admin': is_admin,
+                    'resource_policy': 'default',
+                    'concurrency_used': 0,
+                    'rate_limit': 10000,
+                    'num_queries': 0,
+                    'user': o.uuid,
+                    'ssh_public_key': pubkey,
+                    'ssh_private_key': privkey,
+                }
+                query = (keypairs.insert().values(kp_data))
+                await graph_ctx.db_conn.execute(query)
+
+                # Add user to groups if group_ids parameter is provided.
+                from .group import association_groups_users, groups
+                if props.group_ids:
+                    query = (sa.select([groups.c.id])
+                                .select_from(groups)
+                                .where(groups.c.domain_name == props.domain_name)
+                                .where(groups.c.id.in_(props.group_ids)))
+                    result = await graph_ctx.db_conn.execute(query)
+                    grps = result.fetchall()
+                    if grps:
+                        values = [{'user_id': o.uuid, 'group_id': grp.id} for grp in grps]
+                        query = association_groups_users.insert().values(values)
+                        await graph_ctx.db_conn.execute(query)
+                return cls(ok=True, msg='success', user=o)
             else:
-                _status = UserStatus(props.status)
-            data = {
-                'username': username,
-                'email': email,
-                'password': props.password,
-                'need_password_change': props.need_password_change,
-                'full_name': props.full_name,
-                'description': props.description,
-                'status': _status,
-                'status_info': 'admin-requested',  # user mutation is only for admin
-                'domain_name': props.domain_name,
-                'role': UserRole(props.role),
-            }
-            try:
-                query = (users.insert().values(data))
-                result = await conn.execute(query)
-                if result.rowcount > 0:
-                    # Read the created user data from DB.
-                    checkq = users.select().where(users.c.email == email)
-                    result = await conn.execute(checkq)
-                    o = User.from_row(info.context, await result.first())
-
-                    # Create user's first access_key and secret_key.
-                    from .keypair import generate_keypair, generate_ssh_keypair, keypairs
-                    ak, sk = generate_keypair()
-                    pubkey, privkey = generate_ssh_keypair()
-                    is_admin = True if data['role'] in [UserRole.SUPERADMIN, UserRole.ADMIN] else False
-                    kp_data = {
-                        'user_id': email,
-                        'access_key': ak,
-                        'secret_key': sk,
-                        'is_active': True if _status == UserStatus.ACTIVE else False,
-                        'is_admin': is_admin,
-                        'resource_policy': 'default',
-                        'concurrency_used': 0,
-                        'rate_limit': 10000,
-                        'num_queries': 0,
-                        'user': o.uuid,
-                        'ssh_public_key': pubkey,
-                        'ssh_private_key': privkey,
-                    }
-                    query = (keypairs.insert().values(kp_data))
-                    await conn.execute(query)
-
-                    # Add user to groups if group_ids parameter is provided.
-                    from .group import association_groups_users, groups
-                    if props.group_ids:
-                        query = (sa.select([groups.c.id])
-                                   .select_from(groups)
-                                   .where(groups.c.domain_name == props.domain_name)
-                                   .where(groups.c.id.in_(props.group_ids)))
-                        result = await conn.execute(query)
-                        grps = await result.fetchall()
-                        if grps:
-                            values = [{'user_id': o.uuid, 'group_id': grp.id} for grp in grps]
-                            query = association_groups_users.insert().values(values)
-                            await conn.execute(query)
-                    return cls(ok=True, msg='success', user=o)
-                else:
-                    return cls(ok=False, msg='failed to create user', user=None)
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-                return cls(ok=False, msg=f'integrity error: {e}', user=None)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                raise
-            except Exception as e:
-                return cls(ok=False, msg=f'unexpected error: {e}', user=None)
+                return cls(ok=False, msg='failed to create user', user=None)
+        except sa.exc.IntegrityError as e:
+            return cls(ok=False, msg=f'integrity error: {e}', user=None)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            raise
+        except Exception as e:
+            return cls(ok=False, msg=f'unexpected error: {e}', user=None)
 
 
 class ModifyUser(graphene.Mutation):
@@ -504,131 +528,136 @@ class ModifyUser(graphene.Mutation):
     user = graphene.Field(lambda: User)
 
     @classmethod
-    async def mutate(cls, root, info, email, props):
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
+    async def mutate(
+        cls,
+        root,
+        info: graphene.ResolveInfo,
+        email: str,
+        props: ModifyUserInput,
+    ) -> ModifyUser:
+        graph_ctx: GraphQueryContext = info.context
+        data: Dict[str, Any] = {}
+        set_if_set(props, data, 'username')
+        set_if_set(props, data, 'password')
+        set_if_set(props, data, 'need_password_change')
+        set_if_set(props, data, 'full_name')
+        set_if_set(props, data, 'description')
+        set_if_set(props, data, 'status')
+        set_if_set(props, data, 'domain_name')
+        set_if_set(props, data, 'role')
 
-            data = {}
-            set_if_set(props, data, 'username')
-            set_if_set(props, data, 'password')
-            set_if_set(props, data, 'need_password_change')
-            set_if_set(props, data, 'full_name')
-            set_if_set(props, data, 'description')
-            set_if_set(props, data, 'status')
-            set_if_set(props, data, 'domain_name')
-            set_if_set(props, data, 'role')
+        if 'role' in data:
+            data['role'] = UserRole(data['role'])
 
-            if 'role' in data:
-                data['role'] = UserRole(data['role'])
+        if data.get('status') is None and props.is_active is not None:
+            _status = 'active' if props.is_active else 'inactive'
+            data['status'] = _status
+        if 'status' in data and data['status'] is not None:
+            data['status'] = UserStatus(data['status'])
 
-            if data.get('status') is None and props.is_active is not None:
-                _status = 'active' if props.is_active else 'inactive'
-                data['status'] = _status
-            if 'status' in data and data['status'] is not None:
-                data['status'] = UserStatus(data['status'])
+        if not data and not props.group_ids:
+            return cls(ok=False, msg='nothing to update', user=None)
 
-            if not data and not props.group_ids:
-                return cls(ok=False, msg='nothing to update', user=None)
+        try:
+            # Get previous domain name of the user.
+            query = (sa.select([users.c.domain_name, users.c.role, users.c.status])
+                        .select_from(users)
+                        .where(users.c.email == email))
+            result = await graph_ctx.db_conn.execute(query)
+            row = result.first()
+            prev_domain_name = row.domain_name
+            prev_role = row.role
 
-            try:
-                # Get previous domain name of the user.
-                query = (sa.select([users.c.domain_name, users.c.role, users.c.status])
-                           .select_from(users)
-                           .where(users.c.email == email))
-                result = await conn.execute(query)
-                row = await result.first()
-                prev_domain_name = row.domain_name
-                prev_role = row.role
+            if 'status' in data and row.status != data['status']:
+                data['status_info'] = 'admin-requested'  # user mutation is only for admin
 
-                if 'status' in data and row.status != data['status']:
-                    data['status_info'] = 'admin-requested'  # user mutation is only for admin
+            # Update user.
+            query = (users.update().values(data).where(users.c.email == email))
+            result = await graph_ctx.db_conn.execute(query)
+            if result.rowcount > 0:
+                checkq = users.select().where(users.c.email == email)
+                result = await graph_ctx.db_conn.execute(checkq)
+                o = User.from_row(graph_ctx, result.first())
+            else:
+                return cls(ok=False, msg='no such user', user=None)
 
-                # Update user.
-                query = (users.update().values(data).where(users.c.email == email))
-                result = await conn.execute(query)
-                if result.rowcount > 0:
-                    checkq = users.select().where(users.c.email == email)
-                    result = await conn.execute(checkq)
-                    o = User.from_row(info.context, await result.first())
+            # Update keypair if user's role is updated.
+            # NOTE: This assumes that user have only one keypair.
+            if 'role' in data and data['role'] != prev_role:
+                from ai.backend.manager.models import keypairs
+                query = (sa.select([keypairs.c.user,
+                                    keypairs.c.is_active,
+                                    keypairs.c.is_admin])
+                            .select_from(keypairs)
+                            .where(keypairs.c.user == o.uuid)
+                            .order_by(sa.desc(keypairs.c.is_admin))
+                            .order_by(sa.desc(keypairs.c.is_active)))
+                result = await graph_ctx.db_conn.execute(query)
+                if data['role'] in [UserRole.SUPERADMIN, UserRole.ADMIN]:
+                    # User's becomes admin. Set the keypair as active admin.
+                    kp = result.first()
+                    kp_data = dict()
+                    if not kp.is_admin:
+                        kp_data['is_admin'] = True
+                    if not kp.is_active:
+                        kp_data['is_active'] = True
+                    if len(kp_data.keys()) > 0:
+                        query = (keypairs.update()
+                                            .values(kp_data)
+                                            .where(keypairs.c.user == o.uuid))
+                        await graph_ctx.db_conn.execute(query)
                 else:
-                    return cls(ok=False, msg='no such user', user=None)
-
-                # Update keypair if user's role is updated.
-                # NOTE: This assumes that user have only one keypair.
-                if 'role' in data and data['role'] != prev_role:
-                    from ai.backend.manager.models import keypairs
-                    query = (sa.select([keypairs.c.user,
-                                        keypairs.c.is_active,
-                                        keypairs.c.is_admin])
-                               .select_from(keypairs)
-                               .where(keypairs.c.user == o.uuid)
-                               .order_by(sa.desc(keypairs.c.is_admin))
-                               .order_by(sa.desc(keypairs.c.is_active)))
-                    result = await conn.execute(query)
-                    if data['role'] in [UserRole.SUPERADMIN, UserRole.ADMIN]:
-                        # User's becomes admin. Set the keypair as active admin.
-                        kp = await result.first()
+                    # User becomes non-admin. Make the keypair non-admin as well.
+                    # If there are multiple admin keypairs, inactivate them.
+                    rows = result.fetchall()
+                    cnt = 0
+                    for row in rows:
                         kp_data = dict()
-                        if not kp.is_admin:
-                            kp_data['is_admin'] = True
-                        if not kp.is_active:
-                            kp_data['is_active'] = True
+                        if cnt == 0:
+                            kp_data['is_admin'] = False
+                        elif row.is_admin and row.is_active:
+                            kp_data['is_active'] = False
                         if len(kp_data.keys()) > 0:
                             query = (keypairs.update()
-                                             .values(kp_data)
-                                             .where(keypairs.c.user == o.uuid))
-                            await conn.execute(query)
-                    else:
-                        # User becomes non-admin. Make the keypair non-admin as well.
-                        # If there are multiple admin keypairs, inactivate them.
-                        rows = await result.fetchall()
-                        cnt = 0
-                        for row in rows:
-                            kp_data = dict()
-                            if cnt == 0:
-                                kp_data['is_admin'] = False
-                            elif row.is_admin and row.is_active:
-                                kp_data['is_active'] = False
-                            if len(kp_data.keys()) > 0:
-                                query = (keypairs.update()
-                                                 .values(kp_data)
-                                                 .where(keypairs.c.user == row.user))
-                                await conn.execute(query)
-                            cnt += 1
+                                                .values(kp_data)
+                                                .where(keypairs.c.user == row.user))
+                            await graph_ctx.db_conn.execute(query)
+                        cnt += 1
 
-                # If domain is changed and no group is associated, clear previous domain's group.
-                if prev_domain_name != o.domain_name and not props.group_ids:
-                    from .group import association_groups_users, groups
-                    query = (association_groups_users
-                             .delete()
-                             .where(association_groups_users.c.user_id == o.uuid))
-                    await conn.execute(query)
+            # If domain is changed and no group is associated, clear previous domain's group.
+            if prev_domain_name != o.domain_name and not props.group_ids:
+                from .group import association_groups_users, groups
+                query = (association_groups_users
+                            .delete()
+                            .where(association_groups_users.c.user_id == o.uuid))
+                await graph_ctx.db_conn.execute(query)
 
-                # Update user's group if group_ids parameter is provided.
-                if props.group_ids and o is not None:
-                    from .group import association_groups_users, groups  # noqa
-                    # Clear previous groups associated with the user.
-                    query = (association_groups_users
-                             .delete()
-                             .where(association_groups_users.c.user_id == o.uuid))
-                    await conn.execute(query)
-                    # Add user to new groups.
-                    query = (sa.select([groups.c.id])
-                               .select_from(groups)
-                               .where(groups.c.domain_name == o.domain_name)
-                               .where(groups.c.id.in_(props.group_ids)))
-                    result = await conn.execute(query)
-                    grps = await result.fetchall()
-                    if grps:
-                        values = [{'user_id': o.uuid, 'group_id': grp.id} for grp in grps]
-                        query = association_groups_users.insert().values(values)
-                        await conn.execute(query)
-                return cls(ok=True, msg='success', user=o)
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-                return cls(ok=False, msg=f'integrity error: {e}', user=None)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                raise
-            except Exception as e:
-                return cls(ok=False, msg=f'unexpected error: {e}', user=None)
+            # Update user's group if group_ids parameter is provided.
+            if props.group_ids and o is not None:
+                from .group import association_groups_users, groups  # noqa
+                # Clear previous groups associated with the user.
+                query = (association_groups_users
+                            .delete()
+                            .where(association_groups_users.c.user_id == o.uuid))
+                await graph_ctx.db_conn.execute(query)
+                # Add user to new groups.
+                query = (sa.select([groups.c.id])
+                            .select_from(groups)
+                            .where(groups.c.domain_name == o.domain_name)
+                            .where(groups.c.id.in_(props.group_ids)))
+                result = await graph_ctx.db_conn.execute(query)
+                grps = result.fetchall()
+                if grps:
+                    values = [{'user_id': o.uuid, 'group_id': grp.id} for grp in grps]
+                    query = association_groups_users.insert().values(values)
+                    await graph_ctx.db_conn.execute(query)
+            return cls(ok=True, msg='success', user=o)
+        except sa.exc.IntegrityError as e:
+            return cls(ok=False, msg=f'integrity error: {e}', user=None)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            raise
+        except Exception as e:
+            return cls(ok=False, msg=f'unexpected error: {e}', user=None)
 
 
 class DeleteUser(graphene.Mutation):
@@ -647,35 +676,40 @@ class DeleteUser(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    async def mutate(cls, root, info, email):
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
-            try:
-                # Make all user keypairs inactive.
-                from ai.backend.manager.models import keypairs
-                query = (
-                    keypairs.update()
-                    .values(is_active=False)
-                    .where(keypairs.c.user_id == email)
-                )
-                await conn.execute(query)
-                # Mark user as deleted.
-                query = (
-                    users.update()
-                    .values(status=UserStatus.DELETED,
-                            status_info='admin-requested')
-                    .where(users.c.email == email)
-                )
-                result = await conn.execute(query)
-                if result.rowcount > 0:
-                    return cls(ok=True, msg='success')
-                else:
-                    return cls(ok=False, msg='no such user')
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-                return cls(ok=False, msg=f'integrity error: {e}')
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                raise
-            except Exception as e:
-                return cls(ok=False, msg=f'unexpected error: {e}')
+    async def mutate(
+        cls,
+        root,
+        info: graphene.ResolveInfo,
+        email: str,
+    ) -> DeleteUser:
+        graph_ctx: GraphQueryContext = info.context
+        try:
+            # Make all user keypairs inactive.
+            from ai.backend.manager.models import keypairs
+            query = (
+                keypairs.update()
+                .values(is_active=False)
+                .where(keypairs.c.user_id == email)
+            )
+            await graph_ctx.db_conn.execute(query)
+            # Mark user as deleted.
+            query = (
+                users.update()
+                .values(status=UserStatus.DELETED,
+                        status_info='admin-requested')
+                .where(users.c.email == email)
+            )
+            result = await graph_ctx.db_conn.execute(query)
+            if result.rowcount > 0:
+                return cls(ok=True, msg='success')
+            else:
+                return cls(ok=False, msg='no such user')
+        except sa.exc.IntegrityError as e:
+            return cls(ok=False, msg=f'integrity error: {e}')
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            raise
+        except Exception as e:
+            return cls(ok=False, msg=f'unexpected error: {e}')
 
 
 class PurgeUser(graphene.Mutation):
@@ -703,58 +737,63 @@ class PurgeUser(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    async def mutate(cls, root, info, email, props):
-        purge_shared_vfolders = props.purge_shared_vfolders if props.purge_shared_vfolders else False
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
-            try:
-                query = (
-                    sa.select([users.c.uuid])
-                    .select_from(users)
-                    .where(users.c.email == email)
+    async def mutate(
+        cls,
+        root,
+        info: graphene.ResolveInfo,
+        email: str,
+        props: PurgeUserInput,
+    ) -> PurgeUser:
+        graph_ctx: GraphQueryContext = info.context
+        try:
+            query = (
+                sa.select([users.c.uuid])
+                .select_from(users)
+                .where(users.c.email == email)
+            )
+            user_uuid = await graph_ctx.db_conn.scalar(query)
+            log.info('completly deleting user {0}...', email)
+
+            if await cls.user_vfolder_mounted_to_active_kernels(graph_ctx.db_conn, user_uuid):
+                raise RuntimeError('Some of user\'s virtual folders are mounted to active kernels. '
+                                    'Terminate those kernels first.')
+            if await cls.user_has_active_kernels(graph_ctx.db_conn, user_uuid):
+                raise RuntimeError('User has some active kernels. Terminate them first.')
+
+            if not props.purge_shared_vfolders:
+                await cls.migrate_shared_vfolders(
+                    graph_ctx.db_conn,
+                    deleted_user_uuid=user_uuid,
+                    target_user_uuid=graph_ctx.user['uuid'],
+                    target_user_email=graph_ctx.user['email'],
                 )
-                user_uuid = await conn.scalar(query)
-                log.info('completly deleting user {0}...', email)
+            await cls.delete_vfolders(graph_ctx.db_conn, user_uuid, graph_ctx.storage_manager)
+            await cls.delete_kernels(graph_ctx.db_conn, user_uuid)
+            await cls.delete_keypairs(graph_ctx.db_conn, user_uuid)
 
-                if await cls.user_vfolder_mounted_to_active_kernels(conn, user_uuid):
-                    raise RuntimeError('Some of user\'s virtual folders are mounted to active kernels. '
-                                       'Terminate those kernels first.')
-                if await cls.user_has_active_kernels(conn, user_uuid):
-                    raise RuntimeError('User has some active kernels. Terminate them first.')
-
-                if not purge_shared_vfolders:
-                    await cls.migrate_shared_vfolders(
-                        conn,
-                        deleted_user_uuid=user_uuid,
-                        target_user_uuid=info.context['user']['uuid'],
-                        target_user_email=info.context['user']['email'],
-                    )
-                await cls.delete_vfolders(conn, user_uuid, info.context['storage_manager'])
-                await cls.delete_kernels(conn, user_uuid)
-                await cls.delete_keypairs(conn, user_uuid)
-
-                query = (
-                    users.delete()
-                    .where(users.c.email == email)
-                )
-                result = await conn.execute(query)
-                if result.rowcount > 0:
-                    log.info('user is deleted: {0}', email)
-                    return cls(ok=True, msg='success')
-                else:
-                    return cls(ok=False, msg='no such user')
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-                return cls(ok=False, msg=f'integrity error: {e}')
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                raise
-            except Exception as e:
-                return cls(ok=False, msg=f'unexpected error: {e}')
+            query = (
+                users.delete()
+                .where(users.c.email == email)
+            )
+            result = await graph_ctx.db_conn.execute(query)
+            if result.rowcount > 0:
+                log.info('user is deleted: {0}', email)
+                return cls(ok=True, msg='success')
+            else:
+                return cls(ok=False, msg='no such user')
+        except sa.exc.IntegrityError as e:
+            return cls(ok=False, msg=f'integrity error: {e}')
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            raise
+        except Exception as e:
+            return cls(ok=False, msg=f'unexpected error: {e}')
 
     @classmethod
     async def migrate_shared_vfolders(
         cls,
         conn: SAConnection,
-        deleted_user_uuid: uuid.UUID,
-        target_user_uuid: uuid.UUID,
+        deleted_user_uuid: UUID,
+        target_user_uuid: UUID,
         target_user_email: str,
     ) -> int:
         """
@@ -776,7 +815,7 @@ class PurgeUser(graphene.Mutation):
             .select_from(vfolders)
             .where(vfolders.c.user == target_user_uuid)
         )
-        existing_vfolder_names = [row.name async for row in conn.execute(query)]
+        existing_vfolder_names = [row.name async for row in (await conn.stream(query))]
 
         # Migrate shared virtual folders.
         # If virtual folder's name collides with target user's folder,
@@ -791,10 +830,10 @@ class PurgeUser(graphene.Mutation):
             .where(vfolders.c.user == deleted_user_uuid)
         )
         migrate_updates = []
-        async for row in conn.execute(query):
+        async for row in (await conn.stream(query)):
             name = row.name
             if name in existing_vfolder_names:
-                name += f'-{uuid.uuid4().hex[:10]}'
+                name += f'-{uuid4().hex[:10]}'
             migrate_updates.append({'vid': row.id, 'vname': name})
         if migrate_updates:
             # Remove invitations and vfolder_permissions from target user.
@@ -837,7 +876,7 @@ class PurgeUser(graphene.Mutation):
     async def delete_vfolders(
         cls,
         conn: SAConnection,
-        user_uuid: uuid.UUID,
+        user_uuid: UUID,
         storage_manager: StorageSessionManager,
     ) -> int:
         """
@@ -860,7 +899,7 @@ class PurgeUser(graphene.Mutation):
             .where(vfolders.c.user == user_uuid)
         )
         result = await conn.execute(query)
-        target_vfs = await result.fetchall()
+        target_vfs = result.fetchall()
         query = (vfolders.delete().where(vfolders.c.user == user_uuid))
         result = await conn.execute(query)
         for row in target_vfs:
@@ -885,7 +924,7 @@ class PurgeUser(graphene.Mutation):
     async def user_vfolder_mounted_to_active_kernels(
         cls,
         conn: SAConnection,
-        user_uuid: uuid.UUID,
+        user_uuid: UUID,
     ) -> bool:
         """
         Check if no active kernel is using the user's virtual folders.
@@ -902,17 +941,17 @@ class PurgeUser(graphene.Mutation):
             .where(vfolders.c.user == user_uuid)
         )
         result = await conn.execute(query)
-        rows = await result.fetchall()
+        rows = result.fetchall()
         user_vfolder_ids = [row.id for row in rows]
         query = (
             sa.select([kernels.c.mounts])
             .select_from(kernels)
             .where(kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES))
         )
-        async for row in conn.execute(query):
+        async for row in (await conn.stream(query)):
             for _mount in row['mounts']:
                 try:
-                    vfolder_id = uuid.UUID(_mount[2])
+                    vfolder_id = UUID(_mount[2])
                     if vfolder_id in user_vfolder_ids:
                         return True
                 except Exception:
@@ -923,7 +962,7 @@ class PurgeUser(graphene.Mutation):
     async def user_has_active_kernels(
         cls,
         conn: SAConnection,
-        user_uuid: uuid.UUID,
+        user_uuid: UUID,
     ) -> bool:
         """
         Check if the user does not have active kernels.
@@ -947,7 +986,7 @@ class PurgeUser(graphene.Mutation):
     async def delete_kernels(
         cls,
         conn: SAConnection,
-        user_uuid: uuid.UUID,
+        user_uuid: UUID,
     ) -> int:
         """
         Delete user's all kernels.
@@ -970,7 +1009,7 @@ class PurgeUser(graphene.Mutation):
     async def delete_keypairs(
         cls,
         conn: SAConnection,
-        user_uuid: uuid.UUID,
+        user_uuid: UUID,
     ) -> int:
         """
         Delete user's all keypairs.
@@ -998,15 +1037,23 @@ def _verify_password(guess, hashed):
     return bcrypt.verify(guess, hashed)
 
 
-async def check_credential(dbpool, domain: str, email: str, password: str) \
-                          -> Any:
-    async with dbpool.acquire() as conn:
-        query = (sa.select([users])
-                   .select_from(users)
-                   .where((users.c.email == email) &
-                          (users.c.domain_name == domain)))
+async def check_credential(
+    db: SAEngine,
+    domain: str,
+    email: str,
+    password: str,
+) -> Any:
+    async with db.begin() as conn:
+        query = (
+            sa.select([users])
+            .select_from(users)
+            .where(
+                (users.c.email == email) &
+                (users.c.domain_name == domain)
+            )
+        )
         result = await conn.execute(query)
-        row = await result.first()
+        row = result.first()
         if row is None:
             return None
         if row['password'] is None:

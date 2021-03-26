@@ -9,8 +9,9 @@ import graphene
 from ai.backend.common.logging import BraceStyleAdapter
 
 from ..models.gql import Queries, Mutations
+
 if TYPE_CHECKING:
-    from .__main__ import CLIContext
+    from .context import CLIContext
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 

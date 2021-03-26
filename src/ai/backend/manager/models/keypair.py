@@ -5,31 +5,34 @@ import base64
 import secrets
 from typing import (
     Any,
+    Dict,
     Optional,
-    Mapping,
     Sequence,
-    List,
+    List, TYPE_CHECKING,
     Tuple,
     TypedDict,
 )
 import uuid
 
-from aiopg.sa.connection import SAConnection
-from aiopg.sa.result import RowProxy
 from cryptography.hazmat.primitives import serialization as crypto_serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend as crypto_default_backend
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
+from sqlalchemy.engine.row import Row
 from sqlalchemy.sql.expression import false
-import psycopg2 as pg
 
 from ai.backend.common import msgpack
 from ai.backend.common.types import (
     AccessKey,
     SecretKey,
 )
+
+if TYPE_CHECKING:
+    from .gql import GraphQueryContext
+    from .vfolder import VirtualFolder
 
 from .base import (
     ForeignKeyIDColumn,
@@ -41,7 +44,7 @@ from .base import (
     set_if_set,
     simple_db_mutate,
 )
-from .user import UserRole
+from .user import ModifyUserInput, UserRole
 from ..defs import RESERVED_DOTFILES
 
 __all__: Sequence[str] = (
@@ -97,8 +100,8 @@ class UserInfo(graphene.ObjectType):
     @classmethod
     def from_row(
         cls,
-        context: Mapping[str, Any],
-        row: RowProxy,
+        ctx: GraphQueryContext,
+        row: Row,
     ) -> Optional[UserInfo]:
         if row is None:
             return None
@@ -107,10 +110,10 @@ class UserInfo(graphene.ObjectType):
     @classmethod
     async def batch_load_by_uuid(
         cls,
-        context: Mapping[str, Any],
-        user_uuids: List[uuid.UUID],
+        ctx: GraphQueryContext,
+        user_uuids: Sequence[uuid.UUID],
     ) -> Sequence[Optional[UserInfo]]:
-        async with context['dbpool'].acquire() as conn:
+        async with ctx.db.begin() as conn:
             from .user import users
             query = (
                 sa.select([users.c.uuid, users.c.email, users.c.full_name])
@@ -118,7 +121,7 @@ class UserInfo(graphene.ObjectType):
                 .where(users.c.uuid.in_(user_uuids))
             )
             return await batch_result(
-                context, conn, query, cls,
+                ctx, conn, query, cls,
                 user_uuids, lambda row: row['uuid'],
             )
 
@@ -160,15 +163,15 @@ class KeyPair(graphene.ObjectType):
         self,
         info: graphene.ResolveInfo,
     ) -> UserInfo:
-        manager = info.context['dlmgr']
-        loader = manager.get_loader('UserInfo.by_uuid')
+        ctx: GraphQueryContext = info.context
+        loader = ctx.dataloader_manager.get_loader(ctx, 'UserInfo.by_uuid')
         return await loader.load(self.user)
 
     @classmethod
     def from_row(
         cls,
-        context: Mapping[str, Any],
-        row: RowProxy,
+        ctx: GraphQueryContext,
+        row: Row,
     ) -> KeyPair:
         return cls(
             id=row['access_key'],
@@ -188,141 +191,161 @@ class KeyPair(graphene.ObjectType):
             ssh_public_key=row['ssh_public_key'],
         )
 
-    async def resolve_vfolders(self, info):
-        manager = info.context['dlmgr']
-        loader = manager.get_loader('VirtualFolder')
+    async def resolve_vfolders(self, info: graphene.ResolveInfo) -> Sequence[VirtualFolder]:
+        ctx: GraphQueryContext = info.context
+        loader = ctx.dataloader_manager.get_loader(ctx, 'VirtualFolder')
         return await loader.load(self.access_key)
 
-    async def resolve_compute_sessions(self, info, status=None):
-        manager = info.context['dlmgr']
+    async def resolve_compute_sessions(self, info: graphene.ResolveInfo, raw_status: str = None):
+        ctx: GraphQueryContext = info.context
         from . import KernelStatus  # noqa: avoid circular imports
-        if status is not None:
-            status = KernelStatus[status]
-        loader = manager.get_loader('ComputeSession', status=status)
+        if raw_status is not None:
+            status = KernelStatus[raw_status]
+        loader = ctx.dataloader_manager.get_loader(ctx, 'ComputeSession', status=status)
         return await loader.load(self.access_key)
 
     @classmethod
     async def load_all(
-        cls, context, *,
-        domain_name=None,
-        is_active=None,
-        limit=None,
+        cls,
+        graph_ctx: GraphQueryContext,
+        *,
+        domain_name: str = None,
+        is_active: bool = None,
+        limit: int = None,
     ) -> Sequence[KeyPair]:
         from .user import users
-        async with context['dbpool'].acquire() as conn:
-            j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
-            query = (
-                sa.select([keypairs])
-                .select_from(j)
-            )
-            if domain_name is not None:
-                query = query.where(users.c.domain_name == domain_name)
-            if is_active is not None:
-                query = query.where(keypairs.c.is_active == is_active)
-            if limit is not None:
-                query = query.limit(limit)
-            return [
-                cls.from_row(context, row) async for row in conn.execute(query)
-            ]
+        j = sa.join(
+            keypairs, users,
+            keypairs.c.user == users.c.uuid,
+        )
+        query = (
+            sa.select([keypairs])
+            .select_from(j)
+        )
+        if domain_name is not None:
+            query = query.where(users.c.domain_name == domain_name)
+        if is_active is not None:
+            query = query.where(keypairs.c.is_active == is_active)
+        if limit is not None:
+            query = query.limit(limit)
+        return [
+            obj async for row in (await graph_ctx.db_conn.stream(query))
+            if (obj := cls.from_row(graph_ctx, row)) is not None
+        ]
 
     @staticmethod
     async def load_count(
-        context, *,
-        domain_name=None,
-        email=None,
-        is_active=None,
+        graph_ctx: GraphQueryContext,
+        *,
+        domain_name: str = None,
+        email: str = None,
+        is_active: bool = None,
     ) -> int:
         from .user import users
-        async with context['dbpool'].acquire() as conn:
-            j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
-            query = (
-                sa.select([sa.func.count(keypairs.c.access_key)])
-                .select_from(j)
-            )
-            if domain_name is not None:
-                query = query.where(users.c.domain_name == domain_name)
-            if email is not None:
-                query = query.where(keypairs.c.user_id == email)
-            if is_active is not None:
-                query = query.where(keypairs.c.is_active == is_active)
-            result = await conn.execute(query)
-            return await result.scalar()
+        j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
+        query = (
+            sa.select([sa.func.count(keypairs.c.access_key)])
+            .select_from(j)
+        )
+        if domain_name is not None:
+            query = query.where(users.c.domain_name == domain_name)
+        if email is not None:
+            query = query.where(keypairs.c.user_id == email)
+        if is_active is not None:
+            query = query.where(keypairs.c.is_active == is_active)
+        result = await graph_ctx.db_conn.execute(query)
+        return result.scalar()
 
     @classmethod
     async def load_slice(
-        cls, context, limit, offset, *,
-        domain_name=None,
-        email=None,
-        is_active=None,
-        order_key=None,
-        order_asc=True,
+        cls,
+        graph_ctx: GraphQueryContext,
+        limit: int,
+        offset: int,
+        *,
+        domain_name: str = None,
+        email: str = None,
+        is_active: bool = None,
+        order_key: str = None,
+        order_asc: bool = True,
     ) -> Sequence[KeyPair]:
         from .user import users
-        async with context['dbpool'].acquire() as conn:
-            if order_key is None:
-                _ordering = sa.desc(keypairs.c.created_at)
-            else:
-                _order_func = sa.asc if order_asc else sa.desc
-                _ordering = _order_func(getattr(keypairs.c, order_key))
-            j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
-            query = (
-                sa.select([keypairs])
-                .select_from(j)
-                .order_by(_ordering)
-                .limit(limit)
-                .offset(offset)
-            )
-            if domain_name is not None:
-                query = query.where(users.c.domain_name == domain_name)
-            if email is not None:
-                query = query.where(keypairs.c.user_id == email)
-            if is_active is not None:
-                query = query.where(keypairs.c.is_active == is_active)
-            return [
-                cls.from_row(context, row) async for row in conn.execute(query)
-            ]
+        if order_key is None:
+            _ordering = sa.desc(keypairs.c.created_at)
+        else:
+            _order_func = sa.asc if order_asc else sa.desc
+            _ordering = _order_func(getattr(keypairs.c, order_key))
+        j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
+        query = (
+            sa.select([keypairs])
+            .select_from(j)
+            .order_by(_ordering)
+            .limit(limit)
+            .offset(offset)
+        )
+        if domain_name is not None:
+            query = query.where(users.c.domain_name == domain_name)
+        if email is not None:
+            query = query.where(keypairs.c.user_id == email)
+        if is_active is not None:
+            query = query.where(keypairs.c.is_active == is_active)
+        return [
+            obj async for row in (await graph_ctx.db_conn.stream(query))
+            if (obj := cls.from_row(graph_ctx, row)) is not None
+        ]
 
     @classmethod
     async def batch_load_by_email(
-        cls, context, user_ids, *,
-        domain_name=None, is_active=None,
+        cls,
+        graph_ctx: GraphQueryContext,
+        user_ids: Sequence[uuid.UUID],
+        *,
+        domain_name: str = None,
+        is_active: bool = None,
     ) -> Sequence[Sequence[Optional[KeyPair]]]:
         from .user import users
-        async with context['dbpool'].acquire() as conn:
-            j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
-            query = (sa.select([keypairs])
-                       .select_from(j)
-                       .where(keypairs.c.user_id.in_(user_ids)))
-            if domain_name is not None:
-                query = query.where(users.c.domain_name == domain_name)
-            if is_active is not None:
-                query = query.where(keypairs.c.is_active == is_active)
-            return await batch_multiresult(
-                context, conn, query, cls,
-                user_ids, lambda row: row['user_id'],
-            )
+        j = sa.join(
+            keypairs, users,
+            keypairs.c.user == users.c.uuid,
+        )
+        query = (
+            sa.select([keypairs])
+            .select_from(j)
+            .where(keypairs.c.user_id.in_(user_ids))
+        )
+        if domain_name is not None:
+            query = query.where(users.c.domain_name == domain_name)
+        if is_active is not None:
+            query = query.where(keypairs.c.is_active == is_active)
+        return await batch_multiresult(
+            graph_ctx, graph_ctx.db_conn, query, cls,
+            user_ids, lambda row: row['user_id'],
+        )
 
     @classmethod
     async def batch_load_by_ak(
-        cls, context, access_keys, *,
-        domain_name=None,
+        cls,
+        graph_ctx: GraphQueryContext,
+        access_keys: Sequence[AccessKey],
+        *,
+        domain_name: str = None,
     ) -> Sequence[Optional[KeyPair]]:
-        async with context['dbpool'].acquire() as conn:
-            from .user import users
-            j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
-            query = (
-                sa.select([keypairs])
-                .select_from(j)
-                .where(
-                    keypairs.c.access_key.in_(access_keys)
-                )
-            )
-            if domain_name is not None:
-                query = query.where(users.c.domain_name == domain_name)
-            return await batch_result(
-                context, conn, query, cls,
-                access_keys, lambda row: row['access_key'],
-            )
+        from .user import users
+        j = sa.join(
+            keypairs, users,
+            keypairs.c.user == users.c.uuid,
+        )
+        query = (
+            sa.select([keypairs])
+            .select_from(j)
+            .where(keypairs.c.access_key.in_(access_keys))
+        )
+        if domain_name is not None:
+            query = query.where(users.c.domain_name == domain_name)
+        return await batch_result(
+            graph_ctx, graph_ctx.db_conn, query, cls,
+            access_keys, lambda row: row['access_key'],
+        )
 
 
 class KeyPairList(graphene.ObjectType):
@@ -364,62 +387,67 @@ class CreateKeyPair(graphene.Mutation):
     keypair = graphene.Field(lambda: KeyPair, required=False)
 
     @classmethod
-    async def mutate(cls, root, info, user_id, props):
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
-            # Check if user exists with requested email (user_id for legacy).
-            from .user import users  # noqa
-            query = (sa.select([users.c.uuid])
-                       .select_from(users)
-                       .where(users.c.email == user_id))
-            try:
-                result = await conn.execute(query)
-                user_uuid = await result.scalar()
-                if user_uuid is None:
-                    return cls(ok=False, msg=f'User not found: {user_id}', keypair=None)
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-                return cls(ok=False, msg=f'integrity error: {e}', keypair=None)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                raise
-            except Exception as e:
-                return cls(ok=False, msg=f'unexpected error: {e}', keypair=None)
+    async def mutate(
+        cls,
+        root,
+        info: graphene.ResolveInfo,
+        user_id: uuid.UUID,
+        props: KeyPairInput,
+    ) -> CreateKeyPair:
+        graph_ctx: GraphQueryContext = info.context
+        # Check if user exists with requested email (user_id for legacy).
+        from .user import users  # noqa
+        query = (
+            sa.select([users.c.uuid])
+            .select_from(users)
+            .where(users.c.email == user_id)
+        )
+        try:
+            result = await graph_ctx.db_conn.execute(query)
+            user_uuid = result.scalar()
+            if user_uuid is None:
+                return cls(ok=False, msg=f'User not found: {user_id}', keypair=None)
+        except sa.exc.IntegrityError as e:
+            return cls(ok=False, msg=f'integrity error: {e}', keypair=None)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            raise
+        except Exception as e:
+            return cls(ok=False, msg=f'unexpected error: {e}', keypair=None)
 
-            # Create keypair.
-            ak, sk = generate_keypair()
-            pubkey, privkey = generate_ssh_keypair()
-            data = {
-                'user_id': user_id,
-                'access_key': ak,
-                'secret_key': sk,
-                'is_active': bool(props.is_active),
-                'is_admin': bool(props.is_admin),
-                'resource_policy': props.resource_policy,
-                'concurrency_used': 0,
-                'rate_limit': props.rate_limit,
-                'num_queries': 0,
-                'user': user_uuid,
-                'ssh_public_key': pubkey,
-                'ssh_private_key': privkey,
-            }
-            insert_query = (keypairs.insert().values(data))
-            try:
-                result = await conn.execute(insert_query)
-                if result.rowcount > 0:
-                    # Read the created key data from DB.
-                    checkq = keypairs.select().where(keypairs.c.access_key == ak)
-                    result = await conn.execute(checkq)
-                    o = KeyPair.from_row(info.context, await result.first())
-                    return cls(ok=True, msg='success', keypair=o)
-                else:
-                    return cls(ok=False, msg='failed to create keypair',
-                               keypair=None)
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-                return cls(ok=False, msg=f'integrity error: {e}',
-                           keypair=None)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                raise
-            except Exception as e:
-                return cls(ok=False, msg=f'unexpected error: {e}',
-                           keypair=None)
+        # Create keypair.
+        ak, sk = generate_keypair()
+        pubkey, privkey = generate_ssh_keypair()
+        data = {
+            'user_id': user_id,
+            'access_key': ak,
+            'secret_key': sk,
+            'is_active': bool(props.is_active),
+            'is_admin': bool(props.is_admin),
+            'resource_policy': props.resource_policy,
+            'concurrency_used': 0,
+            'rate_limit': props.rate_limit,
+            'num_queries': 0,
+            'user': user_uuid,
+            'ssh_public_key': pubkey,
+            'ssh_private_key': privkey,
+        }
+        insert_query = (sa.insert(keypairs).values(data))
+        try:
+            result = await graph_ctx.db_conn.execute(insert_query)
+            if result.rowcount > 0:
+                # Read the created key data from DB.
+                checkq = sa.select([keypairs]).where(keypairs.c.access_key == ak)
+                result = await graph_ctx.db_conn.execute(checkq)
+                o = KeyPair.from_row(info.context, result.first())
+                return cls(ok=True, msg='success', keypair=o)
+            else:
+                return cls(ok=False, msg='failed to create keypair', keypair=None)
+        except sa.exc.IntegrityError as e:
+            return cls(ok=False, msg=f'integrity error: {e}', keypair=None)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            raise
+        except Exception as e:
+            return cls(ok=False, msg=f'unexpected error: {e}', keypair=None)
 
 
 class ModifyKeyPair(graphene.Mutation):
@@ -434,18 +462,25 @@ class ModifyKeyPair(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    async def mutate(cls, root, info, access_key, props):
-        data = {}
+    async def mutate(
+        cls,
+        root,
+        info: graphene.ResolveInfo,
+        access_key: AccessKey,
+        props: ModifyUserInput,
+    ) -> ModifyKeyPair:
+        ctx: GraphQueryContext = info.context
+        data: Dict[str, Any] = {}
         set_if_set(props, data, 'is_active')
         set_if_set(props, data, 'is_admin')
         set_if_set(props, data, 'resource_policy')
         set_if_set(props, data, 'rate_limit')
         update_query = (
-            keypairs.update()
+            sa.update(keypairs)
             .values(data)
             .where(keypairs.c.access_key == access_key)
         )
-        return await simple_db_mutate(cls, info.context, update_query)
+        return await simple_db_mutate(cls, ctx, update_query)
 
 
 class DeleteKeyPair(graphene.Mutation):
@@ -459,12 +494,18 @@ class DeleteKeyPair(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    async def mutate(cls, root, info, access_key):
+    async def mutate(
+        cls,
+        root,
+        info: graphene.ResolveInfo,
+        access_key: AccessKey,
+    ) -> DeleteKeyPair:
+        ctx: GraphQueryContext = info.context
         delete_query = (
-            keypairs.delete()
+            sa.delete(keypairs)
             .where(keypairs.c.access_key == access_key)
         )
-        return await simple_db_mutate(cls, info.context, delete_query)
+        return await simple_db_mutate(cls, ctx, delete_query)
 
 
 class Dotfile(TypedDict):
@@ -507,9 +548,11 @@ async def query_owned_dotfiles(
     conn: SAConnection,
     access_key: AccessKey,
 ) -> Tuple[List[Dotfile], int]:
-    query = (sa.select([keypairs.c.dotfiles])
-               .select_from(keypairs)
-               .where(keypairs.c.access_key == access_key))
+    query = (
+        sa.select([keypairs.c.dotfiles])
+        .select_from(keypairs)
+        .where(keypairs.c.access_key == access_key)
+    )
     packed_dotfile = await conn.scalar(query)
     rows = msgpack.unpackb(packed_dotfile)
     return rows, MAXIMUM_DOTFILE_SIZE - len(packed_dotfile)
@@ -519,9 +562,11 @@ async def query_bootstrap_script(
     conn: SAConnection,
     access_key: AccessKey,
 ) -> Tuple[str, int]:
-    query = (sa.select([keypairs.c.bootstrap_script])
-               .select_from(keypairs)
-               .where(keypairs.c.access_key == access_key))
+    query = (
+        sa.select([keypairs.c.bootstrap_script])
+        .select_from(keypairs)
+        .where(keypairs.c.access_key == access_key)
+    )
     script = await conn.scalar(query)
     return script, MAXIMUM_DOTFILE_SIZE - len(script)
 

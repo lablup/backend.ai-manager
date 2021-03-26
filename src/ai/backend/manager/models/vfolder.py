@@ -1,9 +1,21 @@
+from __future__ import annotations
+
 import enum
-from typing import Any, Sequence
+from typing import (
+    Any,
+    Mapping,
+    Optional,
+    Sequence,
+    Set,
+    TYPE_CHECKING,
+)
+import uuid
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
+from sqlalchemy.engine.row import Row
+from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 import trafaret as t
 
 from ..defs import RESERVED_VFOLDER_PATTERNS, RESERVED_VFOLDERS
@@ -13,6 +25,8 @@ from .base import (
     batch_multiresult,
 )
 from .user import UserRole
+if TYPE_CHECKING:
+    from .gql import GraphQueryContext
 
 __all__: Sequence[str] = (
     'vfolders',
@@ -173,13 +187,18 @@ def verify_vfolder_name(folder: str) -> bool:
     return True
 
 
-async def query_accessible_vfolders(conn, user_uuid, *,
-                                    user_role=None, domain_name=None,
-                                    allowed_vfolder_types=None,
-                                    extra_vf_conds=None,
-                                    extra_vfperm_conds=None,
-                                    extra_vf_user_conds=None,
-                                    extra_vf_group_conds=None):
+async def query_accessible_vfolders(
+    conn: SAConnection,
+    user_uuid: uuid.UUID,
+    *,
+    user_role=None,
+    domain_name=None,
+    allowed_vfolder_types=None,
+    extra_vf_conds=None,
+    extra_vfperm_conds=None,
+    extra_vf_user_conds=None,
+    extra_vf_group_conds=None,
+) -> Sequence[Mapping[str, Any]]:
     from ai.backend.manager.models import groups, users, association_groups_users as agus
     if allowed_vfolder_types is None:
         allowed_vfolder_types = ['user']  # legacy default
@@ -188,32 +207,34 @@ async def query_accessible_vfolders(conn, user_uuid, *,
     if 'user' in allowed_vfolder_types:
         # Scan my owned vfolders.
         j = (vfolders.join(users, vfolders.c.user == users.c.uuid))
-        query = (sa.select([
-                       vfolders.c.name,
-                       vfolders.c.id,
-                       vfolders.c.host,
-                       vfolders.c.usage_mode,
-                       vfolders.c.permission,
-                       vfolders.c.created_at,
-                       vfolders.c.last_used,
-                       vfolders.c.max_files,
-                       vfolders.c.max_size,
-                       vfolders.c.ownership_type,
-                       vfolders.c.user,
-                       vfolders.c.group,
-                       vfolders.c.creator,
-                       vfolders.c.unmanaged_path,
-                       vfolders.c.cloneable,
-                       users.c.email,
-                   ])
-                   .select_from(j)
-                   .where(vfolders.c.user == user_uuid))
+        query = (
+            sa.select([
+                vfolders.c.name,
+                vfolders.c.id,
+                vfolders.c.host,
+                vfolders.c.usage_mode,
+                vfolders.c.permission,
+                vfolders.c.created_at,
+                vfolders.c.last_used,
+                vfolders.c.max_files,
+                vfolders.c.max_size,
+                vfolders.c.ownership_type,
+                vfolders.c.user,
+                vfolders.c.group,
+                vfolders.c.creator,
+                vfolders.c.unmanaged_path,
+                vfolders.c.cloneable,
+                users.c.email,
+            ])
+            .select_from(j)
+            .where(vfolders.c.user == user_uuid)
+        )
         if extra_vf_conds is not None:
             query = query.where(extra_vf_conds)
         if extra_vf_user_conds is not None:
             query = query.where(extra_vf_user_conds)
         result = await conn.execute(query)
-        async for row in result:
+        for row in result:
             entries.append({
                 'name': row.name,
                 'id': row.id,
@@ -231,7 +252,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                 'group_name': None,
                 'is_owner': True,
                 'permission': row.permission,
-                'unmanaged_path': row.get('unmanaged_path'),
+                'unmanaged_path': row.unmanaged_path,
                 'cloneable': row.cloneable,
             })
         # Scan vfolders shared with me.
@@ -239,39 +260,43 @@ async def query_accessible_vfolders(conn, user_uuid, *,
             vfolders.join(
                 vfolder_permissions,
                 vfolders.c.id == vfolder_permissions.c.vfolder,
-                isouter=True)
+                isouter=True,
+            )
             .join(
                 users,
                 vfolders.c.user == users.c.uuid,
-                isouter=True)
+                isouter=True,
+            )
         )
-        query = (sa.select([
-                       vfolders.c.name,
-                       vfolders.c.id,
-                       vfolders.c.host,
-                       vfolders.c.usage_mode,
-                       vfolders.c.created_at,
-                       vfolders.c.last_used,
-                       vfolders.c.max_files,
-                       vfolders.c.max_size,
-                       vfolders.c.ownership_type,
-                       vfolders.c.user,
-                       vfolders.c.group,
-                       vfolders.c.creator,
-                       vfolders.c.unmanaged_path,
-                       # vfolders.c.permission,
-                       vfolder_permissions.c.permission,  # override vfolder perm
-                       vfolders.c.cloneable,
-                       users.c.email,
-                   ])
-                   .select_from(j)
-                   .where(vfolder_permissions.c.user == user_uuid))
+        query = (
+            sa.select([
+                vfolders.c.name,
+                vfolders.c.id,
+                vfolders.c.host,
+                vfolders.c.usage_mode,
+                vfolders.c.created_at,
+                vfolders.c.last_used,
+                vfolders.c.max_files,
+                vfolders.c.max_size,
+                vfolders.c.ownership_type,
+                vfolders.c.user,
+                vfolders.c.group,
+                vfolders.c.creator,
+                vfolders.c.unmanaged_path,
+                # vfolders.c.permission,
+                vfolder_permissions.c.permission,  # override vfolder perm
+                vfolders.c.cloneable,
+                users.c.email,
+            ])
+            .select_from(j)
+            .where(vfolder_permissions.c.user == user_uuid)
+        )
         if extra_vf_conds is not None:
             query = query.where(extra_vf_conds)
         if extra_vfperm_conds is not None:
             query = query.where(extra_vfperm_conds)
         result = await conn.execute(query)
-        async for row in result:
+        for row in result:
             entries.append({
                 'name': row.name,
                 'id': row.id,
@@ -289,7 +314,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                 'group_name': None,
                 'is_owner': False,
                 'permission': row.permission,  # not vfolders.c.permission!
-                'unmanaged_path': row.get('unmanaged_path'),
+                'unmanaged_path': row.unmanaged_path,
                 'cloneable': row.cloneable,
             })
 
@@ -300,7 +325,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                        .select_from(groups)
                        .where(groups.c.domain_name == domain_name))
             result = await conn.execute(query)
-            grps = await result.fetchall()
+            grps = result.fetchall()
             group_ids = [g.id for g in grps]
         else:
             j = sa.join(agus, users, agus.c.user_id == users.c.uuid)
@@ -308,28 +333,30 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                        .select_from(j)
                        .where(agus.c.user_id == user_uuid))
             result = await conn.execute(query)
-            grps = await result.fetchall()
+            grps = result.fetchall()
             group_ids = [g.group_id for g in grps]
         j = (vfolders.join(groups, vfolders.c.group == groups.c.id))
-        query = (sa.select([
-                       vfolders.c.name,
-                       vfolders.c.id,
-                       vfolders.c.host,
-                       vfolders.c.usage_mode,
-                       vfolders.c.created_at,
-                       vfolders.c.last_used,
-                       vfolders.c.max_files,
-                       vfolders.c.max_size,
-                       vfolders.c.ownership_type,
-                       vfolders.c.user,
-                       vfolders.c.group,
-                       vfolders.c.creator,
-                       vfolders.c.permission,
-                       vfolders.c.unmanaged_path,
-                       vfolders.c.cloneable,
-                       groups.c.name,
-                   ], use_labels=True)
-                   .select_from(j))
+        query = (
+            sa.select([
+                vfolders.c.name,
+                vfolders.c.id,
+                vfolders.c.host,
+                vfolders.c.usage_mode,
+                vfolders.c.created_at,
+                vfolders.c.last_used,
+                vfolders.c.max_files,
+                vfolders.c.max_size,
+                vfolders.c.ownership_type,
+                vfolders.c.user,
+                vfolders.c.group,
+                vfolders.c.creator,
+                vfolders.c.permission,
+                vfolders.c.unmanaged_path,
+                vfolders.c.cloneable,
+                groups.c.name,
+            ], use_labels=True)
+            .select_from(j)
+        )
         if user_role != UserRole.SUPERADMIN:
             query = query.where(vfolders.c.group.in_(group_ids))
         if extra_vf_conds is not None:
@@ -339,7 +366,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
         result = await conn.execute(query)
         is_owner = ((user_role == UserRole.ADMIN or user_role == 'admin') or
                     (user_role == UserRole.SUPERADMIN or user_role == 'superadmin'))
-        async for row in result:
+        for row in result:
             entries.append({
                 'name': row.vfolders_name,
                 'id': row.vfolders_id,
@@ -357,14 +384,19 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                 'group_name': row.groups_name,
                 'is_owner': is_owner,
                 'permission': row.vfolders_permission,
-                'unmanaged_path': row.get('unmanaged_path'),
+                'unmanaged_path': row.vfolders_unmanaged_path,
                 'cloneable': row.vfolders_cloneable,
             })
     return entries
 
 
-async def get_allowed_vfolder_hosts_by_group(conn, resource_policy,
-                                             domain_name, group_id=None, domain_admin=False):
+async def get_allowed_vfolder_hosts_by_group(
+    conn: SAConnection,
+    resource_policy,
+    domain_name: str,
+    group_id: uuid.UUID = None,
+    domain_admin: bool = False,
+) -> Set[str]:
     '''
     Union `allowed_vfolder_hosts` from domain, group, and keypair_resource_policy.
 
@@ -374,30 +406,47 @@ async def get_allowed_vfolder_hosts_by_group(conn, resource_policy,
     from . import domains, groups
     # Domain's allowed_vfolder_hosts.
     allowed_hosts = set()
-    query = (sa.select([domains.c.allowed_vfolder_hosts])
-               .where((domains.c.name == domain_name) &
-                       domains.c.is_active))
+    query = (
+        sa.select([domains.c.allowed_vfolder_hosts])
+        .where(
+            (domains.c.name == domain_name) &
+            (domains.c.is_active)
+        )
+    )
     allowed_hosts.update(await conn.scalar(query))
     # Group's allowed_vfolder_hosts.
     if group_id is not None:
-        query = (sa.select([groups.c.allowed_vfolder_hosts])
-                   .where(groups.c.domain_name == domain_name)
-                   .where((groups.c.id == group_id) &
-                          (groups.c.is_active)))
+        query = (
+            sa.select([groups.c.allowed_vfolder_hosts])
+            .where(
+                (groups.c.domain_name == domain_name) &
+                (groups.c.id == group_id) &
+                (groups.c.is_active)
+            )
+        )
         allowed_hosts.update(await conn.scalar(query))
     elif domain_admin:
-        query = (sa.select([groups.c.allowed_vfolder_hosts])
-                   .where((groups.c.domain_name == domain_name) &
-                          (groups.c.is_active)))
-        async for row in conn.execute(query):
+        query = (
+            sa.select([groups.c.allowed_vfolder_hosts])
+            .where(
+                (groups.c.domain_name == domain_name) &
+                (groups.c.is_active)
+            )
+        )
+        result = await conn.execute(query)
+        for row in result:
             allowed_hosts.update(row.allowed_vfolder_hosts)
     # Keypair Resource Policy's allowed_vfolder_hosts
     allowed_hosts.update(resource_policy['allowed_vfolder_hosts'])
     return allowed_hosts
 
 
-async def get_allowed_vfolder_hosts_by_user(conn, resource_policy,
-                                            domain_name, user_uuid):
+async def get_allowed_vfolder_hosts_by_user(
+    conn: SAConnection,
+    resource_policy,
+    domain_name: str,
+    user_uuid: uuid.UUID,
+) -> Set[str]:
     '''
     Union `allowed_vfolder_hosts` from domain, groups, and keypair_resource_policy.
 
@@ -406,20 +455,32 @@ async def get_allowed_vfolder_hosts_by_user(conn, resource_policy,
     from . import association_groups_users, domains, groups
     # Domain's allowed_vfolder_hosts.
     allowed_hosts = set()
-    query = (sa.select([domains.c.allowed_vfolder_hosts])
-               .where((domains.c.name == domain_name) &
-                      (domains.c.is_active)))
+    query = (
+        sa.select([domains.c.allowed_vfolder_hosts])
+        .where(
+            (domains.c.name == domain_name) &
+            (domains.c.is_active)
+        )
+    )
     allowed_hosts.update(await conn.scalar(query))
     # User's Groups' allowed_vfolder_hosts.
-    j = groups.join(association_groups_users,
-                    ((groups.c.id == association_groups_users.c.group_id) &
-                     (association_groups_users.c.user_id == user_uuid)))
-    query = (sa.select([groups.c.allowed_vfolder_hosts])
-               .select_from(j)
-               .where((domains.c.name == domain_name) &
-                      (groups.c.is_active)))
+    j = groups.join(
+        association_groups_users,
+        (
+            (groups.c.id == association_groups_users.c.group_id) &
+            (association_groups_users.c.user_id == user_uuid)
+        )
+    )
+    query = (
+        sa.select([groups.c.allowed_vfolder_hosts])
+        .select_from(j)
+        .where(
+            (domains.c.name == domain_name) &
+            (groups.c.is_active)
+        )
+    )
     result = await conn.execute(query)
-    rows = await result.fetchall()
+    rows = result.fetchall()
     for row in rows:
         allowed_hosts.update(row['allowed_vfolder_hosts'])
     # Keypair Resource Policy's allowed_vfolder_hosts
@@ -451,7 +512,7 @@ class VirtualFolder(graphene.ObjectType):
     cloneable = graphene.Boolean()
 
     @classmethod
-    def from_row(cls, context, row):
+    def from_row(cls, ctx: GraphQueryContext, row: Row) -> Optional[VirtualFolder]:
         if row is None:
             return None
         return cls(
@@ -473,82 +534,102 @@ class VirtualFolder(graphene.ObjectType):
             cloneable=row['cloneable'],
         )
 
-    async def resolve_num_files(self, info):
+    async def resolve_num_files(self, info: graphene.ResolveInfo) -> int:
         # TODO: measure on-the-fly
         return 0
 
-    async def resolve_cur_size(self, info):
+    async def resolve_cur_size(self, info: graphene.ResolveInfo) -> int:
         # TODO: measure on-the-fly
         return 0
 
     @classmethod
-    async def load_count(cls, context, *,
-                         domain_name=None, group_id=None, user_id=None):
+    async def load_count(
+        cls,
+        graph_ctx: GraphQueryContext,
+        *,
+        domain_name: str = None,
+        group_id: uuid.UUID = None,
+        user_id: uuid.UUID = None,
+    ) -> int:
         from .user import users
-        async with context['dbpool'].acquire() as conn:
-            j = sa.join(vfolders, users, vfolders.c.user == users.c.uuid)
-            query = (
-                sa.select([sa.func.count(vfolders.c.id)])
-                .select_from(j)
-                .as_scalar()
-            )
-            if domain_name is not None:
-                query = query.where(users.c.domain_name == domain_name)
-            if group_id is not None:
-                query = query.where(vfolders.c.group == group_id)
-            if user_id is not None:
-                query = query.where(vfolders.c.user == user_id)
-            result = await conn.execute(query)
-            return await result.scalar()
+        j = sa.join(vfolders, users, vfolders.c.user == users.c.uuid)
+        query = (
+            sa.select([sa.func.count(vfolders.c.id)])
+            .select_from(j)
+        )
+        if domain_name is not None:
+            query = query.where(users.c.domain_name == domain_name)
+        if group_id is not None:
+            query = query.where(vfolders.c.group == group_id)
+        if user_id is not None:
+            query = query.where(vfolders.c.user == user_id)
+        result = await graph_ctx.db_conn.execute(query)
+        return result.scalar()
 
     @classmethod
-    async def load_slice(cls, context, limit, offset, *,
-                         domain_name=None, group_id=None, user_id=None,
-                         order_key=None, order_asc=None):
+    async def load_slice(
+        cls,
+        graph_ctx: GraphQueryContext,
+        limit: int,
+        offset: int,
+        *,
+        domain_name: str = None,
+        group_id: uuid.UUID = None,
+        user_id: uuid.UUID = None,
+        order_key: str = None,
+        order_asc: bool = True
+    ) -> Sequence[VirtualFolder]:
         from .user import users
-        async with context['dbpool'].acquire() as conn:
-            if order_key is None:
-                _ordering = vfolders.c.created_at
-            else:
-                _order_func = sa.asc if order_asc else sa.desc
-                _ordering = _order_func(getattr(vfolders.c, order_key))
-            j = sa.join(vfolders, users, vfolders.c.user == users.c.uuid)
-            query = (
-                sa.select([vfolders])
-                .select_from(j)
-                .order_by(_ordering)
-                .limit(limit)
-                .offset(offset)
-            )
-            if domain_name is not None:
-                query = query.where(users.c.domain_name == domain_name)
-            if group_id is not None:
-                query = query.where(vfolders.c.group == group_id)
-            if user_id is not None:
-                query = query.where(vfolders.c.user == user_id)
-            return [cls.from_row(context, r) async for r in conn.execute(query)]
+        if order_key is None:
+            _ordering = vfolders.c.created_at
+        else:
+            _order_func = sa.asc if order_asc else sa.desc
+            _ordering = _order_func(getattr(vfolders.c, order_key))
+        j = sa.join(vfolders, users, vfolders.c.user == users.c.uuid)
+        query = (
+            sa.select([vfolders])
+            .select_from(j)
+            .order_by(_ordering)
+            .limit(limit)
+            .offset(offset)
+        )
+        if domain_name is not None:
+            query = query.where(users.c.domain_name == domain_name)
+        if group_id is not None:
+            query = query.where(vfolders.c.group == group_id)
+        if user_id is not None:
+            query = query.where(vfolders.c.user == user_id)
+        return [
+            obj async for r in (await graph_ctx.db_conn.stream(query))
+            if (obj := cls.from_row(graph_ctx, r)) is not None
+        ]
 
     @classmethod
-    async def batch_load_by_user(cls, context, user_uuids, *,
-                                 domain_name=None, group_id=None):
+    async def batch_load_by_user(
+        cls,
+        graph_ctx: GraphQueryContext,
+        user_uuids: Sequence[uuid.UUID],
+        *,
+        domain_name: str = None,
+        group_id: uuid.UUID = None,
+    ) -> Sequence[Sequence[VirtualFolder]]:
         from .user import users
-        async with context['dbpool'].acquire() as conn:
-            # TODO: num_attached count group-by
-            j = sa.join(vfolders, users, vfolders.c.user == users.c.uuid)
-            query = (
-                sa.select([vfolders])
-                .select_from(j)
-                .where(vfolders.c.user.in_(user_uuids))
-                .order_by(sa.desc(vfolders.c.created_at))
-            )
-            if domain_name is not None:
-                query = query.where(users.c.domain_name == domain_name)
-            if group_id is not None:
-                query = query.where(vfolders.c.group == group_id)
-            return await batch_multiresult(
-                context, conn, query, cls,
-                user_uuids, lambda row: row['user']
-            )
+        # TODO: num_attached count group-by
+        j = sa.join(vfolders, users, vfolders.c.user == users.c.uuid)
+        query = (
+            sa.select([vfolders])
+            .select_from(j)
+            .where(vfolders.c.user.in_(user_uuids))
+            .order_by(sa.desc(vfolders.c.created_at))
+        )
+        if domain_name is not None:
+            query = query.where(users.c.domain_name == domain_name)
+        if group_id is not None:
+            query = query.where(vfolders.c.group == group_id)
+        return await batch_multiresult(
+            graph_ctx, graph_ctx.db_conn, query, cls,
+            user_uuids, lambda row: row['user']
+        )
 
 
 class VirtualFolderList(graphene.ObjectType):
