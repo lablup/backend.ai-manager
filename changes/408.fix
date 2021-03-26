@@ -1,0 +1,1 @@
+Restructure the API layer by moving `ai.backend.gateway` modules to `ai.backend.manager.api` to make it consistent with other Backend.AI projects
