@@ -2,8 +2,8 @@ from abc import ABC, abstractmethod
 import sqlalchemy as sa
 import uuid
 
+from ai.backend.manager.api.context import RootContext
 import ai.backend.manager.models as models
-from ai.backend.gateway.context import RootContext
 
 
 def get_random_string(length=10):

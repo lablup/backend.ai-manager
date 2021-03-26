@@ -12,9 +12,11 @@ from ai.backend.common.types import (
     LogSeverity,
 )
 from ai.backend.common.plugin.monitor import AbstractErrorReporterPlugin
+
 from ..models import error_logs
+
 if TYPE_CHECKING:
-    from ai.backend.gateway.context import RootContext
+    from ai.backend.manager.api.context import RootContext
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 

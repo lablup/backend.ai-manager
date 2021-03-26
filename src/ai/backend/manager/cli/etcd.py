@@ -20,9 +20,11 @@ from ai.backend.common.etcd import (
     unquote as etcd_unquote,
 )
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.gateway.config import SharedConfig
+
+from ..config import SharedConfig
+
 if TYPE_CHECKING:
-    from .__main__ import CLIContext
+    from .context import CLIContext
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 

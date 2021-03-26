@@ -40,12 +40,6 @@ from ai.backend.common.events import (
 import aiodocker
 import aiohttp
 
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import (
-        AsyncConnection as SAConnection,
-        AsyncEngine as SAEngine,
-    )
-    from sqlalchemy.engine.row import Row
 import aiotools
 from aioredis import Redis
 from async_timeout import timeout as _timeout
@@ -87,14 +81,8 @@ from ai.backend.common.types import (
     SlotTypes,
     check_typed_dict,
 )
-if TYPE_CHECKING:
-    from ai.backend.common.events import EventDispatcher, EventProducer
 
-from ai.backend.gateway.config import SharedConfig
-from .exceptions import MultiAgentError
-from .defs import DEFAULT_ROLE, INTRINSIC_SLOTS
-from .types import SessionGetter
-from ..gateway.exceptions import (
+from .api.exceptions import (
     BackendError, InvalidAPIParameters,
     RejectedByHook,
     InstanceNotFound,
@@ -106,6 +94,10 @@ from ..gateway.exceptions import (
     AgentError,
     GenericForbidden,
 )
+from .config import SharedConfig
+from .exceptions import MultiAgentError
+from .defs import DEFAULT_ROLE, INTRINSIC_SLOTS
+from .types import SessionGetter
 from .models import (
     agents, kernels, keypairs, vfolders,
     query_group_dotfiles, query_domain_dotfiles,
@@ -120,7 +112,16 @@ from .models import (
 )
 from .models.kernel import match_session_ids, get_all_kernels, get_main_kernels
 from .models.utils import reenter_txn
+
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import (
+        AsyncConnection as SAConnection,
+        AsyncEngine as SAEngine,
+    )
+    from sqlalchemy.engine.row import Row
+
+    from ai.backend.common.events import EventDispatcher, EventProducer
+
     from .models.storage import StorageSessionManager
     from .scheduler import (
         AgentAllocationContext,

@@ -54,7 +54,7 @@ from ai.backend.common.types import (
 )
 
 from .. import models
-from ...gateway.exceptions import (
+from ..api.exceptions import (
     GenericForbidden, InvalidAPIParameters,
 )
 if TYPE_CHECKING:

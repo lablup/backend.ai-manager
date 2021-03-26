@@ -26,6 +26,8 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
 from ai.backend.common.logging import BraceStyleAdapter
+
+from ..api.exceptions import VFolderOperationFailed
 from .base import (
     EnumValueType,
     IDColumn,
@@ -36,7 +38,6 @@ from .base import (
     batch_result,
     batch_multiresult,
 )
-from ai.backend.gateway.exceptions import VFolderOperationFailed
 from .storage import StorageSessionManager
 
 if TYPE_CHECKING:
