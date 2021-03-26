@@ -1,4 +1,5 @@
 Restructure the API layer by moving `ai.backend.gateway` modules to `ai.backend.manager.api` to make it consistent with other Backend.AI projects.
 - The module field of API-related log entries will now have `ai.backend.manager.api.` prefix instead of `ai.backend.gateway.`
 - There is no changes in the TOML configuration but the `BACKEND_GATEWAY_NPROC` environment variable is renamed to `BACKEND_MANAGER_NPROC`.
+- You must update the license activator plugin (only the Enterprise edition users).
 - You may need to update SSO/webapp plugins to adapt with the new import paths.
