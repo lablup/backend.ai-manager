@@ -16,6 +16,19 @@ Changes
 
 .. towncrier release notes start
 
+20.09.13 (2021-03-29)
+---------------------
+
+### Fixes
+* Upgrade SQLAlchemy to v1.4 for native asyncio support and better transaction/concurrency handling ([#406](https://github.com/lablup/backend.ai-manager/issues/406))
+* Add PostgreSQL version check to adjust connection arguments ([#407](https://github.com/lablup/backend.ai-manager/issues/407))
+* Restructure the API layer by moving `ai.backend.gateway` modules to `ai.backend.manager.api` to make it consistent with other Backend.AI projects. ([#408](https://github.com/lablup/backend.ai-manager/issues/408))
+  - The module field of API-related log entries will now have `ai.backend.manager.api.` prefix instead of `ai.backend.gateway.`
+  - There is no changes in the TOML configuration but the `BACKEND_GATEWAY_NPROC` environment variable is renamed to `BACKEND_MANAGER_NPROC`.
+  - You must update the license activator plugin (only the Enterprise edition users).
+  - You may need to update SSO/webapp plugins to adapt with the new import paths.
+
+
 20.09.12 (2021-03-19)
 ---------------------
 
