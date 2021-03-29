@@ -16,6 +16,41 @@ Changes
 
 .. towncrier release notes start
 
+21.03.0 (2021-03-29)
+--------------------
+
+The v21.03.0 release is an integrated update for all features and fixes already applied to v20.09 series as additional patches, except that it now runs on top of Python 3.9.
+
+### Features
+* Add `usage` field to the `StorageVolume` graph object schema to provide the total capacity and usage ([#389](https://github.com/lablup/backend.ai-manager/issues/389))
+* Add `cloneable` parameter in list_folders, update_vfolder_options and clone function in class vfolder ([#393](https://github.com/lablup/backend.ai-manager/issues/393))
+* Add `is_dir` parameter to the rename_file API function to provide renaming directories in Vfolders ([#397](https://github.com/lablup/backend.ai-manager/issues/397))
+* Add BACKENDAI_KERNEL_IMAGE environment variable inside a compute container. ([#401](https://github.com/lablup/backend.ai-manager/issues/401))
+
+### Fixes
+* Improve daemon shutdown stability using aiotools v1.2 ([#386](https://github.com/lablup/backend.ai-manager/issues/386))
+* Fix a regression in the idle timeout checker with session creation race fixes ([#387](https://github.com/lablup/backend.ai-manager/issues/387))
+* Prevent indefinite hang of the scheduler while handling agent/container launch failures and fix resource calculation when processing multiple asynchronous errors ([#388](https://github.com/lablup/backend.ai-manager/issues/388))
+* Update dependencies including aiojobs, pytest, mypy, pyzmq, python-snappy, and PyYAML. ([#390](https://github.com/lablup/backend.ai-manager/issues/390))
+* Refactor out `gateway.events` and move common facilities to `common.events` to improve static typing of events and reduce possibility of serialization/deserialization bugs ([#392](https://github.com/lablup/backend.ai-manager/issues/392))
+* Remove b-prefix in "push_background_task_events" function ([#394](https://github.com/lablup/backend.ai-manager/issues/394))
+* Explicitly use `yaml.safe_load()` for all YAML loader invocations to prevent potential future mistakes to set an unsafe loader, whcih may allow remote code execution ([#395](https://github.com/lablup/backend.ai-manager/issues/395))
+* Update uvloop to 0.15.1 for better Python 3.8/3.9 support (and drop Python 3.5/3.6 support) ([#398](https://github.com/lablup/backend.ai-manager/issues/398))
+* Update pyzmq to v22 series to reduce its wheel distribution size and fix a fork-safety bug introduced in v20. ([#399](https://github.com/lablup/backend.ai-manager/issues/399))
+* Refactor internal dict-based state variables to be statically typed using explicitly defined attr classes, including the nested `aiohttp.web.Application` objects, the context object of Graphene resolvers, and the context object of Click. ([#400](https://github.com/lablup/backend.ai-manager/issues/400))
+* Unable to fetch virtual folders list for superadmins. ([#402](https://github.com/lablup/backend.ai-manager/issues/402))
+* Scheduler for scaling group was entirely broken if only sub containers are running with main container is terminated. ([#403](https://github.com/lablup/backend.ai-manager/issues/403))
+* Idle timeout was not working since there was a type error on saving compute session's last_access time. ([#404](https://github.com/lablup/backend.ai-manager/issues/404))
+* Follow-up fixes for #400 ([#405](https://github.com/lablup/backend.ai-manager/issues/405))
+* Upgrade SQLAlchemy to v1.4 for native asyncio support and better transaction/concurrency handling ([#406](https://github.com/lablup/backend.ai-manager/issues/406))
+* Add PostgreSQL version check to adjust connection arguments ([#407](https://github.com/lablup/backend.ai-manager/issues/407))
+* Restructure the API layer by moving `ai.backend.gateway` modules to `ai.backend.manager.api` to make it consistent with other Backend.AI projects.
+  - The module field of API-related log entries will now have `ai.backend.manager.api.` prefix instead of `ai.backend.gateway.`
+  - There is no changes in the TOML configuration but the `BACKEND_GATEWAY_NPROC` environment variable is renamed to `BACKEND_MANAGER_NPROC`.
+  - You must update the license activator plugin (only the Enterprise edition users).
+  - You may need to update SSO/webapp plugins to adapt with the new import paths. ([#408](https://github.com/lablup/backend.ai-manager/issues/408))
+
+
 20.09.4 (2021-01-08)
 --------------------
 

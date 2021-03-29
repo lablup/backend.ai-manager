@@ -1,1 +1,0 @@
-Add `is_dir` parameter to the rename_file API function to provide renaming directories in Vfolders

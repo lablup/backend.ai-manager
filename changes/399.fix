@@ -1,1 +1,0 @@
-Update pyzmq to v22 series to reduce its wheel distribution size and fix a fork-safety bug introduced in v20.
