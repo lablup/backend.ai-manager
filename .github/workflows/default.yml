@@ -7,10 +7,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
-    - name: Set up Python 3.8
+    - name: Set up Python 3.9
       uses: actions/setup-python@v2
       with:
-        python-version: 3.8
+        python-version: 3.9
     - name: Cache pip packages
       uses: actions/cache@v2
       with:
@@ -32,7 +32,7 @@ jobs:
         set +e
         git ls-remote --heads 'https://github.com/lablup/backend.ai-common' | grep -q "refs/heads/${GHBRANCH}"
         if [ $? -eq 0 ]; then
-          sed -i "s%\(backend.ai-common\)@main%\1@${GHBRANCH}%" requirements/${REQUIREMENTS_FILE}.txt
+          sed -i "s%\(backend.ai-common\)@21.03%\1@${GHBRANCH}%" requirements/${REQUIREMENTS_FILE}.txt
         fi
         set -e
         python -m pip install -U -r requirements/${REQUIREMENTS_FILE}.txt
@@ -49,10 +49,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
-    - name: Set up Python 3.8
+    - name: Set up Python 3.9
       uses: actions/setup-python@v2
       with:
-        python-version: 3.8
+        python-version: 3.9
     - name: Cache pip packages
       uses: actions/cache@v2
       with:
@@ -74,7 +74,7 @@ jobs:
         set +e
         git ls-remote --heads 'https://github.com/lablup/backend.ai-common' | grep -q "refs/heads/${GHBRANCH}"
         if [ $? -eq 0 ]; then
-          sed -i "s%\(backend.ai-common\)@main%\1@${GHBRANCH}%" requirements/${REQUIREMENTS_FILE}.txt
+          sed -i "s%\(backend.ai-common\)@21.03%\1@${GHBRANCH}%" requirements/${REQUIREMENTS_FILE}.txt
         fi
         set -e
         python -m pip install -U -r requirements/${REQUIREMENTS_FILE}.txt
@@ -91,7 +91,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:12-alpine
+        image: postgres:13.2-alpine
         env:
           POSTGRES_USER: lablup
           POSTGRES_PASSWORD: develove
@@ -106,15 +106,15 @@ jobs:
           --health-timeout 5s
           --health-retries 5
       redis:
-        image: redis:5.0.5-alpine
+        image: redis:6.2.1-alpine
         ports:
           - 6379:6379
     steps:
     - uses: actions/checkout@v2
-    - name: Set up Python 3.8
+    - name: Set up Python 3.9
       uses: actions/setup-python@v2
       with:
-        python-version: 3.8
+        python-version: 3.9
     - name: Cache pip packages
       uses: actions/cache@v2
       with:
@@ -136,7 +136,7 @@ jobs:
         set +e
         git ls-remote --heads 'https://github.com/lablup/backend.ai-common' | grep -q "refs/heads/${GHBRANCH}"
         if [ $? -eq 0 ]; then
-          sed -i "s%\(backend.ai-common\)@main%\1@${GHBRANCH}%" requirements/${REQUIREMENTS_FILE}.txt
+          sed -i "s%\(backend.ai-common\)@21.03%\1@${GHBRANCH}%" requirements/${REQUIREMENTS_FILE}.txt
         fi
         set -e
         python -m pip install -U -r requirements/${REQUIREMENTS_FILE}.txt
@@ -179,10 +179,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
-    - name: Set up Python 3.8
+    - name: Set up Python 3.9
       uses: actions/setup-python@v2
       with:
-        python-version: 3.8
+        python-version: 3.9
     - name: Install dependencies
       env:
         REQUIREMENTS_FILE: build
@@ -199,7 +199,7 @@ jobs:
         set +e
         git ls-remote --heads 'https://github.com/lablup/backend.ai-common' | grep -q "refs/heads/${GHBRANCH}"
         if [ $? -eq 0 ]; then
-          sed -i "s%\(backend.ai-common\)@main%\1@${GHBRANCH}%" requirements/${REQUIREMENTS_FILE}.txt
+          sed -i "s%\(backend.ai-common\)@21.03%\1@${GHBRANCH}%" requirements/${REQUIREMENTS_FILE}.txt
         fi
         set -e
         python -m pip install -U -r requirements/${REQUIREMENTS_FILE}.txt
