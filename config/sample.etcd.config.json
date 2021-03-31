@@ -15,6 +15,15 @@
       }
     }
   },
+  "idle": {
+    "enabled": "timeout",
+    "app-streaming-packet-timeout": "5m",
+    "checkers": {
+      "timeout": {
+        "threshold": "10m"
+      }
+    }
+  },
   "network": {
     "subnet": {
       "agent": "0.0.0.0/0",
