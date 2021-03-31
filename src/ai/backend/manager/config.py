@@ -56,7 +56,7 @@ Alias keys are also URL-quoted in the same way.
          + {registry-name}: {registry-URL}  # {registry-name} is url-quoted
            - username: {username}
            - password: {password}
-           - type: "docker" | "harbor"
+           - type: "docker" | "harbor" | "harbor2"
            - project: "project1-name,porject2-name,..."  # harbor only
            - ssl-verify: "yes" | "no"
          ...
