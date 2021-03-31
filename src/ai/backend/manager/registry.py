@@ -1565,16 +1565,17 @@ class AgentRegistry:
                 grouped_kernels = [*group_iterator]
                 for kernel in grouped_kernels:
                     if kernel['status'] == KernelStatus.PENDING:
-                        await conn.execute(
-                            sa.update(kernels)
-                            .values({
-                                'status': KernelStatus.CANCELLED,
-                                'status_info': reason,
-                                'status_changed': now,
-                                'terminated_at': now,
-                            })
-                            .where(kernels.c.id == kernel['id'])
-                        )
+                        async with self.db.begin() as conn:
+                            await conn.execute(
+                                sa.update(kernels)
+                                .values({
+                                    'status': KernelStatus.CANCELLED,
+                                    'status_info': reason,
+                                    'status_changed': now,
+                                    'terminated_at': now,
+                                })
+                                .where(kernels.c.id == kernel['id'])
+                            )
                         await self.event_producer.produce_event(
                             KernelCancelledEvent(kernel['id'], reason)
                         )
@@ -2245,7 +2246,7 @@ class AgentRegistry:
         db_connection: SAConnection = None,
         **extra_fields,
     ) -> None:
-        now = datetime.now(tzutc()),
+        now = datetime.now(tzutc())
         data = {
             'status': status,
             'status_info': reason,
