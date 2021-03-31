@@ -23,7 +23,7 @@ from ai.backend.common.etcd import (
 from ai.backend.common.logging import BraceStyleAdapter
 if TYPE_CHECKING:
     from ..background import ProgressReporter
-from ...gateway.utils import chunked
+from ..api.utils import chunked
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 
