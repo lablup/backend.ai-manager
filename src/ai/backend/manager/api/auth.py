@@ -17,14 +17,13 @@ from typing import (
 from aiohttp import web
 import aiohttp_cors
 from aiojobs.aiohttp import atomic
-import click
 from dateutil.tz import tzutc
 from dateutil.parser import parse as dtparse
 import sqlalchemy as sa
 import trafaret as t
 
 from ai.backend.common import validators as tx
-from ai.backend.common.logging import Logger, BraceStyleAdapter
+from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.plugin.hook import (
     ALL_COMPLETED,
     FIRST_COMPLETED,
@@ -875,27 +874,3 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     cors.add(app.router.add_route('GET', '/ssh-keypair', get_ssh_keypair))
     cors.add(app.router.add_route('PATCH', '/ssh-keypair', refresh_ssh_keypair))
     return app, [auth_middleware]
-
-
-@click.group()
-def cli():
-    pass
-
-
-@cli.command()
-def generate_keypair():
-    logger = Logger({
-        'level': 'INFO',
-        'drivers': ['console'],
-        'pkg-ns': {'ai.backend': 'INFO'},
-        'console': {'colored': True, 'format': 'verbose'},
-    })
-    with logger:
-        log.info('generating keypair...')
-        ak, sk = _gen_keypair()
-        print(f'Access Key: {ak} ({len(ak)} bytes)')
-        print(f'Secret Key: {sk} ({len(sk)} bytes)')
-
-
-if __name__ == '__main__':
-    cli()
