@@ -16,6 +16,20 @@ Changes
 
 .. towncrier release notes start
 
+20.09.14 (2021-03-31)
+---------------------
+
+### Fixes
+* Fix a missing reference fix for renaming of `gateway` to `manager.api` ([#409](https://github.com/lablup/backend.ai-manager/issues/409))
+* Refactor the manager CLI initialization steps and promote `generate-keypair` as a regular `mgr` subcommand ([#411](https://github.com/lablup/backend.ai-manager/issues/411))
+* Fix an internal API mismatch for our SQLAlchemy custom enum types ([#412](https://github.com/lablup/backend.ai-manager/issues/412))
+* Fix a regression in session cancellation and kernel status updates after SQLAlchemy v1.4 upgrade ([#413](https://github.com/lablup/backend.ai-manager/issues/413))
+
+### Miscellaneous
+* Fix the examples for the storage proxy URL configurations in the `manager.config` module ([#410](https://github.com/lablup/backend.ai-manager/issues/410))
+* Update sample configurations for etcd ([#414](https://github.com/lablup/backend.ai-manager/issues/414))
+
+
 20.09.13 (2021-03-29)
 ---------------------
 
