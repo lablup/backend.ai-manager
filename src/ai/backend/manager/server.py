@@ -680,6 +680,9 @@ async def server_main_logwrapper(loop: asyncio.AbstractEventLoop,
               help='Enable the debug mode and override the global log level to DEBUG.')
 @click.pass_context
 def main(ctx: click.Context, config_path: Path, debug: bool) -> None:
+    """
+    Start the manager service as a foreground process.
+    """
 
     cfg = load_config(config_path, debug)
 
