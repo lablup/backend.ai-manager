@@ -103,9 +103,9 @@ class EnumType(TypeDecorator, SchemaType):
         if 'name' not in opts:
             opts['name'] = enum_cls.__name__.lower()
         self._opts = opts
-        self._enum_cls = enum_cls
         enums = (m.name for m in enum_cls)
         super().__init__(*enums, **opts)
+        self._enum_cls = enum_cls
 
     def process_bind_param(self, value, dialect):
         return value.name if value else None
