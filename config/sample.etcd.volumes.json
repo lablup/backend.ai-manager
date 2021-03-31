@@ -8,7 +8,7 @@
     "local": {
       "client_api": "http://client-accessible-hostname:6021",
       "manager_api": "https://127.0.0.1:6022",
-      "secret": "some-random-good-secret",
+      "secret": "some-secret-shared-with-storage-proxy",
       "ssl_verify": "false"
     }
   }
