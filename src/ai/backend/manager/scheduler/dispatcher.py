@@ -18,7 +18,6 @@ from typing import (
 import weakref
 
 import aioredis
-import aioredlock
 from dateutil.tz import tzutc
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
