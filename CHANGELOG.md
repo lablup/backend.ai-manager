@@ -16,6 +16,13 @@ Changes
 
 .. towncrier release notes start
 
+20.09.15 (2021-04-02)
+---------------------
+
+### Fixes
+* Fix a regression of spawning multi-node cluster sessions due to DB API changes related to setting transaction isolation levels ([#416](https://github.com/lablup/backend.ai-manager/issues/416))
+
+
 20.09.14 (2021-03-31)
 ---------------------
 
