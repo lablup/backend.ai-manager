@@ -117,7 +117,6 @@ class SchedulerDispatcher(aobject):
     shared_config: SharedConfig
     registry: AgentRegistry
 
-    lock_manager: aioredlock.Aioredlock
     schedule_timer_redis: aioredis.Redis
     prepare_timer_redis: aioredis.Redis
     event_dispatcher: EventDispatcher
@@ -152,12 +151,6 @@ class SchedulerDispatcher(aobject):
         self.registry.event_dispatcher.consume(DoScheduleEvent, None, self.schedule)
         self.registry.event_dispatcher.consume(DoPrepareEvent, None, self.prepare)
         redis_url = self.shared_config.get_redis_url(db=REDIS_STREAM_DB)
-        self.lock_manager = aioredlock.Aioredlock(
-            [str(redis_url)],
-            # we have explicit semantics: temporary locking failure -> try at the next chance,
-            # such as scheduling timer ticks or upon scheduling events
-            retry_count=2,
-        )
         self.schedule_timer_redis = await aioredis.create_redis(str(redis_url))
         self.prepare_timer_redis = await aioredis.create_redis(str(redis_url))
         self.schedule_timer = GlobalTimer(
