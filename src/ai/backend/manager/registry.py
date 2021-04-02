@@ -124,10 +124,8 @@ if TYPE_CHECKING:
 
     from .models.storage import StorageSessionManager
     from .scheduler.types import (
-        AgentAllocationContext,
         SchedulingContext,
         PendingSession,
-        KernelAgentBinding,
     )
 
 __all__ = ['AgentRegistry', 'InstanceNotFound']
@@ -1075,7 +1073,7 @@ class AgentRegistry:
         sched_ctx: SchedulingContext,
         scheduled_session: PendingSession,
     ) -> None:
-
+        from .scheduler.types import KernelAgentBinding, AgentAllocationContext
         kernel_agent_bindings: Sequence[KernelAgentBinding] = [
             KernelAgentBinding(
                 kernel=k,

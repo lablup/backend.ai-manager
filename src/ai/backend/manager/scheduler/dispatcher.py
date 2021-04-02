@@ -15,6 +15,7 @@ from typing import (
     Union,
     TYPE_CHECKING,
 )
+import weakref
 
 import aioredis
 import aioredlock
@@ -26,8 +27,10 @@ from sqlalchemy.sql.expression import true
 from ai.backend.common.events import (
     AgentStartedEvent,
     DoScheduleEvent,
+    DoPrepareEvent,
     SessionCancelledEvent,
     SessionEnqueuedEvent,
+    SessionPreparingEvent,
     SessionScheduledEvent,
     SessionTerminatedEvent,
     EventDispatcher,
@@ -39,6 +42,7 @@ from ai.backend.common.types import (
     AgentId,
     ClusterMode,
     ResourceSlot,
+    SessionId,
 )
 
 from ..api.exceptions import InstanceNotAvailable
@@ -114,10 +118,14 @@ class SchedulerDispatcher(aobject):
     registry: AgentRegistry
 
     lock_manager: aioredlock.Aioredlock
-    timer_redis: aioredis.Redis
+    schedule_timer_redis: aioredis.Redis
+    prepare_timer_redis: aioredis.Redis
     event_dispatcher: EventDispatcher
     event_producer: EventProducer
     schedule_timer: GlobalTimer
+    prepare_timer: GlobalTimer
+
+    prepare_tasks: weakref.WeakValueDictionary[SessionId, asyncio.Task]
 
     def __init__(
         self,
@@ -133,14 +141,16 @@ class SchedulerDispatcher(aobject):
         self.event_producer = event_producer
         self.registry = registry
         self.db = registry.db
-        self.schedule_lock_timeout = 120.0
+        self.schedule_lock_timeout = 30.0
+        self.prepare_lock_timeout = 60.0
+        self.prepare_tasks = weakref.WeakValueDictionary()
 
     async def __ainit__(self) -> None:
-        log.info('Session scheduler started')
         self.registry.event_dispatcher.consume(SessionEnqueuedEvent, None, self.schedule)
         self.registry.event_dispatcher.consume(SessionTerminatedEvent, None, self.schedule)
         self.registry.event_dispatcher.consume(AgentStartedEvent, None, self.schedule)
         self.registry.event_dispatcher.consume(DoScheduleEvent, None, self.schedule)
+        self.registry.event_dispatcher.consume(DoPrepareEvent, None, self.prepare)
         redis_url = self.shared_config.get_redis_url(db=REDIS_STREAM_DB)
         self.lock_manager = aioredlock.Aioredlock(
             [str(redis_url)],
@@ -148,21 +158,34 @@ class SchedulerDispatcher(aobject):
             # such as scheduling timer ticks or upon scheduling events
             retry_count=2,
         )
-        self.timer_redis = await aioredis.create_redis(str(redis_url))
+        self.schedule_timer_redis = await aioredis.create_redis(str(redis_url))
+        self.prepare_timer_redis = await aioredis.create_redis(str(redis_url))
         self.schedule_timer = GlobalTimer(
-            self.timer_redis,
+            self.schedule_timer_redis,
             "scheduler_tick",
             self.event_producer,
             lambda: DoScheduleEvent(),
             interval=10.0,
         )
+        self.prepare_timer = GlobalTimer(
+            self.prepare_timer_redis,
+            "prepare_tick",
+            self.event_producer,
+            lambda: DoPrepareEvent(),
+            interval=2.0,
+        )
         await self.schedule_timer.join()
+        await self.prepare_timer.join()
+        log.info('Session scheduler started')
 
     async def close(self) -> None:
-        log.info('Session scheduler stopped')
+        await self.prepare_timer.leave()
         await self.schedule_timer.leave()
-        self.timer_redis.close()
-        await self.timer_redis.wait_closed()
+        log.info('Session scheduler stopped')
+        self.prepare_timer_redis.close()
+        self.schedule_timer_redis.close()
+        await self.prepare_timer_redis.wait_closed()
+        await self.schedule_timer_redis.wait_closed()
 
     async def schedule(
         self,
@@ -180,18 +203,6 @@ class SchedulerDispatcher(aobject):
 
         Session status transition: PENDING -> SCHEDULED
         """
-        try:
-            lock = await self.lock_manager.lock(
-                'manager.scheduler',
-                lock_timeout=self.schedule_lock_timeout,
-            )
-            async with lock:
-                await self.schedule_impl()
-        except aioredlock.LockError:
-            log.debug('schedule(): temporary locking failure; will be retried.')
-            # The dispatcher will try the next chance.
-
-    async def schedule_impl(self) -> None:
         log.debug('schedule(): triggered')
         known_slot_types = await self.shared_config.get_resource_slots()
         sched_ctx = SchedulingContext(
@@ -287,7 +298,6 @@ class SchedulerDispatcher(aobject):
             _log_fmt.set(log_fmt)
             _log_args.set(log_args)
             log.debug(log_fmt + 'try-scheduling', *log_args)
-            session_agent_binding: Tuple[PendingSession, List[KernelAgentBinding]]
 
             async with kernel_db_conn.begin():
                 predicates: Sequence[Tuple[str, Awaitable[PredicateResult]]] = [
@@ -480,6 +490,9 @@ class SchedulerDispatcher(aobject):
                 'status_changed': datetime.now(tzutc()),
             }).where(kernels.c.session_id == sess_ctx.session_id)
             await kernel_db_conn.execute(query)
+        await self.registry.event_producer.produce_event(
+            SessionScheduledEvent(sess_ctx.session_id, sess_ctx.session_creation_id)
+        )
 
     async def _schedule_multi_node_session(
         self,
@@ -564,9 +577,15 @@ class SchedulerDispatcher(aobject):
                     'status_changed': datetime.now(tzutc()),
                 }).where(kernels.c.id == binding.kernel.kernel_id)
                 await kernel_db_conn.execute(query)
+        await self.registry.event_producer.produce_event(
+            SessionScheduledEvent(sess_ctx.session_id, sess_ctx.session_creation_id)
+        )
 
     async def prepare(
         self,
+        context: None,
+        source: AgentId,
+        event: DoPrepareEvent,
     ) -> None:
         """
         Scan the scheduled sessions and perform the agent RPC calls to begin preparation of them.
@@ -574,6 +593,7 @@ class SchedulerDispatcher(aobject):
 
         Session status transition: SCHEDULED -> PREPARING
         """
+        log.debug('prepare(): triggered')
         known_slot_types = await self.shared_config.get_resource_slots()
         sched_ctx = SchedulingContext(
             self.registry,
@@ -589,10 +609,14 @@ class SchedulerDispatcher(aobject):
             rows = (await conn.execute(query)).fetchall()
             scheduled_sessions = PendingSession.from_rows(rows)
             for scheduled_session in scheduled_sessions:
-                asyncio.create_task(self.start_session(
-                    sched_ctx,
-                    scheduled_session,
-                ))
+                if scheduled_session.session_id in self.prepare_tasks:
+                    # skip if already the creation task is ongoing.
+                    continue
+                self.prepare_tasks[scheduled_session.session_id] = \
+                    asyncio.create_task(self.start_session(
+                        sched_ctx,
+                        scheduled_session,
+                    ))
 
     async def start_session(
         self,
@@ -608,8 +632,17 @@ class SchedulerDispatcher(aobject):
             session.cluster_mode,
         )
         log.debug(log_fmt + 'try-starting', *log_args)
+        async with self.db.begin() as db_conn:
+            now = datetime.now(tzutc())
+            query = kernels.update().values({
+                'status': KernelStatus.PREPARING,
+                'status_changed': now,
+                'status_info': "",
+                'status_data': {},
+            }).where(kernels.c.session_id == session.session_id)
+            await db_conn.execute(query)
         await self.registry.event_producer.produce_event(
-            SessionScheduledEvent(session.session_id, session.session_creation_id)
+            SessionPreparingEvent(session.session_id, session.session_creation_id)
         )
         try:
             assert len(session.kernels) > 0
