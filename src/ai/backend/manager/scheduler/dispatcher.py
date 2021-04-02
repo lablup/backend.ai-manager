@@ -527,7 +527,7 @@ class SchedulerDispatcher(aobject):
         log_args = _log_args.get()
         agent_query_extra_conds = None
         kernel_agent_bindings: List[KernelAgentBinding] = []
-        async with agent_db_conn.begin(isolation_level="REPEATABLE READ"):
+        async with agent_db_conn.begin():
             # This outer transaction is rolled back when any exception occurs inside,
             # including scheduling failures of a kernel.
             # It ensures that occupied_slots are recovered when there are partial

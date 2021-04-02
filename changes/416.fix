@@ -1,0 +1,1 @@
+Fix a regression of spawning multi-node cluster sessions due to DB API changes related to setting transaction isolation levels
