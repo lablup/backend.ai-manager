@@ -1073,15 +1073,25 @@ class AgentRegistry:
     async def start_session(
         self,
         sched_ctx: SchedulingContext,
-        session_agent_binding: Tuple[PendingSession, List[KernelAgentBinding]],
+        scheduled_session: PendingSession,
     ) -> None:
 
-        pending_session, kernel_agent_bindings = session_agent_binding
-        session_creation_id = pending_session.session_creation_id
+        kernel_agent_bindings: Sequence[KernelAgentBinding] = [
+            KernelAgentBinding(
+                kernel=k,
+                agent_alloc_ctx=AgentAllocationContext(
+                    agent_id=k.agent_id,
+                    agent_addr=k.agent_addr,
+                    scaling_group=scheduled_session.scaling_group,
+                ),
+            )
+            for k in scheduled_session.kernels
+        ]
+        session_creation_id = scheduled_session.session_creation_id
 
         hook_result = await self.hook_plugin_ctx.dispatch(
             'PRE_START_SESSION',
-            (pending_session.session_id, pending_session.session_name, pending_session.access_key),
+            (scheduled_session.session_id, scheduled_session.session_name, scheduled_session.access_key),
             return_when=ALL_COMPLETED,
         )
         if hook_result.status != PASSED:
@@ -1093,7 +1103,7 @@ class AgentRegistry:
             query = (
                 sa.select([keypair_resource_policies])
                 .select_from(keypair_resource_policies)
-                .where(keypair_resource_policies.c.name == pending_session.resource_policy)
+                .where(keypair_resource_policies.c.name == scheduled_session.resource_policy)
             )
             result = await conn.execute(query)
             resource_policy = result.first()
@@ -1110,15 +1120,15 @@ class AgentRegistry:
                 await get_registry_info(self.shared_config.etcd, image_ref.registry)
 
         network_name: Optional[str] = None
-        if pending_session.cluster_mode == ClusterMode.SINGLE_NODE:
-            if pending_session.cluster_size > 1:
-                network_name = f'bai-singlenode-{pending_session.session_id}'
+        if scheduled_session.cluster_mode == ClusterMode.SINGLE_NODE:
+            if scheduled_session.cluster_size > 1:
+                network_name = f'bai-singlenode-{scheduled_session.session_id}'
                 try:
                     async with RPCContext(
                         kernel_agent_bindings[0].agent_alloc_ctx.agent_id,
                         kernel_agent_bindings[0].agent_alloc_ctx.agent_addr,
                         None,
-                        order_key=pending_session.session_id,
+                        order_key=scheduled_session.session_id,
                     ) as rpc:
                         await rpc.call.create_local_network(network_name)
                 except Exception:
@@ -1126,9 +1136,9 @@ class AgentRegistry:
                     raise
             else:
                 network_name = None
-        elif pending_session.cluster_mode == ClusterMode.MULTI_NODE:
+        elif scheduled_session.cluster_mode == ClusterMode.MULTI_NODE:
             # Create overlay network for multi-node sessions
-            network_name = f'bai-multinode-{pending_session.session_id}'
+            network_name = f'bai-multinode-{scheduled_session.session_id}'
             try:
                 # Overlay networks can only be created at the Swarm manager.
                 await self.docker.networks.create({
@@ -1151,18 +1161,18 @@ class AgentRegistry:
             )
         }
         cluster_info = ClusterInfo(
-            mode=pending_session.cluster_mode,
-            size=pending_session.cluster_size,
+            mode=scheduled_session.cluster_mode,
+            size=scheduled_session.cluster_size,
             replicas=replicas,
             network_name=network_name,
             ssh_keypair=(
                 await self.create_cluster_ssh_keypair()
-                if pending_session.cluster_size > 1 else None
+                if scheduled_session.cluster_size > 1 else None
             ),
         )
-        pending_session.environ.update({
-            'BACKENDAI_SESSION_ID': str(pending_session.session_id),
-            'BACKENDAI_CLUSTER_SIZE': str(pending_session.cluster_size),
+        scheduled_session.environ.update({
+            'BACKENDAI_SESSION_ID': str(scheduled_session.session_id),
+            'BACKENDAI_CLUSTER_SIZE': str(scheduled_session.cluster_size),
             'BACKENDAI_CLUSTER_REPLICAS':
                 ",".join(f"{k}:{v}" for k, v in replicas.items()),
             'BACKENDAI_CLUSTER_HOSTS':
@@ -1217,7 +1227,7 @@ class AgentRegistry:
                     agent_alloc_ctx.agent_id,
                     agent_alloc_ctx.agent_addr,
                     None,
-                    order_key=pending_session.session_id,
+                    order_key=scheduled_session.session_id,
                 ) as rpc:
                     kernel_creation_id = secrets.token_urlsafe(16)
                     # Prepare kernel_started event handling
@@ -1229,7 +1239,7 @@ class AgentRegistry:
                         # Issue a batched RPC call to create kernels on this agent
                         created_infos = await rpc.call.create_kernels(
                             kernel_creation_id,
-                            str(pending_session.session_id),
+                            str(scheduled_session.session_id),
                             [str(binding.kernel.kernel_id) for binding in items],
                             [
                                 {
@@ -1244,15 +1254,15 @@ class AgentRegistry:
                                         'canonical': binding.kernel.image_ref.canonical,
                                         'labels': image_infos[binding.kernel.image_ref]['labels'],
                                     },
-                                    'session_type': pending_session.session_type.value,
+                                    'session_type': scheduled_session.session_type.value,
                                     'cluster_role': binding.kernel.cluster_role,
                                     'cluster_idx': binding.kernel.cluster_idx,
                                     'cluster_hostname': binding.kernel.cluster_hostname,
                                     'idle_timeout': resource_policy['idle_timeout'],
-                                    'mounts': pending_session.mounts,
-                                    'mount_map': pending_session.mount_map,
+                                    'mounts': scheduled_session.mounts,
+                                    'mount_map': scheduled_session.mount_map,
                                     'environ': {
-                                        **pending_session.environ,
+                                        **scheduled_session.environ,
                                         'BACKENDAI_KERNEL_ID': str(binding.kernel.kernel_id),
                                         'BACKENDAI_KERNEL_IMAGE': str(binding.kernel.image_ref),
                                         'BACKENDAI_CLUSTER_ROLE': binding.kernel.cluster_role,
@@ -1263,9 +1273,9 @@ class AgentRegistry:
                                     'resource_opts': binding.kernel.resource_opts,
                                     'bootstrap_script': binding.kernel.bootstrap_script,
                                     'startup_command': binding.kernel.startup_command,
-                                    'internal_data': pending_session.internal_data,
+                                    'internal_data': scheduled_session.internal_data,
                                     'auto_pull': auto_pull,
-                                    'preopen_ports': pending_session.preopen_ports,
+                                    'preopen_ports': scheduled_session.preopen_ports,
                                 }
                                 for binding in items
                             ],
@@ -1273,8 +1283,8 @@ class AgentRegistry:
                         )
                         log.debug(
                             'start_session(s:{}, ak:{}, k:{}) -> created on ag:{}',
-                            pending_session.session_name,
-                            pending_session.access_key,
+                            scheduled_session.session_name,
+                            scheduled_session.access_key,
                             [binding.kernel.kernel_id for binding in items],
                             agent_alloc_ctx.agent_id,
                         )
@@ -1323,11 +1333,11 @@ class AgentRegistry:
 
         # If all is well, let's say the session is ready.
         await self.event_producer.produce_event(
-            SessionStartedEvent(pending_session.session_id, session_creation_id)
+            SessionStartedEvent(scheduled_session.session_id, session_creation_id)
         )
         await self.hook_plugin_ctx.notify(
             'POST_START_SESSION',
-            (pending_session.session_id, pending_session.session_name, pending_session.access_key),
+            (scheduled_session.session_id, scheduled_session.session_name, scheduled_session.access_key),
         )
 
     async def create_cluster_ssh_keypair(self) -> ClusterSSHKeyPair:
