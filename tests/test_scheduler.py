@@ -22,7 +22,7 @@ from ai.backend.common.types import (
 )
 
 from ai.backend.manager.defs import DEFAULT_ROLE
-from ai.backend.manager.scheduler import (
+from ai.backend.manager.scheduler.types import (
     KernelInfo,
     PendingSession,
     ExistingSession,

@@ -3,16 +3,13 @@ from __future__ import annotations
 import asyncio
 from contextvars import ContextVar
 from datetime import datetime
-import itertools
 import logging
 import pkg_resources
 from typing import (
     Any,
     Awaitable,
-    Dict,
     List,
     Mapping,
-    MutableMapping,
     Sequence,
     Tuple,
     Union,
@@ -25,9 +22,7 @@ from dateutil.tz import tzutc
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 from sqlalchemy.sql.expression import true
-from sqlalchemy.engine.row import Row
 
-from ai.backend.common.docker import ImageRef
 from ai.backend.common.events import (
     AgentStartedEvent,
     DoScheduleEvent,
@@ -44,7 +39,6 @@ from ai.backend.common.types import (
     AgentId,
     ClusterMode,
     ResourceSlot,
-    SessionId,
 )
 
 from ..api.exceptions import InstanceNotAvailable
@@ -52,7 +46,7 @@ from ..distributed import GlobalTimer
 from ..defs import REDIS_STREAM_DB
 from ..exceptions import convert_to_status_data
 from ..models import (
-    agents, kernels, keypairs, scaling_groups,
+    agents, kernels, scaling_groups,
     recalc_agent_resource_occupancy,
     recalc_concurrency_used,
     AgentStatus, KernelStatus,
@@ -67,7 +61,6 @@ from .types import (
     AgentContext,
     AgentAllocationContext,
     AbstractScheduler,
-    KernelInfo,
     KernelAgentBinding,
 )
 from .predicates import (
@@ -253,7 +246,7 @@ class SchedulerDispatcher(aobject):
         agent_db_conn: SAConnection,
         kernel_db_conn: SAConnection,
         sgroup_name: str,
-    ) -> List[StartTaskArgs]:
+    ) -> None:
         async with kernel_db_conn.begin():
             scheduler = await self._load_scheduler(kernel_db_conn, sgroup_name)
             pending_sessions = await _list_pending_sessions(kernel_db_conn, sgroup_name)
@@ -274,7 +267,7 @@ class SchedulerDispatcher(aobject):
             if picked_session_id is None:
                 # no session is picked.
                 # continue to next sgroup.
-                return []
+                return
             for picked_idx, sess_ctx in enumerate(pending_sessions):
                 if sess_ctx.session_id == picked_session_id:
                     break
@@ -351,7 +344,7 @@ class SchedulerDispatcher(aobject):
                     })
                     has_failure = True
                     if result.permanent:
-                        has_permanent_failure = True
+                        has_permanent_failure = True  # noqa
             if has_failure:
                 log.debug(log_fmt + 'predicate-checks-failed (temporary)', *log_args)
                 # TODO: handle has_permanent_failure as cancellation

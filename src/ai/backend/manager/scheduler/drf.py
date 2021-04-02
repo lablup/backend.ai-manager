@@ -17,7 +17,7 @@ from ai.backend.common.types import (
     ResourceSlot,
     SessionId,
 )
-from . import (
+from .types import (
     AbstractScheduler,
     AgentContext,
     PendingSession,

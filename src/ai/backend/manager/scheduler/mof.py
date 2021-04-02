@@ -15,7 +15,7 @@ from ai.backend.common.types import (
     ResourceSlot,
 )
 
-from . import (
+from .types import (
     AbstractScheduler,
     PendingSession,
     ExistingSession,

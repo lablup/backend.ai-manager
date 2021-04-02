@@ -40,7 +40,7 @@ from ai.backend.common.types import (
 
 from ..defs import DEFAULT_ROLE
 from ..models import (
-    agents, kernels, keypairs, scaling_groups,
+    kernels, keypairs,
 )
 from ..registry import AgentRegistry
 
@@ -156,8 +156,10 @@ class ExistingSession:
         for row in rows:
             session_id = row['session_id']
             if session_id not in items:
-                # In some cases, sub containers are still RUNNING even though main container is TERMINATED.
-                # To circumvent this edge case, we skip if main container is not registered in `items`.
+                # In some cases, sub containers are still RUNNING
+                # even though main container is TERMINATED.
+                # To circumvent this edge case, we skip if main container
+                # is not registered in `items`.
                 continue
             session = items[session_id]
             session.kernels.append(KernelInfo.from_row(row))

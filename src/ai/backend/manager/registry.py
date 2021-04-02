@@ -123,7 +123,7 @@ if TYPE_CHECKING:
     from ai.backend.common.events import EventDispatcher, EventProducer
 
     from .models.storage import StorageSessionManager
-    from .scheduler import (
+    from .scheduler.types import (
         AgentAllocationContext,
         SchedulingContext,
         PendingSession,
