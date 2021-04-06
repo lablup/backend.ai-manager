@@ -8,6 +8,7 @@ import pkg_resources
 from typing import (
     Any,
     Awaitable,
+    Final,
     List,
     Mapping,
     Sequence,
@@ -41,7 +42,6 @@ from ai.backend.common.types import (
     AgentId,
     ClusterMode,
     ResourceSlot,
-    SessionId,
 )
 
 from ..api.exceptions import InstanceNotAvailable
@@ -90,6 +90,8 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.scheduler'))
 _log_fmt: ContextVar[str] = ContextVar('_log_fmt')
 _log_args: ContextVar[Tuple[Any, ...]] = ContextVar('_log_args')
 
+_key_schedule_prep_tasks: Final = "scheduler.preptasks"
+
 
 def load_scheduler(name: str, scheduler_configs: Mapping[str, Any]) -> AbstractScheduler:
     entry_prefix = 'backendai_scheduler_v10'
@@ -122,8 +124,7 @@ class SchedulerDispatcher(aobject):
     event_producer: EventProducer
     schedule_timer: GlobalTimer
     prepare_timer: GlobalTimer
-
-    prepare_tasks: weakref.WeakValueDictionary[SessionId, asyncio.Task]
+    prepare_tasks: weakref.WeakSet[asyncio.Task]
 
     def __init__(
         self,
@@ -141,7 +142,7 @@ class SchedulerDispatcher(aobject):
         self.db = registry.db
         self.schedule_lock_timeout = 30.0
         self.prepare_lock_timeout = 60.0
-        self.prepare_tasks = weakref.WeakValueDictionary()
+        self.prepare_tasks = weakref.WeakSet()
 
     async def __ainit__(self) -> None:
         self.registry.event_dispatcher.consume(SessionEnqueuedEvent, None, self.schedule)
@@ -152,6 +153,7 @@ class SchedulerDispatcher(aobject):
         redis_url = self.shared_config.get_redis_url(db=REDIS_STREAM_DB)
         self.schedule_timer_redis = await aioredis.create_redis(str(redis_url))
         self.prepare_timer_redis = await aioredis.create_redis(str(redis_url))
+        self.prepare_tasks_redis = await aioredis.create_redis(str(redis_url))
         self.schedule_timer = GlobalTimer(
             self.schedule_timer_redis,
             "scheduler_tick",
@@ -164,7 +166,7 @@ class SchedulerDispatcher(aobject):
             "prepare_tick",
             self.event_producer,
             lambda: DoPrepareEvent(),
-            interval=2.0,
+            interval=1.0,
         )
         await self.schedule_timer.join()
         await self.prepare_timer.join()
@@ -174,8 +176,16 @@ class SchedulerDispatcher(aobject):
         await self.prepare_timer.leave()
         await self.schedule_timer.leave()
         log.info('Session scheduler stopped')
+        self.prepare_tasks_redis.close()
         self.prepare_timer_redis.close()
         self.schedule_timer_redis.close()
+        cancelled_tasks = []
+        for t in self.prepare_tasks:
+            if not t.done():
+                t.cancel()
+                cancelled_tasks.append(t)
+        await asyncio.gather(*cancelled_tasks, return_exceptions=True)
+        await self.prepare_tasks_redis.wait_closed()
         await self.prepare_timer_redis.wait_closed()
         await self.schedule_timer_redis.wait_closed()
 
@@ -600,21 +610,27 @@ class SchedulerDispatcher(aobject):
             )
             rows = (await conn.execute(query)).fetchall()
             scheduled_sessions = PendingSession.from_rows(rows)
+
+            cmdpipe = self.prepare_tasks_redis.pipeline()
             for scheduled_session in scheduled_sessions:
-                if scheduled_session.session_id in self.prepare_tasks:
-                    # skip if already the creation task is ongoing.
+                cmdpipe.sismember(
+                    _key_schedule_prep_tasks, scheduled_session.session_creation_id
+                )
+            results = await cmdpipe.execute()
+            for scheduled_session, is_ongoing in zip(scheduled_sessions, results):
+                if is_ongoing == 1:
                     continue
-                self.prepare_tasks[scheduled_session.session_id] = \
-                    asyncio.create_task(self.start_session(
-                        sched_ctx,
-                        scheduled_session,
-                    ))
+                self.prepare_tasks.add(asyncio.create_task(self.start_session(
+                    sched_ctx,
+                    scheduled_session,
+                )))
 
     async def start_session(
         self,
         sched_ctx: SchedulingContext,
         session: PendingSession,
     ) -> None:
+        await self.prepare_tasks_redis.sadd(_key_schedule_prep_tasks, session.session_creation_id)
         log_fmt = 'prepare(s:{}, type:{}, name:{}, ak:{}, cluster_mode:{}): '
         log_args = (
             session.session_id,
@@ -642,6 +658,28 @@ class SchedulerDispatcher(aobject):
         except Exception as e:
             status_data = convert_to_status_data(e, self.local_config['debug']['enabled'])
             log.warning(log_fmt + 'failed-starting: {!r}', *log_args, status_data)
+            # TODO: instead of instantly cancelling upon exception, we could mark it as
+            #       SCHEDULED and retry within some limit using status_data.
+            async with self.db.begin() as db_conn:
+                for k in session.kernels:
+                    await recalc_agent_resource_occupancy(db_conn, k.agent_id)
+                await _rollback_predicate_mutations(db_conn, sched_ctx, session)
+                now = datetime.now(tzutc())
+                query = kernels.update().values({
+                    'status': KernelStatus.CANCELLED,
+                    'status_changed': now,
+                    'status_info': "failed-to-start",
+                    'status_data': status_data,
+                    'terminated_at': now,
+                }).where(kernels.c.session_id == session.session_id)
+                await db_conn.execute(query)
+            await self.registry.event_producer.produce_event(
+                SessionCancelledEvent(
+                    session.session_id,
+                    session.session_creation_id,
+                    "failed-to-start",
+                )
+            )
             try:
                 async with self.db.begin() as db_conn:
                     query = (
@@ -664,28 +702,10 @@ class SchedulerDispatcher(aobject):
                 )
             except Exception as destroy_err:
                 log.error(log_fmt + 'failed-starting.cleanup', *log_args, exc_info=destroy_err)
-            async with self.db.begin() as db_conn:
-                for k in session.kernels:
-                    await recalc_agent_resource_occupancy(db_conn, k.agent_id)
-                await _rollback_predicate_mutations(db_conn, sched_ctx, session)
-                now = datetime.now(tzutc())
-                query = kernels.update().values({
-                    'status': KernelStatus.CANCELLED,
-                    'status_changed': now,
-                    'status_info': "failed-to-start",
-                    'status_data': status_data,
-                    'terminated_at': now,
-                }).where(kernels.c.session_id == session.session_id)
-                await db_conn.execute(query)
-            await self.registry.event_producer.produce_event(
-                SessionCancelledEvent(
-                    session.session_id,
-                    session.session_creation_id,
-                    "failed-to-start",
-                )
-            )
         else:
             log.info(log_fmt + 'started', *log_args)
+        finally:
+            await self.prepare_tasks_redis.srem(_key_schedule_prep_tasks, session.session_creation_id)
 
 
 async def _list_pending_sessions(
