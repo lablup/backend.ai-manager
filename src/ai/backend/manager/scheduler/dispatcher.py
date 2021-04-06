@@ -176,15 +176,15 @@ class SchedulerDispatcher(aobject):
         await self.prepare_timer.leave()
         await self.schedule_timer.leave()
         log.info('Session scheduler stopped')
-        self.prepare_tasks_redis.close()
-        self.prepare_timer_redis.close()
-        self.schedule_timer_redis.close()
         cancelled_tasks = []
         for t in self.prepare_tasks:
             if not t.done():
                 t.cancel()
                 cancelled_tasks.append(t)
         await asyncio.gather(*cancelled_tasks, return_exceptions=True)
+        self.prepare_tasks_redis.close()
+        self.prepare_timer_redis.close()
+        self.schedule_timer_redis.close()
         await self.prepare_tasks_redis.wait_closed()
         await self.prepare_timer_redis.wait_closed()
         await self.schedule_timer_redis.wait_closed()
