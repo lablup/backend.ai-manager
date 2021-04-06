@@ -610,7 +610,6 @@ class SchedulerDispatcher(aobject):
             )
             rows = (await conn.execute(query)).fetchall()
             scheduled_sessions = PendingSession.from_rows(rows)
-
             cmdpipe = self.prepare_tasks_redis.pipeline()
             for scheduled_session in scheduled_sessions:
                 cmdpipe.sismember(
@@ -630,7 +629,6 @@ class SchedulerDispatcher(aobject):
         sched_ctx: SchedulingContext,
         session: PendingSession,
     ) -> None:
-        await self.prepare_tasks_redis.sadd(_key_schedule_prep_tasks, session.session_creation_id)
         log_fmt = 'prepare(s:{}, type:{}, name:{}, ak:{}, cluster_mode:{}): '
         log_args = (
             session.session_id,
@@ -640,19 +638,20 @@ class SchedulerDispatcher(aobject):
             session.cluster_mode,
         )
         log.debug(log_fmt + 'try-starting', *log_args)
-        async with self.db.begin() as db_conn:
-            now = datetime.now(tzutc())
-            query = kernels.update().values({
-                'status': KernelStatus.PREPARING,
-                'status_changed': now,
-                'status_info': "",
-                'status_data': {},
-            }).where(kernels.c.session_id == session.session_id)
-            await db_conn.execute(query)
-        await self.registry.event_producer.produce_event(
-            SessionPreparingEvent(session.session_id, session.session_creation_id)
-        )
         try:
+            await self.prepare_tasks_redis.sadd(_key_schedule_prep_tasks, session.session_creation_id)
+            async with self.db.begin() as db_conn:
+                now = datetime.now(tzutc())
+                query = kernels.update().values({
+                    'status': KernelStatus.PREPARING,
+                    'status_changed': now,
+                    'status_info': "",
+                    'status_data': {},
+                }).where(kernels.c.session_id == session.session_id)
+                await db_conn.execute(query)
+            await self.registry.event_producer.produce_event(
+                SessionPreparingEvent(session.session_id, session.session_creation_id)
+            )
             assert len(session.kernels) > 0
             await self.registry.start_session(sched_ctx, session)
         except Exception as e:
