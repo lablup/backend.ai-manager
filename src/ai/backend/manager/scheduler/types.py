@@ -295,8 +295,8 @@ class KernelInfo:
     for each kernel.
     """
     kernel_id: KernelId
+    session_id: SessionId
     access_key: AccessKey
-    session_id: uuid.UUID
     agent_id: AgentId
     agent_addr: str
     cluster_role: str
@@ -317,7 +317,6 @@ class KernelInfo:
             kernels.c.id,
             kernels.c.session_id,
             kernels.c.access_key,
-            kernels.c.session_id,
             kernels.c.agent,       # for scheduled kernels
             kernels.c.agent_addr,  # for scheduled kernels
             kernels.c.cluster_role,
