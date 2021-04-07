@@ -629,14 +629,9 @@ class SchedulerDispatcher(aobject):
         sched_ctx: SchedulingContext,
         session: PendingSession,
     ) -> None:
-        log_fmt = 'prepare(s:{}, type:{}, name:{}, ak:{}, cluster_mode:{}): '
-        log_args = (
-            session.session_id,
-            session.session_type,
-            session.session_name,
-            session.access_key,
-            session.cluster_mode,
-        )
+        log_fmt = "prepare(s:{0.session_id}, type:{0.session_type}, name:{0.session_name}, " \
+                  "ak:{0.access_key}, cluster_mode:{0.cluster_mode}): "
+        log_args = (session, )
         log.debug(log_fmt + 'try-starting', *log_args)
         try:
             await self.prepare_tasks_redis.sadd(_key_schedule_prep_tasks, session.session_creation_id)
@@ -656,7 +651,7 @@ class SchedulerDispatcher(aobject):
             await self.registry.start_session(sched_ctx, session)
         except Exception as e:
             status_data = convert_to_status_data(e, self.local_config['debug']['enabled'])
-            log.warning(log_fmt + 'failed-starting: {!r}', *log_args, status_data)
+            log.warning(log_fmt + 'failed-starting: {1!r}', *log_args, status_data)
             # TODO: instead of instantly cancelling upon exception, we could mark it as
             #       SCHEDULED and retry within some limit using status_data.
             async with self.db.begin() as db_conn:
@@ -679,6 +674,7 @@ class SchedulerDispatcher(aobject):
                     "failed-to-start",
                 )
             )
+            log.debug(log_fmt + 'cleanup-start-failure: begin', *log_args)
             try:
                 async with self.db.begin() as db_conn:
                     query = (
@@ -700,7 +696,9 @@ class SchedulerDispatcher(aobject):
                     session.session_id, destroyed_kernels,
                 )
             except Exception as destroy_err:
-                log.error(log_fmt + 'failed-starting.cleanup', *log_args, exc_info=destroy_err)
+                log.error(log_fmt + 'cleanup-start-failure: error', *log_args, exc_info=destroy_err)
+            finally:
+                log.debug(log_fmt + 'cleanup-start-failure: done', *log_args)
         else:
             log.info(log_fmt + 'started', *log_args)
         finally:
