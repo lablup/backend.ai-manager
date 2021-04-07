@@ -10,6 +10,8 @@ from typing import (
     Tuple,
 )
 
+import trafaret as t
+
 from ai.backend.common.types import (
     AgentId,
     ResourceSlot,
@@ -44,8 +46,9 @@ def key_by_requested_slots(
 
 class FIFOSlotScheduler(AbstractScheduler):
 
-    def __init__(self, config: Mapping[str, Any]) -> None:
-        super().__init__(config)
+    config_iv = t.Dict({
+        t.Key('num_retries_to_skip', default=0): t.ToInt(gte=0),
+    }).allow_extra('*')
 
     def pick_session(
         self,
@@ -55,13 +58,17 @@ class FIFOSlotScheduler(AbstractScheduler):
     ) -> Optional[SessionId]:
         local_pending_sessions = list(pending_sessions)
         skipped_sessions: List[PendingSession] = []
+        max_retries = self.config['num_retries_to_skip']
+        print(max_retries)
         while local_pending_sessions:
             # Just pick the first pending session, but skip it
             # if it has more than 3 failures.
             s = local_pending_sessions.pop(0)
+            if max_retries == 0:  # it's strict FIFO
+                return s.session_id
             if s.status_data is not None:
                 sched_data = s.status_data.get('scheduler', {})
-                if sched_data.get('retries', 0) >= 3:
+                if sched_data.get('retries', 0) >= max_retries:
                     skipped_sessions.append(s)
                     continue
             return s.session_id
@@ -111,6 +118,8 @@ class FIFOSlotScheduler(AbstractScheduler):
 
 
 class LIFOSlotScheduler(AbstractScheduler):
+
+    config_iv = t.Dict({}).allow_extra('*')
 
     def __init__(self, config: Mapping[str, Any]) -> None:
         super().__init__(config)

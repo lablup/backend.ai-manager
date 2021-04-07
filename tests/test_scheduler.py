@@ -661,7 +661,7 @@ def test_fifo_scheduler_hol_blocking_avoidance_empty_status_data():
     """
     Without any status_data, it should just pick the first session.
     """
-    scheduler = FIFOSlotScheduler({})
+    scheduler = FIFOSlotScheduler({'num_retries_to_skip': 5})
     pending_sessions = [
         gen_pending_for_holb_tests("s0", {}),
         gen_pending_for_holb_tests("s1", {}),
@@ -674,12 +674,42 @@ def test_fifo_scheduler_hol_blocking_avoidance_empty_status_data():
     assert picked_session_id == 's0'
 
 
+def test_fifo_scheduler_hol_blocking_avoidance_config():
+    """
+    If the upfront sessions have enough number of retries,
+    it should skip them.
+    """
+    scheduler = FIFOSlotScheduler({'num_retries_to_skip': 0})
+    pending_sessions = [
+        gen_pending_for_holb_tests("s0", {'scheduler': {'retries': 5}}),
+        gen_pending_for_holb_tests("s1", {}),
+        gen_pending_for_holb_tests("s2", {}),
+    ]
+    picked_session_id = scheduler.pick_session(
+        example_total_capacity,
+        pending_sessions,
+        [])
+    assert picked_session_id == 's0'
+
+    scheduler = FIFOSlotScheduler({'num_retries_to_skip': 5})
+    pending_sessions = [
+        gen_pending_for_holb_tests("s0", {'scheduler': {'retries': 5}}),
+        gen_pending_for_holb_tests("s1", {'scheduler': {'retries': 4}}),
+        gen_pending_for_holb_tests("s2", {'scheduler': {'retries': 3}}),
+    ]
+    picked_session_id = scheduler.pick_session(
+        example_total_capacity,
+        pending_sessions,
+        [])
+    assert picked_session_id == 's1'
+
+
 def test_fifo_scheduler_hol_blocking_avoidance_skips():
     """
     If the upfront sessions have enough number of retries,
     it should skip them.
     """
-    scheduler = FIFOSlotScheduler({})
+    scheduler = FIFOSlotScheduler({'num_retries_to_skip': 5})
     pending_sessions = [
         gen_pending_for_holb_tests("s0", {'scheduler': {'retries': 5}}),
         gen_pending_for_holb_tests("s1", {}),
@@ -708,7 +738,7 @@ def test_fifo_scheduler_hol_blocking_avoidance_all_skipped():
     If all sessions are skipped due to excessive number of retries,
     then we go back to the normal FIFO by choosing the first of them.
     """
-    scheduler = FIFOSlotScheduler({})
+    scheduler = FIFOSlotScheduler({'num_retries_to_skip': 5})
     pending_sessions = [
         gen_pending_for_holb_tests("s0", {'scheduler': {'retries': 5}}),
         gen_pending_for_holb_tests("s1", {'scheduler': {'retries': 5}}),
@@ -726,7 +756,7 @@ def test_fifo_scheduler_hol_blocking_avoidance_no_skip():
     If non-first sessions have to be skipped, the scheduler should still
     choose the first session.
     """
-    scheduler = FIFOSlotScheduler({})
+    scheduler = FIFOSlotScheduler({'num_retries_to_skip': 5})
     pending_sessions = [
         gen_pending_for_holb_tests("s0", {}),
         gen_pending_for_holb_tests("s1", {'scheduler': {'retries': 10}}),

@@ -21,6 +21,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 from sqlalchemy.sql import Select, ColumnElement
 from sqlalchemy.engine.row import Row
+import trafaret as t
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.docker import (
@@ -383,9 +384,10 @@ class AbstractScheduler(metaclass=ABCMeta):
     """
 
     config: Mapping[str, Any]
+    config_iv: t.Dict
 
     def __init__(self, config: Mapping[str, Any]) -> None:
-        self.config = config
+        self.config = self.config_iv.check(config)
 
     @abstractmethod
     def pick_session(
