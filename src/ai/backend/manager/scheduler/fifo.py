@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from decimal import Decimal
 from typing import (
-    Any, Optional,
+    Any,
+    List,
+    Optional,
     Sequence,
     Mapping,
     Tuple,
@@ -51,8 +53,22 @@ class FIFOSlotScheduler(AbstractScheduler):
         pending_sessions: Sequence[PendingSession],
         existing_sessions: Sequence[ExistingSession],
     ) -> Optional[SessionId]:
-        # Just pick the first pending session.
-        return SessionId(pending_sessions[0].session_id)
+        local_pending_sessions = list(pending_sessions)
+        skipped_sessions: List[PendingSession] = []
+        while local_pending_sessions:
+            # Just pick the first pending session, but skip it
+            # if it has more than 3 failures.
+            s = local_pending_sessions.pop(0)
+            if s.status_data is not None:
+                sched_data = s.status_data.get('scheduler', {})
+                if sched_data.get('retries', 0) >= 3:
+                    skipped_sessions.append(s)
+                    continue
+            return s.session_id
+        # But if all sessions are skipped, then choose the first one.
+        if skipped_sessions:
+            return skipped_sessions[0].session_id
+        return None
 
     def _assign_agent(
         self,

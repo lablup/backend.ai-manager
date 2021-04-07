@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+import secrets
 from typing import (
     Any,
     Mapping,
@@ -292,6 +293,7 @@ def example_pending_sessions():
                 ),
             ],
             access_key=AccessKey('user01'),
+            status_data={},
             session_id=pending_session_kernel_ids[0].session_id,
             session_creation_id='aaa100',
             session_name='es01',
@@ -332,6 +334,7 @@ def example_pending_sessions():
                 ),
             ],
             access_key=AccessKey('user02'),
+            status_data={},
             session_id=pending_session_kernel_ids[1].session_id,
             session_creation_id='aaa101',
             session_name='es01',
@@ -412,6 +415,7 @@ def example_pending_sessions():
                 ),
             ],
             access_key=AccessKey('user03'),
+            status_data={},
             session_id=pending_session_kernel_ids[2].session_id,
             session_creation_id='aaa102',
             session_name='es01',
@@ -632,6 +636,115 @@ def test_fifo_scheduler_favor_cpu_for_requests_without_accelerators(
             # It should favor the CPU-only agent if the requested slots
             # do not include accelerators.
             assert agent_id == AgentId('i-cpu')
+
+
+def gen_pending_session() -> PendingSession:
+    return PendingSession(
+        session_id='s0',
+        session_name=secrets.token_hex(8),
+        access_key='ak1',
+        status_data={},
+        session_creation_id=secrets.token_urlsafe(8),
+        kernels=[],
+        session_type=SessionTypes.INTERACTIVE,
+        cluster_mode='single-node',
+        cluster_size=1,
+        scaling_group='sg01',
+        requested_slots=ResourceSlot({'cpu': Decimal(1), 'mem': Decimal(1024)}),
+        target_sgroup_names=[],
+        **_common_dummy_for_pending_session,
+    )
+
+
+def test_fifo_scheduler_hol_blocking_avoidance_empty_status_data():
+    """
+    Without any status_data, it should just pick the first session.
+    """
+    scheduler = FIFOSlotScheduler({})
+    pending_sessions = [
+        gen_pending_session(),
+        gen_pending_session(),
+        gen_pending_session(),
+    ]
+    pending_sessions[1].session_id = 's1'
+    pending_sessions[2].session_id = 's2'
+    picked_session_id = scheduler.pick_session(
+        example_total_capacity,
+        pending_sessions,
+        [])
+    assert picked_session_id == 's0'
+
+
+def test_fifo_scheduler_hol_blocking_avoidance_skips():
+    """
+    If the upfront sessions have enough number of retries,
+    it should skip them.
+    """
+    scheduler = FIFOSlotScheduler({})
+    pending_sessions = [
+        gen_pending_session(),
+        gen_pending_session(),
+        gen_pending_session(),
+    ]
+    pending_sessions[0].status_data = {'scheduler': {'retries': 5}}
+    pending_sessions[1].session_id = 's1'
+    pending_sessions[2].session_id = 's2'
+    picked_session_id = scheduler.pick_session(
+        example_total_capacity,
+        pending_sessions,
+        [])
+    assert picked_session_id == 's1'
+
+    pending_sessions[1].status_data = {'scheduler': {'retries': 10}}
+    picked_session_id = scheduler.pick_session(
+        example_total_capacity,
+        pending_sessions,
+        [])
+    assert picked_session_id == 's2'
+
+
+def test_fifo_scheduler_hol_blocking_avoidance_all_skipped():
+    """
+    If all sessions are skipped due to excessive number of retries,
+    then we go back to the normal FIFO by choosing the first of them.
+    """
+    scheduler = FIFOSlotScheduler({})
+    pending_sessions = [
+        gen_pending_session(),
+        gen_pending_session(),
+        gen_pending_session(),
+    ]
+    pending_sessions[0].status_data = {'scheduler': {'retries': 5}}
+    pending_sessions[1].status_data = {'scheduler': {'retries': 5}}
+    pending_sessions[2].status_data = {'scheduler': {'retries': 5}}
+    pending_sessions[1].session_id = 's1'
+    pending_sessions[2].session_id = 's2'
+    picked_session_id = scheduler.pick_session(
+        example_total_capacity,
+        pending_sessions,
+        [])
+    assert picked_session_id == 's0'
+
+
+def test_fifo_scheduler_hol_blocking_avoidance_no_skip():
+    """
+    If non-first sessions have to be skipped, the scheduler should still
+    choose the first session.
+    """
+    scheduler = FIFOSlotScheduler({})
+    pending_sessions = [
+        gen_pending_session(),
+        gen_pending_session(),
+        gen_pending_session(),
+    ]
+    pending_sessions[1].status_data = {'scheduler': {'retries': 5}}
+    pending_sessions[1].session_id = 's1'
+    pending_sessions[2].session_id = 's2'
+    picked_session_id = scheduler.pick_session(
+        example_total_capacity,
+        pending_sessions,
+        [])
+    assert picked_session_id == 's0'
 
 
 def test_lifo_scheduler_favor_cpu_for_requests_without_accelerators(
