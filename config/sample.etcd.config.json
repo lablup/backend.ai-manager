@@ -34,7 +34,14 @@
     "token": "some-random-long-string"
   },
   "plugins": {
-    "cuda": {
+    "accelerator": {
+      "cuda": {
+      }
+    },
+    "scheduler": {
+      "fifo": {
+        "num_retries_to_skip": 3,
+      }
     }
   }
 }
