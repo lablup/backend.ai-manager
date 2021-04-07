@@ -20,6 +20,7 @@ from ai.backend.common.docker import ImageRef
 from ai.backend.common.types import (
     AccessKey, AgentId, KernelId, SessionId,
     ResourceSlot, SessionTypes,
+    ClusterMode,
 )
 
 from ai.backend.manager.defs import DEFAULT_ROLE
@@ -640,14 +641,14 @@ def test_fifo_scheduler_favor_cpu_for_requests_without_accelerators(
 
 def gen_pendign_for_holb_tests(session_id: str, status_data: Mapping[str, Any]) -> PendingSession:
     return PendingSession(
-        session_id=SessionId(session_id),
+        session_id=SessionId(session_id),  # type: ignore
         session_name=secrets.token_hex(8),
-        access_key='ak1',
+        access_key=AccessKey('ak1'),
         status_data=status_data,
         session_creation_id=secrets.token_urlsafe(8),
         kernels=[],
         session_type=SessionTypes.INTERACTIVE,
-        cluster_mode='single-node',
+        cluster_mode=ClusterMode.SINGLE_NODE,
         cluster_size=1,
         scaling_group='sg01',
         requested_slots=ResourceSlot({'cpu': Decimal(1), 'mem': Decimal(1024)}),
