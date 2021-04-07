@@ -59,7 +59,6 @@ class FIFOSlotScheduler(AbstractScheduler):
         local_pending_sessions = list(pending_sessions)
         skipped_sessions: List[PendingSession] = []
         max_retries = self.config['num_retries_to_skip']
-        print(max_retries)
         while local_pending_sessions:
             # Just pick the first pending session, but skip it
             # if it has more than 3 failures.
