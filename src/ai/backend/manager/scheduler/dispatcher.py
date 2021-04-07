@@ -153,7 +153,6 @@ class SchedulerDispatcher(aobject):
         redis_url = self.shared_config.get_redis_url(db=REDIS_STREAM_DB)
         self.schedule_timer_redis = await aioredis.create_redis(str(redis_url))
         self.prepare_timer_redis = await aioredis.create_redis(str(redis_url))
-        self.prepare_tasks_redis = await aioredis.create_redis(str(redis_url))
         self.schedule_timer = GlobalTimer(
             self.schedule_timer_redis,
             "scheduler_tick",
@@ -182,10 +181,8 @@ class SchedulerDispatcher(aobject):
                 t.cancel()
                 cancelled_tasks.append(t)
         await asyncio.gather(*cancelled_tasks, return_exceptions=True)
-        self.prepare_tasks_redis.close()
         self.prepare_timer_redis.close()
         self.schedule_timer_redis.close()
-        await self.prepare_tasks_redis.wait_closed()
         await self.prepare_timer_redis.wait_closed()
         await self.schedule_timer_redis.wait_closed()
 
@@ -604,21 +601,29 @@ class SchedulerDispatcher(aobject):
         async with self.db.begin() as conn:
             query = (
                 PendingSession.base_query()
+                .with_for_update()
                 .where(
                     (kernels.c.status == KernelStatus.SCHEDULED)
                 )
             )
             rows = (await conn.execute(query)).fetchall()
             scheduled_sessions = PendingSession.from_rows(rows)
-            cmdpipe = self.prepare_tasks_redis.pipeline()
+            # Change the status within a single transaction to avoid races.
+            now = datetime.now(tzutc())
+            query = kernels.update().values({
+                'status': KernelStatus.PREPARING,
+                'status_changed': now,
+                'status_info': "",
+                'status_data': {},
+            }).where(kernels.c.session_id.in_([s.session_id for s in scheduled_sessions]))
+            await conn.execute(query)
             for scheduled_session in scheduled_sessions:
-                cmdpipe.sismember(
-                    _key_schedule_prep_tasks, scheduled_session.session_creation_id
+                await self.registry.event_producer.produce_event(
+                    SessionPreparingEvent(
+                        scheduled_session.session_id,
+                        scheduled_session.session_creation_id,
+                    )
                 )
-            results = await cmdpipe.execute()
-            for scheduled_session, is_ongoing in zip(scheduled_sessions, results):
-                if is_ongoing == 1:
-                    continue
                 self.prepare_tasks.add(asyncio.create_task(self.start_session(
                     sched_ctx,
                     scheduled_session,
@@ -634,19 +639,6 @@ class SchedulerDispatcher(aobject):
         log_args = (session, )
         log.debug(log_fmt + 'try-starting', *log_args)
         try:
-            await self.prepare_tasks_redis.sadd(_key_schedule_prep_tasks, session.session_creation_id)
-            async with self.db.begin() as db_conn:
-                now = datetime.now(tzutc())
-                query = kernels.update().values({
-                    'status': KernelStatus.PREPARING,
-                    'status_changed': now,
-                    'status_info': "",
-                    'status_data': {},
-                }).where(kernels.c.session_id == session.session_id)
-                await db_conn.execute(query)
-            await self.registry.event_producer.produce_event(
-                SessionPreparingEvent(session.session_id, session.session_creation_id)
-            )
             assert len(session.kernels) > 0
             await self.registry.start_session(sched_ctx, session)
         except Exception as e:
@@ -701,8 +693,6 @@ class SchedulerDispatcher(aobject):
                 log.debug(log_fmt + 'cleanup-start-failure: done', *log_args)
         else:
             log.info(log_fmt + 'started', *log_args)
-        finally:
-            await self.prepare_tasks_redis.srem(_key_schedule_prep_tasks, session.session_creation_id)
 
 
 async def _list_pending_sessions(

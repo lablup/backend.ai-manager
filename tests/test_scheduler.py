@@ -639,7 +639,7 @@ def test_fifo_scheduler_favor_cpu_for_requests_without_accelerators(
             assert agent_id == AgentId('i-cpu')
 
 
-def gen_pendign_for_holb_tests(session_id: str, status_data: Mapping[str, Any]) -> PendingSession:
+def gen_pending_for_holb_tests(session_id: str, status_data: Mapping[str, Any]) -> PendingSession:
     return PendingSession(
         session_id=SessionId(session_id),  # type: ignore
         session_name=secrets.token_hex(8),
@@ -663,9 +663,9 @@ def test_fifo_scheduler_hol_blocking_avoidance_empty_status_data():
     """
     scheduler = FIFOSlotScheduler({})
     pending_sessions = [
-        gen_pendign_for_holb_tests("s0", {}),
-        gen_pendign_for_holb_tests("s1", {}),
-        gen_pendign_for_holb_tests("s2", {}),
+        gen_pending_for_holb_tests("s0", {}),
+        gen_pending_for_holb_tests("s1", {}),
+        gen_pending_for_holb_tests("s2", {}),
     ]
     picked_session_id = scheduler.pick_session(
         example_total_capacity,
@@ -681,9 +681,9 @@ def test_fifo_scheduler_hol_blocking_avoidance_skips():
     """
     scheduler = FIFOSlotScheduler({})
     pending_sessions = [
-        gen_pendign_for_holb_tests("s0", {'scheduler': {'retries': 5}}),
-        gen_pendign_for_holb_tests("s1", {}),
-        gen_pendign_for_holb_tests("s2", {}),
+        gen_pending_for_holb_tests("s0", {'scheduler': {'retries': 5}}),
+        gen_pending_for_holb_tests("s1", {}),
+        gen_pending_for_holb_tests("s2", {}),
     ]
     picked_session_id = scheduler.pick_session(
         example_total_capacity,
@@ -692,9 +692,9 @@ def test_fifo_scheduler_hol_blocking_avoidance_skips():
     assert picked_session_id == 's1'
 
     pending_sessions = [
-        gen_pendign_for_holb_tests("s0", {'scheduler': {'retries': 5}}),
-        gen_pendign_for_holb_tests("s1", {'scheduler': {'retries': 10}}),
-        gen_pendign_for_holb_tests("s2", {}),
+        gen_pending_for_holb_tests("s0", {'scheduler': {'retries': 5}}),
+        gen_pending_for_holb_tests("s1", {'scheduler': {'retries': 10}}),
+        gen_pending_for_holb_tests("s2", {}),
     ]
     picked_session_id = scheduler.pick_session(
         example_total_capacity,
@@ -710,9 +710,9 @@ def test_fifo_scheduler_hol_blocking_avoidance_all_skipped():
     """
     scheduler = FIFOSlotScheduler({})
     pending_sessions = [
-        gen_pendign_for_holb_tests("s0", {'scheduler': {'retries': 5}}),
-        gen_pendign_for_holb_tests("s1", {'scheduler': {'retries': 5}}),
-        gen_pendign_for_holb_tests("s2", {'scheduler': {'retries': 5}}),
+        gen_pending_for_holb_tests("s0", {'scheduler': {'retries': 5}}),
+        gen_pending_for_holb_tests("s1", {'scheduler': {'retries': 5}}),
+        gen_pending_for_holb_tests("s2", {'scheduler': {'retries': 5}}),
     ]
     picked_session_id = scheduler.pick_session(
         example_total_capacity,
@@ -728,9 +728,9 @@ def test_fifo_scheduler_hol_blocking_avoidance_no_skip():
     """
     scheduler = FIFOSlotScheduler({})
     pending_sessions = [
-        gen_pendign_for_holb_tests("s0", {}),
-        gen_pendign_for_holb_tests("s1", {'scheduler': {'retries': 10}}),
-        gen_pendign_for_holb_tests("s2", {}),
+        gen_pending_for_holb_tests("s0", {}),
+        gen_pending_for_holb_tests("s1", {'scheduler': {'retries': 10}}),
+        gen_pending_for_holb_tests("s2", {}),
     ]
     picked_session_id = scheduler.pick_session(
         example_total_capacity,
