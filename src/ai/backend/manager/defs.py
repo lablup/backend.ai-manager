@@ -21,3 +21,10 @@ _RESERVED_VFOLDER_PATTERNS = [r'^\.[a-z0-9]+rc$', r'^\.[a-z0-9]+_profile$']
 RESERVED_DOTFILES = ['.terminfo', '.jupyter', '.ssh', '.ssh/authorized_keys', '.local', '.config']
 RESERVED_VFOLDERS = ['.terminfo', '.jupyter', '.tmux.conf', '.ssh']
 RESERVED_VFOLDER_PATTERNS = [re.compile(x) for x in _RESERVED_VFOLDER_PATTERNS]
+
+# Redis database IDs depending on purposes
+REDIS_STAT_DB: Final = 0
+REDIS_RLIM_DB: Final = 1
+REDIS_LIVE_DB: Final = 2
+REDIS_IMAGE_DB: Final = 3
+REDIS_STREAM_DB: Final = 4

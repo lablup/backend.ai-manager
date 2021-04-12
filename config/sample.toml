@@ -29,7 +29,7 @@ password = "DB_PASSWORD"                    # env: BACKEND_DB_PASSWORD
 [manager]
 # The number of worker processes to handle API requests and event messages.
 # If set zero, it uses the number of CPU cores in the system.
-num-proc = 4                                               # env: BACKEND_GATEWAY_NPROC
+num-proc = 4                                               # env: BACKEND_MANAGER_NPROC
 
 # An arbitrary string used to salt when generating secret tokens (e.g., JWT)
 # Currently only some plugins use this configuration in the manager.
@@ -37,7 +37,7 @@ secret = "XXXXXXXXXXXXXX"
 
 # Specify the user/group used for the manager daemon,
 # to which the manager changes after reading the daemon configuration and SSL certifiactes.
-# If not specified, it uses the file permission of ai/backend/gateway/server.py
+# If not specified, it uses the file permission of ai/backend/manager/server.py
 # This config is effective only when the manager daemon is started as the root user.
 # Note that the vfolder (storage) permission must match with this.
 user = "nobody"
@@ -142,10 +142,10 @@ ssl-verify = true
 [logging.pkg-ns]
 "" = "WARNING"
 "aiotools" = "INFO"
-"aiopg" = "WARNING"
 "aiohttp" = "INFO"
 "ai.backend" = "INFO"
 "alembic" = "INFO"
+"sqlalchemy" = "WARNING"
 
 
 [debug]

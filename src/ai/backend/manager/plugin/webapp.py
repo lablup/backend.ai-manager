@@ -7,7 +7,7 @@ from typing import (
 from aiohttp import web
 
 from ai.backend.common.plugin import AbstractPlugin, BasePluginContext
-from ...gateway.types import CORSOptions, WebMiddleware
+from ai.backend.manager.api.types import CORSOptions, WebMiddleware
 
 
 class WebappPlugin(AbstractPlugin, metaclass=ABCMeta):

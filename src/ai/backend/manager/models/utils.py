@@ -3,14 +3,16 @@ from typing import Any, AsyncIterator, Mapping, Tuple
 
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as psql
-from aiopg.sa.connection import SAConnection
-from aiopg.sa.engine import Engine as SAEngine
+from sqlalchemy.ext.asyncio import (
+    AsyncConnection as SAConnection,
+    AsyncEngine as SAEngine,
+)
 
 
 @actxmgr
 async def reenter_txn(pool: SAEngine, conn: SAConnection) -> AsyncIterator[SAConnection]:
     if conn is None:
-        async with pool.acquire() as conn, conn.begin():
+        async with pool.connect() as conn, conn.begin():
             yield conn
     else:
         async with conn.begin_nested():

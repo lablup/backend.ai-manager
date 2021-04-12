@@ -109,7 +109,7 @@ class QueryFilterParser():
         the given SQLAlchemy query object.
         """
         if isinstance(sa_query, sa.sql.Select):
-            table = sa_query.selectable.locate_all_froms()[0]
+            table = sa_query.froms[0]
         elif isinstance(sa_query, sa.sql.Delete):
             table = sa_query.table
         elif isinstance(sa_query, sa.sql.Update):

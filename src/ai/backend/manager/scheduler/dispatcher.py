@@ -3,35 +3,34 @@ from __future__ import annotations
 import asyncio
 from contextvars import ContextVar
 from datetime import datetime
-import itertools
 import logging
 import pkg_resources
 from typing import (
     Any,
     Awaitable,
-    Dict,
+    Final,
     List,
     Mapping,
-    MutableMapping,
     Sequence,
     Tuple,
     Union,
     TYPE_CHECKING,
 )
+import weakref
 
-from aiopg.sa.connection import SAConnection
 import aioredis
-import aioredlock
 from dateutil.tz import tzutc
 import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 from sqlalchemy.sql.expression import true
 
-from ai.backend.common.docker import ImageRef
 from ai.backend.common.events import (
     AgentStartedEvent,
     DoScheduleEvent,
+    DoPrepareEvent,
     SessionCancelledEvent,
     SessionEnqueuedEvent,
+    SessionPreparingEvent,
     SessionScheduledEvent,
     SessionTerminatedEvent,
     EventDispatcher,
@@ -43,26 +42,21 @@ from ai.backend.common.types import (
     AgentId,
     ClusterMode,
     ResourceSlot,
-    SessionId,
 )
 
-from ai.backend.manager.exceptions import convert_to_status_data
-if TYPE_CHECKING:
-    from ai.backend.gateway.config import LocalConfig, SharedConfig
-
-from ai.backend.manager.distributed import GlobalTimer
-from ...gateway.defs import REDIS_STREAM_DB
-from ...gateway.exceptions import InstanceNotAvailable
-if TYPE_CHECKING:
-    from ..registry import AgentRegistry
+from ..api.exceptions import InstanceNotAvailable
+from ..distributed import GlobalTimer
+from ..defs import REDIS_STREAM_DB
+from ..exceptions import convert_to_status_data
 from ..models import (
-    agents, kernels, keypairs, scaling_groups,
+    agents, kernels, scaling_groups,
     recalc_agent_resource_occupancy,
+    recalc_concurrency_used,
     AgentStatus, KernelStatus,
     AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
 )
 from ..models.utils import sql_json_increment, sql_json_merge
-from . import (
+from .types import (
     PredicateResult,
     PendingSession,
     ExistingSession,
@@ -70,7 +64,6 @@ from . import (
     AgentContext,
     AgentAllocationContext,
     AbstractScheduler,
-    KernelInfo,
     KernelAgentBinding,
 )
 from .predicates import (
@@ -83,6 +76,10 @@ from .predicates import (
     check_scaling_group,
 )
 
+if TYPE_CHECKING:
+    from ..config import LocalConfig, SharedConfig
+    from ..registry import AgentRegistry
+
 __all__ = (
     'load_scheduler',
     'SchedulerDispatcher',
@@ -92,6 +89,8 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.scheduler'))
 
 _log_fmt: ContextVar[str] = ContextVar('_log_fmt')
 _log_args: ContextVar[Tuple[Any, ...]] = ContextVar('_log_args')
+
+_key_schedule_prep_tasks: Final = "scheduler.preptasks"
 
 
 def load_scheduler(name: str, scheduler_configs: Mapping[str, Any]) -> AbstractScheduler:
@@ -103,14 +102,6 @@ def load_scheduler(name: str, scheduler_configs: Mapping[str, Any]) -> AbstractS
             scheduler_config = scheduler_configs.get(name, {})
             return scheduler_cls(scheduler_config)
     raise ImportError('Cannot load the scheduler plugin', name)
-
-
-def merge_resource(src: MutableMapping[str, Any], val: MutableMapping[str, Any]) -> None:
-    for k in val.keys():
-        if k in src.keys():
-            src[k] += val[k]
-        else:
-            src[k] = val[k]
 
 
 StartTaskArgs = Tuple[
@@ -127,11 +118,13 @@ class SchedulerDispatcher(aobject):
     shared_config: SharedConfig
     registry: AgentRegistry
 
-    lock_manager: aioredlock.Aioredlock
-    timer_redis: aioredis.Redis
+    schedule_timer_redis: aioredis.Redis
+    prepare_timer_redis: aioredis.Redis
     event_dispatcher: EventDispatcher
     event_producer: EventProducer
     schedule_timer: GlobalTimer
+    prepare_timer: GlobalTimer
+    prepare_tasks: weakref.WeakSet[asyncio.Task]
 
     def __init__(
         self,
@@ -146,37 +139,52 @@ class SchedulerDispatcher(aobject):
         self.event_dispatcher = event_dispatcher
         self.event_producer = event_producer
         self.registry = registry
-        self.dbpool = registry.dbpool
-        self.schedule_lock_timeout = 120.0
+        self.db = registry.db
+        self.schedule_lock_timeout = 30.0
+        self.prepare_lock_timeout = 60.0
+        self.prepare_tasks = weakref.WeakSet()
 
     async def __ainit__(self) -> None:
-        log.info('Session scheduler started')
         self.registry.event_dispatcher.consume(SessionEnqueuedEvent, None, self.schedule)
         self.registry.event_dispatcher.consume(SessionTerminatedEvent, None, self.schedule)
         self.registry.event_dispatcher.consume(AgentStartedEvent, None, self.schedule)
         self.registry.event_dispatcher.consume(DoScheduleEvent, None, self.schedule)
+        self.registry.event_dispatcher.consume(DoPrepareEvent, None, self.prepare)
         redis_url = self.shared_config.get_redis_url(db=REDIS_STREAM_DB)
-        self.lock_manager = aioredlock.Aioredlock(
-            [str(redis_url)],
-            # we have explicit semantics: temporary locking failure -> try at the next chance,
-            # such as scheduling timer ticks or upon scheduling events
-            retry_count=2,
-        )
-        self.timer_redis = await aioredis.create_redis(str(redis_url))
+        self.schedule_timer_redis = await aioredis.create_redis(str(redis_url))
+        self.prepare_timer_redis = await aioredis.create_redis(str(redis_url))
         self.schedule_timer = GlobalTimer(
-            self.timer_redis,
+            self.schedule_timer_redis,
             "scheduler_tick",
             self.event_producer,
             lambda: DoScheduleEvent(),
             interval=10.0,
         )
+        self.prepare_timer = GlobalTimer(
+            self.prepare_timer_redis,
+            "prepare_tick",
+            self.event_producer,
+            lambda: DoPrepareEvent(),
+            interval=1.0,
+        )
         await self.schedule_timer.join()
+        await self.prepare_timer.join()
+        log.info('Session scheduler started')
 
     async def close(self) -> None:
-        log.info('Session scheduler stopped')
+        await self.prepare_timer.leave()
         await self.schedule_timer.leave()
-        self.timer_redis.close()
-        await self.timer_redis.wait_closed()
+        log.info('Session scheduler stopped')
+        cancelled_tasks = []
+        for t in self.prepare_tasks:
+            if not t.done():
+                t.cancel()
+                cancelled_tasks.append(t)
+        await asyncio.gather(*cancelled_tasks, return_exceptions=True)
+        self.prepare_timer_redis.close()
+        self.schedule_timer_redis.close()
+        await self.prepare_timer_redis.wait_closed()
+        await self.schedule_timer_redis.wait_closed()
 
     async def schedule(
         self,
@@ -184,60 +192,49 @@ class SchedulerDispatcher(aobject):
         source: AgentId,
         event: SessionEnqueuedEvent | SessionTerminatedEvent | AgentStartedEvent | DoScheduleEvent,
     ) -> None:
-        try:
-            lock = await self.lock_manager.lock(
-                'manager.scheduler',
-                lock_timeout=self.schedule_lock_timeout,
-            )
-            async with lock:
-                await self.schedule_impl()
-        except aioredlock.LockError:
-            log.debug('schedule(): temporary locking failure; will be retried.')
-            # The dispatcher will try the next chance.
+        """
+        Trigger the scheduler to scan pending sessions and mark them scheduled if they fulfill
+        the scheduling requirements.
 
-    async def schedule_impl(self) -> None:
+        HoL blocking issue due to indefinitely preparing sessions will be mitigated because
+        they will be treated as already "scheduled" sessions and the scheduler will continue to
+        work on other pending sessions.
+
+        Session status transition: PENDING -> SCHEDULED
+        """
         log.debug('schedule(): triggered')
         known_slot_types = await self.shared_config.get_resource_slots()
         sched_ctx = SchedulingContext(
             registry=self.registry,
             known_slot_types=known_slot_types,
         )
-        start_task_args: List[StartTaskArgs] = []
 
         # We use short transaction blocks to prevent deadlock timeouts under heavy loads
         # because this scheduling handler will be executed by only one process.
         # It is executed under a globally exclusive context using aioredlock.
-        async with self.dbpool.acquire() as agent_db_conn, \
-                   self.dbpool.acquire() as kernel_db_conn:
-            query = (
-                sa.select([agents.c.scaling_group])
-                .select_from(agents)
-                .where(agents.c.status == AgentStatus.ALIVE)
-                .group_by(agents.c.scaling_group)
-            )
-            result = await agent_db_conn.execute(query)
-            schedulable_scaling_groups = [
-                row.scaling_group for row in await result.fetchall()
-            ]
+        async with self.db.connect() as agent_db_conn, \
+                   self.db.connect() as kernel_db_conn:
+            async with agent_db_conn.begin():
+                query = (
+                    sa.select([agents.c.scaling_group])
+                    .select_from(agents)
+                    .where(agents.c.status == AgentStatus.ALIVE)
+                    .group_by(agents.c.scaling_group)
+                )
+                result = await agent_db_conn.execute(query)
+                schedulable_scaling_groups = [
+                    row.scaling_group for row in result.fetchall()
+                ]
             for sgroup_name in schedulable_scaling_groups:
                 try:
-                    args_list = await self._schedule_in_sgroup(
+                    await self._schedule_in_sgroup(
                         sched_ctx, agent_db_conn, kernel_db_conn, sgroup_name,
                     )
-                    start_task_args.extend(args_list)
                 except InstanceNotAvailable:
                     # Proceed to the next scaling group and come back later.
-                    pass
-                except Exception:
-                    pass
-
-        # At this point, all scheduling decisions are made
-        # and the resource occupation is committed to the database.
-        if start_task_args:
-            start_coros = []
-            for args in start_task_args:
-                start_coros.append(self.start_session(*args))
-            await asyncio.gather(*start_coros)
+                    log.debug('schedule({}): instance not available', sgroup_name)
+                except Exception as e:
+                    log.exception('schedule({}): scheduling error!\n{}', sgroup_name, repr(e))
 
     async def _load_scheduler(
         self,
@@ -250,7 +247,7 @@ class SchedulerDispatcher(aobject):
             .where(scaling_groups.c.name == sgroup_name)
         )
         result = await db_conn.execute(query)
-        scheduler_name = await result.scalar()
+        scheduler_name = result.scalar()
         return load_scheduler(scheduler_name, self.shared_config['plugins']['scheduler'])
 
     async def _schedule_in_sgroup(
@@ -259,7 +256,7 @@ class SchedulerDispatcher(aobject):
         agent_db_conn: SAConnection,
         kernel_db_conn: SAConnection,
         sgroup_name: str,
-    ) -> List[StartTaskArgs]:
+    ) -> None:
         async with kernel_db_conn.begin():
             scheduler = await self._load_scheduler(kernel_db_conn, sgroup_name)
             pending_sessions = await _list_pending_sessions(kernel_db_conn, sgroup_name)
@@ -267,7 +264,6 @@ class SchedulerDispatcher(aobject):
         log.debug('running scheduler (sgroup:{}, pending:{}, existing:{})',
                   sgroup_name, len(pending_sessions), len(existing_sessions))
         zero = ResourceSlot()
-        args_list: List[StartTaskArgs] = []
         while len(pending_sessions) > 0:
             async with agent_db_conn.begin():
                 candidate_agents = await _list_agents_by_sgroup(agent_db_conn, sgroup_name)
@@ -281,7 +277,7 @@ class SchedulerDispatcher(aobject):
             if picked_session_id is None:
                 # no session is picked.
                 # continue to next sgroup.
-                return []
+                return
             for picked_idx, sess_ctx in enumerate(pending_sessions):
                 if sess_ctx.session_id == picked_session_id:
                     break
@@ -301,7 +297,6 @@ class SchedulerDispatcher(aobject):
             _log_fmt.set(log_fmt)
             _log_args.set(log_args)
             log.debug(log_fmt + 'try-scheduling', *log_args)
-            session_agent_binding: Tuple[PendingSession, List[KernelAgentBinding]]
 
             async with kernel_db_conn.begin():
                 predicates: Sequence[Tuple[str, Awaitable[PredicateResult]]] = [
@@ -336,7 +331,7 @@ class SchedulerDispatcher(aobject):
                         log.exception(log_fmt + 'predicate-error', *log_args)
                         check_results.append((predicate_name, e))
             has_failure = False
-            # has_permanent_failure = False
+            has_permanent_failure = False
             failed_predicates = []
             passed_predicates = []
             for predicate_name, result in check_results:
@@ -357,8 +352,8 @@ class SchedulerDispatcher(aobject):
                         'msg': result.message or "",
                     })
                     has_failure = True
-                    # if result.permanent:
-                    #     has_permanent_failure = True
+                    if result.permanent:
+                        has_permanent_failure = True  # noqa
             if has_failure:
                 log.debug(log_fmt + 'predicate-checks-failed (temporary)', *log_args)
                 # TODO: handle has_permanent_failure as cancellation
@@ -366,8 +361,8 @@ class SchedulerDispatcher(aobject):
                 #    the inclusion of the kernels.status field. :(
                 #    Let's fix it.
                 async with kernel_db_conn.begin():
-                    await _invoke_failure_callbacks(
-                        kernel_db_conn, sched_ctx, sess_ctx, check_results,
+                    await _rollback_predicate_mutations(
+                        kernel_db_conn, sched_ctx, sess_ctx,
                     )
                     query = kernels.update().values({
                         'status_info': "predicate-checks-failed",
@@ -401,7 +396,7 @@ class SchedulerDispatcher(aobject):
                     await kernel_db_conn.execute(query)
 
             if sess_ctx.cluster_mode == ClusterMode.SINGLE_NODE:
-                session_agent_binding = await self._schedule_single_node_session(
+                await self._schedule_single_node_session(
                     sched_ctx,
                     scheduler,
                     agent_db_conn,
@@ -412,7 +407,7 @@ class SchedulerDispatcher(aobject):
                     check_results,
                 )
             elif sess_ctx.cluster_mode == ClusterMode.MULTI_NODE:
-                session_agent_binding = await self._schedule_multi_node_session(
+                await self._schedule_multi_node_session(
                     sched_ctx,
                     scheduler,
                     agent_db_conn,
@@ -426,14 +421,6 @@ class SchedulerDispatcher(aobject):
                 raise RuntimeError(
                     f"should not reach here; unknown cluster_mode: {sess_ctx.cluster_mode}"
                 )
-            args_list.append((
-                log_args,
-                sched_ctx,
-                session_agent_binding,
-                check_results,
-            ))
-
-        return args_list
 
     async def _schedule_single_node_session(
         self,
@@ -445,7 +432,7 @@ class SchedulerDispatcher(aobject):
         candidate_agents: Sequence[AgentContext],
         sess_ctx: PendingSession,
         check_results: List[Tuple[str, Union[Exception, PredicateResult]]],
-    ) -> Tuple[PendingSession, List[KernelAgentBinding]]:
+    ) -> None:
         # Assign agent resource per session.
         log_fmt = _log_fmt.get()
         log_args = _log_args.get()
@@ -460,8 +447,8 @@ class SchedulerDispatcher(aobject):
         except InstanceNotAvailable:
             log.debug(log_fmt + 'no-available-instances', *log_args)
             async with kernel_db_conn.begin():
-                await _invoke_failure_callbacks(
-                    kernel_db_conn, sched_ctx, sess_ctx, check_results,
+                await _rollback_predicate_mutations(
+                    kernel_db_conn, sched_ctx, sess_ctx,
                 )
                 query = kernels.update().values({
                     'status_info': "no-available-instances",
@@ -481,8 +468,8 @@ class SchedulerDispatcher(aobject):
                 *log_args,
             )
             async with kernel_db_conn.begin():
-                await _invoke_failure_callbacks(
-                    kernel_db_conn, sched_ctx, sess_ctx, check_results,
+                await _rollback_predicate_mutations(
+                    kernel_db_conn, sched_ctx, sess_ctx,
                 )
                 query = kernels.update().values({
                     'status_info': "scheduler-error",
@@ -496,18 +483,14 @@ class SchedulerDispatcher(aobject):
                 'agent': agent_alloc_ctx.agent_id,
                 'agent_addr': agent_alloc_ctx.agent_addr,
                 'scaling_group': sgroup_name,
-                'status': KernelStatus.PREPARING,
+                'status': KernelStatus.SCHEDULED,
                 'status_info': 'scheduled',
                 'status_data': {},
                 'status_changed': datetime.now(tzutc()),
             }).where(kernels.c.session_id == sess_ctx.session_id)
             await kernel_db_conn.execute(query)
-        return (
-            sess_ctx,
-            [
-                KernelAgentBinding(kernel, agent_alloc_ctx)
-                for kernel in sess_ctx.kernels
-            ],
+        await self.registry.event_producer.produce_event(
+            SessionScheduledEvent(sess_ctx.session_id, sess_ctx.session_creation_id)
         )
 
     async def _schedule_multi_node_session(
@@ -520,13 +503,13 @@ class SchedulerDispatcher(aobject):
         candidate_agents: Sequence[AgentContext],
         sess_ctx: PendingSession,
         check_results: List[Tuple[str, Union[Exception, PredicateResult]]],
-    ) -> Tuple[PendingSession, List[KernelAgentBinding]]:
+    ) -> None:
         # Assign agent resource per kernel in the session.
         log_fmt = _log_fmt.get()
         log_args = _log_args.get()
         agent_query_extra_conds = None
         kernel_agent_bindings: List[KernelAgentBinding] = []
-        async with agent_db_conn.begin(isolation_level="REPEATABLE READ"):
+        async with agent_db_conn.begin():
             # This outer transaction is rolled back when any exception occurs inside,
             # including scheduling failures of a kernel.
             # It ensures that occupied_slots are recovered when there are partial
@@ -546,8 +529,8 @@ class SchedulerDispatcher(aobject):
                 except InstanceNotAvailable:
                     log.debug(log_fmt + 'no-available-instances', *log_args)
                     async with kernel_db_conn.begin():
-                        await _invoke_failure_callbacks(
-                            kernel_db_conn, sched_ctx, sess_ctx, check_results,
+                        await _rollback_predicate_mutations(
+                            kernel_db_conn, sched_ctx, sess_ctx,
                         )
                         query = kernels.update().values({
                             'status_info': "no-available-instances",
@@ -567,8 +550,8 @@ class SchedulerDispatcher(aobject):
                         *log_args,
                     )
                     async with kernel_db_conn.begin():
-                        await _invoke_failure_callbacks(
-                            kernel_db_conn, sched_ctx, sess_ctx, check_results,
+                        await _rollback_predicate_mutations(
+                            kernel_db_conn, sched_ctx, sess_ctx,
                         )
                         query = kernels.update().values({
                             'status_info': "scheduler-error",
@@ -579,68 +562,94 @@ class SchedulerDispatcher(aobject):
                 else:
                     kernel_agent_bindings.append(KernelAgentBinding(kernel, agent_alloc_ctx))
 
-        if len(kernel_agent_bindings) == len(sess_ctx.kernels):
-            # Proceed to PREPARING only when all kernels are successfully scheduled.
-            async with kernel_db_conn.begin():
-                for binding in kernel_agent_bindings:
-                    query = kernels.update().values({
-                        'agent': binding.agent_alloc_ctx.agent_id,
-                        'agent_addr': binding.agent_alloc_ctx.agent_addr,
-                        'scaling_group': sgroup_name,
-                        'status': KernelStatus.PREPARING,
-                        'status_info': 'scheduled',
-                        'status_data': {},
-                        'status_changed': datetime.now(tzutc()),
-                    }).where(kernels.c.id == binding.kernel.kernel_id)
-                    await kernel_db_conn.execute(query)
-
-        return (sess_ctx, kernel_agent_bindings)
-
-    async def start_session(
-        self,
-        log_args,
-        sched_ctx: SchedulingContext,
-        session_agent_binding: Tuple[PendingSession, List[KernelAgentBinding]],
-        check_results: List[Tuple[str, Union[Exception, PredicateResult]]],
-    ) -> None:
-        log_fmt = _log_fmt.get()
-        log.debug(log_fmt + 'try-starting', *log_args)
-        sess_ctx = session_agent_binding[0]
+        assert len(kernel_agent_bindings) == len(sess_ctx.kernels)
+        # Proceed to PREPARING only when all kernels are successfully scheduled.
+        async with kernel_db_conn.begin():
+            for binding in kernel_agent_bindings:
+                query = kernels.update().values({
+                    'agent': binding.agent_alloc_ctx.agent_id,
+                    'agent_addr': binding.agent_alloc_ctx.agent_addr,
+                    'scaling_group': sgroup_name,
+                    'status': KernelStatus.SCHEDULED,
+                    'status_info': 'scheduled',
+                    'status_data': {},
+                    'status_changed': datetime.now(tzutc()),
+                }).where(kernels.c.id == binding.kernel.kernel_id)
+                await kernel_db_conn.execute(query)
         await self.registry.event_producer.produce_event(
             SessionScheduledEvent(sess_ctx.session_id, sess_ctx.session_creation_id)
         )
+
+    async def prepare(
+        self,
+        context: None,
+        source: AgentId,
+        event: DoPrepareEvent,
+    ) -> None:
+        """
+        Scan the scheduled sessions and perform the agent RPC calls to begin preparation of them.
+        Each RPC calls are done in separate asyncio tasks.
+
+        Session status transition: SCHEDULED -> PREPARING
+        """
+        log.debug('prepare(): triggered')
+        known_slot_types = await self.shared_config.get_resource_slots()
+        sched_ctx = SchedulingContext(
+            self.registry,
+            known_slot_types,
+        )
+        async with self.db.begin() as conn:
+            query = (
+                PendingSession.base_query()
+                .with_for_update()
+                .where(
+                    (kernels.c.status == KernelStatus.SCHEDULED)
+                )
+            )
+            rows = (await conn.execute(query)).fetchall()
+            scheduled_sessions = PendingSession.from_rows(rows)
+            # Change the status within a single transaction to avoid races.
+            now = datetime.now(tzutc())
+            query = kernels.update().values({
+                'status': KernelStatus.PREPARING,
+                'status_changed': now,
+                'status_info': "",
+                'status_data': {},
+            }).where(kernels.c.session_id.in_([s.session_id for s in scheduled_sessions]))
+            await conn.execute(query)
+            for scheduled_session in scheduled_sessions:
+                await self.registry.event_producer.produce_event(
+                    SessionPreparingEvent(
+                        scheduled_session.session_id,
+                        scheduled_session.session_creation_id,
+                    )
+                )
+                self.prepare_tasks.add(asyncio.create_task(self.start_session(
+                    sched_ctx,
+                    scheduled_session,
+                )))
+
+    async def start_session(
+        self,
+        sched_ctx: SchedulingContext,
+        session: PendingSession,
+    ) -> None:
+        log_fmt = "prepare(s:{0.session_id}, type:{0.session_type}, name:{0.session_name}, " \
+                  "ak:{0.access_key}, cluster_mode:{0.cluster_mode}): "
+        log_args = (session, )
+        log.debug(log_fmt + 'try-starting', *log_args)
         try:
-            assert len(session_agent_binding[1]) > 0
-            assert len(sess_ctx.kernels) == len(session_agent_binding[1])
-            await self.registry.start_session(sched_ctx, session_agent_binding)
+            assert len(session.kernels) > 0
+            await self.registry.start_session(sched_ctx, session)
         except Exception as e:
             status_data = convert_to_status_data(e, self.local_config['debug']['enabled'])
-            log.warning(log_fmt + 'failed-starting: {!r}', *log_args, status_data)
-            try:
-                async with self.dbpool.acquire() as db_conn, db_conn.begin():
-                    query = (
-                        sa.select([kernels.c.id, kernels.c.container_id])
-                        .select_from(kernels)
-                        .where(kernels.c.session_id == sess_ctx.session_id)
-                    )
-                    rows = await (await db_conn.execute(query)).fetchall()
-                    cid_map = {row['id']: row['container_id'] for row in rows}
-                destroyed_kernels = [
-                    {
-                        "agent": binding.agent_alloc_ctx.agent_id,
-                        "agent_addr": binding.agent_alloc_ctx.agent_addr,
-                        "id": binding.kernel.kernel_id,
-                        "container_id": cid_map[binding.kernel.kernel_id],
-                    }
-                    for binding in session_agent_binding[1]
-                ]
-                await self.registry.destroy_session_lowlevel(sess_ctx.session_id, destroyed_kernels)
-            except Exception as destroy_err:
-                log.error(log_fmt + 'failed-starting.cleanup', *log_args, exc_info=destroy_err)
-            async with self.dbpool.acquire() as db_conn, db_conn.begin():
-                for binding in session_agent_binding[1]:
-                    await recalc_agent_resource_occupancy(db_conn, binding.agent_alloc_ctx.agent_id)
-                await _invoke_failure_callbacks(db_conn, sched_ctx, sess_ctx, check_results)
+            log.warning(log_fmt + 'failed-starting: {1!r}', *log_args, status_data)
+            # TODO: instead of instantly cancelling upon exception, we could mark it as
+            #       SCHEDULED and retry within some limit using status_data.
+            async with self.db.begin() as db_conn:
+                for k in session.kernels:
+                    await recalc_agent_resource_occupancy(db_conn, k.agent_id)
+                await _rollback_predicate_mutations(db_conn, sched_ctx, session)
                 now = datetime.now(tzutc())
                 query = kernels.update().values({
                     'status': KernelStatus.CANCELLED,
@@ -648,17 +657,42 @@ class SchedulerDispatcher(aobject):
                     'status_info': "failed-to-start",
                     'status_data': status_data,
                     'terminated_at': now,
-                }).where(kernels.c.session_id == sess_ctx.session_id)
+                }).where(kernels.c.session_id == session.session_id)
                 await db_conn.execute(query)
             await self.registry.event_producer.produce_event(
                 SessionCancelledEvent(
-                    sess_ctx.session_id, sess_ctx.session_creation_id, "failed-to-start",
+                    session.session_id,
+                    session.session_creation_id,
+                    "failed-to-start",
                 )
             )
+            log.debug(log_fmt + 'cleanup-start-failure: begin', *log_args)
+            try:
+                async with self.db.begin() as db_conn:
+                    query = (
+                        sa.select([kernels.c.id, kernels.c.container_id])
+                        .where(kernels.c.session_id == session.session_id)
+                    )
+                    rows = (await db_conn.execute(query)).fetchall()
+                    cid_map = {row['id']: row['container_id'] for row in rows}
+                destroyed_kernels = [
+                    {
+                        "agent": k.agent_id,
+                        "agent_addr": k.agent_addr,
+                        "id": k.kernel_id,
+                        "container_id": cid_map[k.kernel_id],
+                    }
+                    for k in session.kernels
+                ]
+                await self.registry.destroy_session_lowlevel(
+                    session.session_id, destroyed_kernels,
+                )
+            except Exception as destroy_err:
+                log.error(log_fmt + 'cleanup-start-failure: error', *log_args, exc_info=destroy_err)
+            finally:
+                log.debug(log_fmt + 'cleanup-start-failure: done', *log_args)
         else:
             log.info(log_fmt + 'started', *log_args)
-            async with self.dbpool.acquire() as db_conn, db_conn.begin():
-                await _invoke_success_callbacks(db_conn, sched_ctx, sess_ctx, check_results)
 
 
 async def _list_pending_sessions(
@@ -666,39 +700,7 @@ async def _list_pending_sessions(
     sgroup_name: str,
 ) -> List[PendingSession]:
     query = (
-        sa.select([
-            kernels.c.id,
-            kernels.c.session_creation_id,
-            kernels.c.status,
-            kernels.c.image,
-            kernels.c.cluster_mode,
-            kernels.c.cluster_size,
-            kernels.c.cluster_role,
-            kernels.c.cluster_idx,
-            kernels.c.cluster_hostname,
-            kernels.c.registry,
-            kernels.c.session_id,
-            kernels.c.session_type,
-            kernels.c.session_name,
-            kernels.c.access_key,
-            kernels.c.domain_name,
-            kernels.c.group_id,
-            kernels.c.scaling_group,
-            kernels.c.occupied_slots,
-            kernels.c.resource_opts,
-            kernels.c.environ,
-            kernels.c.mounts,
-            kernels.c.mount_map,
-            kernels.c.bootstrap_script,
-            kernels.c.startup_command,
-            kernels.c.internal_data,
-            kernels.c.preopen_ports,
-            keypairs.c.resource_policy,
-        ])
-        .select_from(sa.join(
-            kernels, keypairs,
-            keypairs.c.access_key == kernels.c.access_key
-        ))
+        PendingSession.base_query()
         .where(
             (kernels.c.status == KernelStatus.PENDING) &
             (
@@ -706,58 +708,9 @@ async def _list_pending_sessions(
                 (kernels.c.scaling_group.is_(None))
             )
         )
-        .order_by(kernels.c.created_at)
     )
-    items: Dict[SessionId, PendingSession] = {}
-    rows = await (await db_conn.execute(query)).fetchall()
-    for row in rows:
-        if row['cluster_role'] == "main":
-            session = PendingSession(
-                kernels=[],
-                access_key=row['access_key'],
-                session_id=row['session_id'],
-                session_creation_id=row['session_creation_id'],
-                session_type=row['session_type'],
-                session_name=row['session_name'],
-                cluster_mode=row['cluster_mode'],
-                cluster_size=row['cluster_size'],
-                domain_name=row['domain_name'],
-                group_id=row['group_id'],
-                scaling_group=row['scaling_group'],
-                resource_policy=row['resource_policy'],
-                resource_opts={},
-                requested_slots=ResourceSlot(),
-                internal_data=row['internal_data'],
-                target_sgroup_names=[],
-                environ={
-                    k: v for k, v
-                    in map(lambda s: s.split('=', maxsplit=1), row['environ'])
-                },
-                mounts=row['mounts'],
-                mount_map=row['mount_map'],
-                bootstrap_script=row['bootstrap_script'],
-                startup_command=row['startup_command'],
-                preopen_ports=row['preopen_ports'],
-            )
-            items[row['session_id']] = session
-    for row in rows:
-        session = items[row['session_id']]
-        session.kernels.append(KernelInfo(
-            kernel_id=row['id'],
-            session_id=row['session_id'],
-            access_key=row['access_key'],
-            cluster_role=row['cluster_role'],
-            cluster_idx=row['cluster_idx'],
-            cluster_hostname=row['cluster_hostname'],
-            image_ref=ImageRef(row['image'], [row['registry']]),
-            bootstrap_script=row['bootstrap_script'],
-            startup_command=row['startup_command'],
-            resource_opts=row['resource_opts'],
-            requested_slots=row['occupied_slots'],
-        ))
-        session.requested_slots += row['occupied_slots']  # type: ignore
-        merge_resource(session.resource_opts, row['resource_opts'])  # type: ignore
-    return list(items.values())
+    rows = (await db_conn.execute(query)).fetchall()
+    return PendingSession.from_rows(rows)
 
 
 async def _list_existing_sessions(
@@ -765,77 +718,14 @@ async def _list_existing_sessions(
     sgroup: str,
 ) -> List[ExistingSession]:
     query = (
-        sa.select([
-            kernels.c.id,
-            kernels.c.status,
-            kernels.c.image,
-            kernels.c.cluster_mode,
-            kernels.c.cluster_size,
-            kernels.c.cluster_role,
-            kernels.c.cluster_idx,
-            kernels.c.cluster_hostname,
-            kernels.c.registry,
-            kernels.c.session_id,
-            kernels.c.session_type,
-            kernels.c.session_name,
-            kernels.c.access_key,
-            kernels.c.domain_name,
-            kernels.c.group_id,
-            kernels.c.scaling_group,
-            kernels.c.occupied_slots,
-            kernels.c.resource_opts,
-            kernels.c.environ,
-            kernels.c.mounts,
-            kernels.c.mount_map,
-            kernels.c.startup_command,
-            kernels.c.internal_data,
-            keypairs.c.resource_policy,
-        ])
-        .select_from(sa.join(
-            kernels, keypairs,
-            keypairs.c.access_key == kernels.c.access_key
-        ))
+        ExistingSession.base_query()
         .where(
             (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)) &
             (kernels.c.scaling_group == sgroup)
         )
-        .order_by(kernels.c.created_at)
     )
-    items: Dict[str, ExistingSession] = {}
-    rows = await (await db_conn.execute(query)).fetchall()
-    for row in rows:
-        if row['cluster_role'] == "main":
-            session = ExistingSession(
-                kernels=[],
-                access_key=row['access_key'],
-                session_id=row['session_id'],
-                session_type=row['session_type'],
-                session_name=row['session_name'],
-                cluster_mode=row['cluster_mode'],
-                cluster_size=row['cluster_size'],
-                domain_name=row['domain_name'],
-                group_id=row['group_id'],
-                scaling_group=row['scaling_group'],
-                occupying_slots=ResourceSlot(),
-            )
-            items[row['session_id']] = session
-    for row in rows:
-        session = items[row['session_id']]
-        session.kernels.append(KernelInfo(  # type: ignore
-            kernel_id=row['id'],
-            session_id=row['session_id'],
-            access_key=row['access_key'],
-            cluster_role=row['cluster_role'],
-            cluster_idx=row['cluster_idx'],
-            cluster_hostname=row['cluster_hostname'],
-            image_ref=ImageRef(row['image'], [row['registry']]),
-            bootstrap_script=None,
-            startup_command=None,
-            resource_opts=row['resource_opts'],
-            requested_slots=row['occupied_slots'],
-        ))
-        session.occupying_slots += row['occupied_slots']  # type: ignore
-    return list(items.values())
+    rows = (await db_conn.execute(query)).fetchall()
+    return ExistingSession.from_rows(rows)
 
 
 async def _list_agents_by_sgroup(
@@ -858,7 +748,7 @@ async def _list_agents_by_sgroup(
         )
     )
     items = []
-    async for row in db_conn.execute(query):
+    for row in (await db_conn.execute(query)):
         item = AgentContext(
             row['id'],
             row['addr'],
@@ -903,62 +793,10 @@ async def _reserve_agent(
     return AgentAllocationContext(agent_id, agent_addr, scaling_group)
 
 
-async def _unreserve_agent_slots(
-    db_conn: SAConnection,
-    session_agent_binding: Tuple[PendingSession, List[KernelAgentBinding]],
-) -> None:
-    # Un-reserve agent slots, using the db transaction of the current invocation context.
-    keyfunc = lambda item: item.agent_alloc_ctx.agent_id
-    for agent_id, kernel_agent_bindings in itertools.groupby(
-        sorted(session_agent_binding[1], key=keyfunc), key=keyfunc
-    ):
-        per_agent_requested_slots = sum(
-            (binding.kernel.requested_slots for binding in kernel_agent_bindings),
-            start=ResourceSlot(),
-        )
-        query = (
-            sa.select([agents.c.occupied_slots], for_update=True)
-            .select_from(agents)
-            .where(agents.c.id == agent_id))
-        current_occupied_slots = await db_conn.scalar(query)
-        query = (
-            sa.update(agents)
-            .values({
-                'occupied_slots': current_occupied_slots - per_agent_requested_slots
-            })
-            .where(agents.c.id == agent_id))
-        await db_conn.execute(query)
-
-
-async def _invoke_success_callbacks(
+async def _rollback_predicate_mutations(
     db_conn: SAConnection,
     sched_ctx: SchedulingContext,
-    sess_ctx: PendingSession,
-    results: List[Tuple[str, Union[Exception, PredicateResult]]],
-    *,
-    use_new_txn: bool = False,
-) -> None:
-    """
-    Give predicates chances to finalize/add DB changes.
-    """
-    callbacks: List[Awaitable[None]] = []
-    for predicate_name, result in results:
-        if isinstance(result, Exception):
-            # This won't happen but this code is required to pass static check.
-            continue
-        if result.success_cb is not None:
-            callbacks.append(result.success_cb(db_conn, sched_ctx, sess_ctx))
-    for cb in reversed(callbacks):
-        await cb
-
-
-async def _invoke_failure_callbacks(
-    db_conn: SAConnection,
-    sched_ctx: SchedulingContext,
-    sess_ctx: PendingSession,
-    results: List[Tuple[str, Union[Exception, PredicateResult]]],
-    *,
-    use_new_txn: bool = False,
+    session: PendingSession,
 ) -> None:
     """
     Rollback any changes performed by predicates.
@@ -966,12 +804,10 @@ async def _invoke_failure_callbacks(
     NOTE: We don't use the DB-level transaction rollback because we need to
     store the "ERROR" status to corresponding rows in the kernels table.
     """
-    callbacks: List[Awaitable[None]] = []
-    for predicate_name, result in results:
-        if isinstance(result, Exception):
-            # This won't happen but this code is required to pass static check.
-            continue
-        if result.failure_cb:
-            callbacks.append(result.failure_cb(db_conn, sched_ctx, sess_ctx))
-    for cb in reversed(callbacks):
-        await cb
+
+    # Instead of decrementing concurrency_used, we recalculate the access_key's usage,
+    # because asynchronous container launch failures and agent failures
+    # (especially with multi-node multi-container cluster sessions)
+    # may accumulate up multiple subtractions, resulting in
+    # negative concurrency_occupied values.
+    await recalc_concurrency_used(db_conn, session.access_key)

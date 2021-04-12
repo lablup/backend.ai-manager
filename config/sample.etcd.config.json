@@ -1,0 +1,47 @@
+{
+  "system": {
+    "timezone": "UTC"
+  },
+  "redis": {
+    "addr": "127.0.0.1:6379",
+    "password": "REDIS_PASSWORD"
+  },
+  "docker": {
+    "registry": {
+      "index.docker.io": {
+        "": "https://cr.backend.ai",
+        "type": "harbor2",
+        "project": "stable,ngc"
+      }
+    }
+  },
+  "idle": {
+    "enabled": "timeout",
+    "app-streaming-packet-timeout": "5m",
+    "checkers": {
+      "timeout": {
+        "threshold": "10m"
+      }
+    }
+  },
+  "network": {
+    "subnet": {
+      "agent": "0.0.0.0/0",
+      "container": "0.0.0.0/0"
+    }
+  },
+  "watcher": {
+    "token": "some-random-long-string"
+  },
+  "plugins": {
+    "accelerator": {
+      "cuda": {
+      }
+    },
+    "scheduler": {
+      "fifo": {
+        "num_retries_to_skip": 3,
+      }
+    }
+  }
+}

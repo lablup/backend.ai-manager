@@ -14,9 +14,11 @@ from typing import (
     Iterable,
     List,
     Mapping,
+    MutableMapping,
     Optional,
     Protocol,
     Sequence,
+    TYPE_CHECKING,
     Type,
     TypeVar,
     Union,
@@ -26,14 +28,16 @@ import uuid
 
 from aiodataloader import DataLoader
 from aiotools import apartial
-from aiopg.sa.connection import SAConnection
-from aiopg.sa.result import RowProxy
 import graphene
 from graphene.types import Scalar
 from graphql.language import ast
 from graphene.types.scalars import MIN_INT, MAX_INT
-import psycopg2 as pg
 import sqlalchemy as sa
+from sqlalchemy.engine.row import Row
+from sqlalchemy.ext.asyncio import (
+    AsyncConnection as SAConnection,
+    AsyncEngine as SAEngine,
+)
 from sqlalchemy.types import (
     SchemaType,
     TypeDecorator,
@@ -48,10 +52,16 @@ from ai.backend.common.types import (
     ResourceSlot,
     SessionId,
 )
+
 from .. import models
-from ...gateway.exceptions import (
+from ..api.exceptions import (
     GenericForbidden, InvalidAPIParameters,
 )
+if TYPE_CHECKING:
+    from graphql.execution.executors.asyncio import AsyncioExecutor
+
+    from .gql import GraphQueryContext
+    from .user import UserRole
 
 SAFE_MIN_INT = -9007199254740991
 SAFE_MAX_INT = 9007199254740991
@@ -67,6 +77,10 @@ convention = {
     "pk": "pk_%(table_name)s",
 }
 metadata = sa.MetaData(naming_convention=convention)
+
+pgsql_connect_opts = {
+    'server_settings': {'jit': 'off'}
+}
 
 
 # helper functions
@@ -89,15 +103,9 @@ class EnumType(TypeDecorator, SchemaType):
         if 'name' not in opts:
             opts['name'] = enum_cls.__name__.lower()
         self._opts = opts
-        self._enum_cls = enum_cls
         enums = (m.name for m in enum_cls)
         super().__init__(*enums, **opts)
-
-    def _set_parent(self, column):
-        self.impl._set_parent(column)
-
-    def _set_table(self, table, column):
-        self.impl._set_table(table, column)
+        self._enum_cls = enum_cls
 
     def process_bind_param(self, value, dialect):
         return value.name if value else None
@@ -107,6 +115,10 @@ class EnumType(TypeDecorator, SchemaType):
 
     def copy(self):
         return EnumType(self._enum_cls, **self._opts)
+
+    @property
+    def python_type(self):
+        return self._enum_class
 
 
 class EnumValueType(TypeDecorator, SchemaType):
@@ -124,15 +136,9 @@ class EnumValueType(TypeDecorator, SchemaType):
         if 'name' not in opts:
             opts['name'] = enum_cls.__name__.lower()
         self._opts = opts
-        self._enum_cls = enum_cls
         enums = (m.value for m in enum_cls)
         super().__init__(*enums, **opts)
-
-    def _set_parent(self, column):
-        self.impl._set_parent(column)
-
-    def _set_table(self, table, column):
-        self.impl._set_table(table, column)
+        self._enum_cls = enum_cls
 
     def process_bind_param(self, value, dialect):
         return value.value if value else None
@@ -142,6 +148,10 @@ class EnumValueType(TypeDecorator, SchemaType):
 
     def copy(self):
         return EnumValueType(self._enum_cls, **self._opts)
+
+    @property
+    def python_type(self):
+        return self._enum_class
 
 
 class ResourceSlotColumn(TypeDecorator):
@@ -254,13 +264,14 @@ class DataLoaderManager:
     for every incoming API request.
     """
 
-    def __init__(self, *common_args):
+    cache: Dict[int, DataLoader]
+
+    def __init__(self) -> None:
         self.cache = {}
-        self.common_args = common_args
         self.mod = sys.modules['ai.backend.manager.models']
 
     @staticmethod
-    def _get_key(otname, args, kwargs):
+    def _get_key(otname: str, args, kwargs) -> int:
         """
         Calculate the hash of the all arguments and keyword arguments.
         """
@@ -269,7 +280,7 @@ class DataLoaderManager:
             key += item
         return hash(key)
 
-    def get_loader(self, objtype_name, *args, **kwargs):
+    def get_loader(self, context: GraphQueryContext, objtype_name: str, *args, **kwargs) -> DataLoader:
         k = self._get_key(objtype_name, args, kwargs)
         loader = self.cache.get(k)
         if loader is None:
@@ -280,8 +291,9 @@ class DataLoaderManager:
             else:
                 batch_load_fn = objtype.batch_load
             loader = DataLoader(
-                apartial(batch_load_fn, *self.common_args, *args, **kwargs),
-                max_batch_size=16)
+                apartial(batch_load_fn, context, *args, **kwargs),
+                max_batch_size=128,
+            )
             self.cache[k] = loader
         return loader
 
@@ -340,8 +352,7 @@ class PaginatedList(graphene.Interface):
 
 
 # ref: https://github.com/python/mypy/issues/1212
-_GenericSQLBasedGQLObject = TypeVar('_GenericSQLBasedGQLObject',
-                                    bound='_SQLBasedGQLObject')
+_GenericSQLBasedGQLObject = TypeVar('_GenericSQLBasedGQLObject', bound='_SQLBasedGQLObject')
 _Key = TypeVar('_Key')
 
 
@@ -349,19 +360,19 @@ class _SQLBasedGQLObject(Protocol):
     @classmethod
     def from_row(
         cls: Type[_GenericSQLBasedGQLObject],
-        context: Mapping[str, Any],
-        row: RowProxy,
+        ctx: GraphQueryContext,
+        row: Row,
     ) -> _GenericSQLBasedGQLObject:
         ...
 
 
 async def batch_result(
-    context: Mapping[str, Any],
-    conn: SAConnection,
+    graph_ctx: GraphQueryContext,
+    db_conn: SAConnection,
     query: sa.sql.Select,
     obj_type: Type[_GenericSQLBasedGQLObject],
     key_list: Iterable[_Key],
-    key_getter: Callable[[RowProxy], _Key],
+    key_getter: Callable[[Row], _Key],
 ) -> Sequence[Optional[_GenericSQLBasedGQLObject]]:
     """
     A batched query adaptor for (key -> item) resolving patterns.
@@ -370,18 +381,18 @@ async def batch_result(
     objs_per_key = collections.OrderedDict()
     for key in key_list:
         objs_per_key[key] = None
-    async for row in conn.execute(query):
-        objs_per_key[key_getter(row)] = obj_type.from_row(context, row)
+    async for row in (await db_conn.stream(query)):
+        objs_per_key[key_getter(row)] = obj_type.from_row(graph_ctx, row)
     return [*objs_per_key.values()]
 
 
 async def batch_multiresult(
-    context: Mapping[str, Any],
-    conn: SAConnection,
+    graph_ctx: GraphQueryContext,
+    db_conn: SAConnection,
     query: sa.sql.Select,
     obj_type: Type[_GenericSQLBasedGQLObject],
     key_list: Iterable[_Key],
-    key_getter: Callable[[RowProxy], _Key],
+    key_getter: Callable[[Row], _Key],
 ) -> Sequence[Sequence[_GenericSQLBasedGQLObject]]:
     """
     A batched query adaptor for (key -> [item]) resolving patterns.
@@ -390,21 +401,22 @@ async def batch_multiresult(
     objs_per_key = collections.OrderedDict()
     for key in key_list:
         objs_per_key[key] = list()
-    async for row in conn.execute(query):
+    async for row in (await db_conn.stream(query)):
         objs_per_key[key_getter(row)].append(
-            obj_type.from_row(context, row)
+            obj_type.from_row(graph_ctx, row)
         )
     return [*objs_per_key.values()]
 
 
-def privileged_query(required_role):
+def privileged_query(required_role: UserRole):
 
     def wrap(func):
 
         @functools.wraps(func)
-        async def wrapped(executor, info, *args, **kwargs):
+        async def wrapped(executor: AsyncioExecutor, info: graphene.ResolveInfo, *args, **kwargs) -> Any:
             from .user import UserRole
-            if info.context['user']['role'] != UserRole.SUPERADMIN:
+            ctx: GraphQueryContext = info.context
+            if ctx.user['role'] != UserRole.SUPERADMIN:
                 raise GenericForbidden('superadmin privilege required')
             return await func(executor, info, *args, **kwargs)
 
@@ -413,9 +425,11 @@ def privileged_query(required_role):
     return wrap
 
 
-def scoped_query(*,
-                 autofill_user: bool = False,
-                 user_key: str = 'access_key'):
+def scoped_query(
+    *,
+    autofill_user: bool = False,
+    user_key: str = 'access_key',
+):
     """
     Prepends checks for domain/group/user access rights depending
     on the client's user and keypair information.
@@ -430,16 +444,17 @@ def scoped_query(*,
     def wrap(resolve_func):
 
         @functools.wraps(resolve_func)
-        async def wrapped(executor, info: graphene.ResolveInfo, *args, **kwargs):
+        async def wrapped(executor: AsyncioExecutor, info: graphene.ResolveInfo, *args, **kwargs) -> Any:
             from .user import UserRole
-            client_role = info.context['user']['role']
+            ctx: GraphQueryContext = info.context
+            client_role = ctx.user['role']
             if user_key == 'access_key':
-                client_user_id = info.context['access_key']
+                client_user_id = ctx.access_key
             elif user_key == 'email':
-                client_user_id = info.context['user']['email']
+                client_user_id = ctx.user['email']
             else:
-                client_user_id = info.context['user']['uuid']
-            client_domain = info.context['user']['domain_name']
+                client_user_id = ctx.user['uuid']
+            client_domain = ctx.user['domain_name']
             domain_name = kwargs.get('domain_name', None)
             group_id = kwargs.get('group_id', None)
             user_id = kwargs.get(user_key, None)
@@ -486,18 +501,18 @@ def privileged_mutation(required_role, target_func=None):
     def wrap(func):
 
         @functools.wraps(func)
-        async def wrapped(cls, root, info, *args, **kwargs):
+        async def wrapped(cls, root, info: graphene.ResolveInfo, *args, **kwargs) -> Any:
             from .user import UserRole
             from .group import groups  # , association_groups_users
-            user = info.context['user']
+            ctx: GraphQueryContext = info.context
             permitted = False
             if required_role == UserRole.SUPERADMIN:
-                if user['role'] == required_role:
+                if ctx.user['role'] == required_role:
                     permitted = True
             elif required_role == UserRole.ADMIN:
-                if user['role'] == UserRole.SUPERADMIN:
+                if ctx.user['role'] == UserRole.SUPERADMIN:
                     permitted = True
-                elif user['role'] == UserRole.USER:
+                elif ctx.user['role'] == UserRole.USER:
                     permitted = False
                 else:
                     if target_func is None:
@@ -508,16 +523,16 @@ def privileged_mutation(required_role, target_func=None):
                                           'both target_domain and target_group missing', None)
                     permit_chains = []
                     if target_domain is not None:
-                        if user['domain_name'] == target_domain:
+                        if ctx.user['domain_name'] == target_domain:
                             permit_chains.append(True)
                     if target_group is not None:
-                        async with info.context['dbpool'].acquire() as conn, conn.begin():
+                        async with ctx.db.begin() as conn:
                             # check if the group is part of the requester's domain.
                             query = (
                                 groups.select()
                                 .where(
                                     (groups.c.id == target_group) &
-                                    (groups.c.domain_name == user['domain_name'])
+                                    (groups.c.domain_name == ctx.user['domain_name'])
                                 )
                             )
                             result = await conn.execute(query)
@@ -546,42 +561,54 @@ def privileged_mutation(required_role, target_func=None):
     return wrap
 
 
-async def simple_db_mutate(result_cls, context, mutation_query):
-    async with context['dbpool'].acquire() as conn, conn.begin():
-        try:
-            result = await conn.execute(mutation_query)
-            if result.rowcount > 0:
-                return result_cls(True, 'success')
-            else:
-                return result_cls(False, 'no matching record')
-        except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-            return result_cls(False, f'integrity error: {e}')
-        except (asyncio.CancelledError, asyncio.TimeoutError):
-            raise
-        except Exception as e:
-            return result_cls(False, f'unexpected error: {e}')
+ResultType = TypeVar('ResultType', bound=graphene.ObjectType)
+ItemType = TypeVar('ItemType', bound=graphene.ObjectType)
 
 
-async def simple_db_mutate_returning_item(result_cls, context, mutation_query, *,
-                                          item_query, item_cls):
-    async with context['dbpool'].acquire() as conn, conn.begin():
-        try:
-            result = await conn.execute(mutation_query)
-            if result.rowcount > 0:
-                result = await conn.execute(item_query)
-                item = await result.first()
-                return result_cls(True, 'success', item_cls.from_row(context, item))
-            else:
-                return result_cls(False, 'no matching record', None)
-        except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-            return result_cls(False, f'integrity error: {e}', None)
-        except (asyncio.CancelledError, asyncio.TimeoutError):
-            raise
-        except Exception as e:
-            return result_cls(False, f'unexpected error: {e}', None)
+async def simple_db_mutate(
+    result_cls: Type[ResultType],
+    graph_ctx: GraphQueryContext,
+    mutation_query: sa.sql.Update | sa.sql.Insert,
+) -> ResultType:
+    try:
+        result = await graph_ctx.db_conn.execute(mutation_query)
+        if result.rowcount > 0:
+            return result_cls(True, 'success')
+        else:
+            return result_cls(False, 'no matching record')
+    except sa.exc.IntegrityError as e:
+        return result_cls(False, f'integrity error: {e}')
+    except (asyncio.CancelledError, asyncio.TimeoutError):
+        raise
+    except Exception as e:
+        return result_cls(False, f'unexpected error: {e}')
 
 
-def set_if_set(src, target, name, *, clean_func=None):
+async def simple_db_mutate_returning_item(
+    result_cls: Type[ResultType],
+    graph_ctx: GraphQueryContext,
+    mutation_query: sa.sql.Update | sa.sql.Insert,
+    *,
+    item_query: sa.sql.Select,
+    item_cls: Type[ItemType],
+) -> ResultType:
+    try:
+        result = await graph_ctx.db_conn.execute(mutation_query)
+        if result.rowcount > 0:
+            result = await graph_ctx.db_conn.execute(item_query)
+            item = result.first()
+            return result_cls(True, 'success', item_cls.from_row(graph_ctx, item))
+        else:
+            return result_cls(False, 'no matching record', None)
+    except sa.exc.IntegrityError as e:
+        return result_cls(False, f'integrity error: {e}', None)
+    except (asyncio.CancelledError, asyncio.TimeoutError):
+        raise
+    except Exception as e:
+        return result_cls(False, f'unexpected error: {e}', None)
+
+
+def set_if_set(src: object, target: MutableMapping[str, Any], name: str, *, clean_func=None) -> None:
     v = getattr(src, name)
     # NOTE: unset optional fields are passed as null.
     if v is not None:
@@ -591,42 +618,21 @@ def set_if_set(src, target, name, *, clean_func=None):
             target[name] = v
 
 
-def populate_fixture(db_connection, fixture_data, *,
-                     ignore_unique_violation: bool = False):
-
-    def insert(table, row):
-        # convert enumtype to native values
-        for col in table.columns:
-            if isinstance(col.type, EnumType):
-                row[col.name] = col.type._enum_cls[row[col.name]]
-            elif isinstance(col.type, EnumValueType):
-                row[col.name] = col.type._enum_cls(row[col.name])
-        db_connection.execute(table.insert(), [row])
-
+async def populate_fixture(
+    engine: SAEngine,
+    fixture_data: Mapping[str, Sequence[Dict[str, Any]]],
+    *,
+    ignore_unique_violation: bool = False,
+) -> None:
     for table_name, rows in fixture_data.items():
-        table = getattr(models, table_name)
-        pk_cols = table.primary_key.columns
-        for row in rows:
-            if len(pk_cols) == 0:
-                # some tables may not have primary keys.
-                # (e.g., m2m relationship)
-                try:
-                    insert(table, row)
-                except sa.exc.IntegrityError as e:
-                    if ignore_unique_violation and isinstance(e.orig, pg.errors.UniqueViolation):
-                        continue
-                    raise
-                continue
-            # compose pk match where clause
-            pk_match = functools.reduce(lambda x, y: x & y, [
-                (col == row[col.name])
-                for col in pk_cols
-            ])
-            ret = db_connection.execute(
-                sa.select(pk_cols).select_from(table).where(pk_match))
-            if ret.rowcount == 0:
-                insert(table, row)
-            else:
-                pk_tuple = tuple(row[col.name] for col in pk_cols)
-                log.info('skipped inserting {} to {} as the row already exists.',
-                         f"[{','.join(pk_tuple)}]", table_name)
+        table: sa.Table = getattr(models, table_name)
+        assert isinstance(table, sa.Table)
+        async with engine.begin() as conn:
+            for col in table.columns:
+                if isinstance(col.type, EnumType):
+                    for row in rows:
+                        row[col.name] = col.type._enum_cls[row[col.name]]
+                elif isinstance(col.type, EnumValueType):
+                    for row in rows:
+                        row[col.name] = col.type._enum_cls(row[col.name])
+            await conn.execute(sa.dialects.postgresql.insert(table, rows).on_conflict_do_nothing())
