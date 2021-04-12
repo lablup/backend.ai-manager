@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+import secrets
 from typing import (
     Any,
     Mapping,
@@ -17,12 +18,13 @@ import pytest
 
 from ai.backend.common.docker import ImageRef
 from ai.backend.common.types import (
-    AccessKey, AgentId, KernelId,
+    AccessKey, AgentId, KernelId, SessionId,
     ResourceSlot, SessionTypes,
+    ClusterMode,
 )
 
 from ai.backend.manager.defs import DEFAULT_ROLE
-from ai.backend.manager.scheduler import (
+from ai.backend.manager.scheduler.types import (
     KernelInfo,
     PendingSession,
     ExistingSession,
@@ -274,6 +276,8 @@ def example_pending_sessions():
                     kernel_id=pending_session_kernel_ids[0].kernel_ids[0],
                     session_id=pending_session_kernel_ids[0].session_id,
                     access_key='dummy-access-key',
+                    agent_id=None,
+                    agent_addr=None,
                     cluster_role=DEFAULT_ROLE,
                     cluster_idx=1,
                     cluster_hostname=f"{DEFAULT_ROLE}0",
@@ -290,6 +294,7 @@ def example_pending_sessions():
                 ),
             ],
             access_key=AccessKey('user01'),
+            status_data={},
             session_id=pending_session_kernel_ids[0].session_id,
             session_creation_id='aaa100',
             session_name='es01',
@@ -312,6 +317,8 @@ def example_pending_sessions():
                     kernel_id=pending_session_kernel_ids[1].kernel_ids[0],
                     session_id=pending_session_kernel_ids[1].session_id,
                     access_key='dummy-access-key',
+                    agent_id=None,
+                    agent_addr=None,
                     cluster_role=DEFAULT_ROLE,
                     cluster_idx=1,
                     cluster_hostname=f"{DEFAULT_ROLE}0",
@@ -328,6 +335,7 @@ def example_pending_sessions():
                 ),
             ],
             access_key=AccessKey('user02'),
+            status_data={},
             session_id=pending_session_kernel_ids[1].session_id,
             session_creation_id='aaa101',
             session_name='es01',
@@ -350,6 +358,8 @@ def example_pending_sessions():
                     kernel_id=pending_session_kernel_ids[2].kernel_ids[0],
                     session_id=pending_session_kernel_ids[2].session_id,
                     access_key='dummy-access-key',
+                    agent_id=None,
+                    agent_addr=None,
                     cluster_role=DEFAULT_ROLE,
                     cluster_idx=1,
                     cluster_hostname=f"{DEFAULT_ROLE}0",
@@ -368,6 +378,8 @@ def example_pending_sessions():
                     kernel_id=pending_session_kernel_ids[2].kernel_ids[1],
                     session_id=pending_session_kernel_ids[2].session_id,
                     access_key='dummy-access-key',
+                    agent_id=None,
+                    agent_addr=None,
                     cluster_role='sub',
                     cluster_idx=2,
                     cluster_hostname="sub1",
@@ -386,6 +398,8 @@ def example_pending_sessions():
                     kernel_id=pending_session_kernel_ids[2].kernel_ids[2],
                     session_id=pending_session_kernel_ids[2].session_id,
                     access_key='dummy-access-key',
+                    agent_id=None,
+                    agent_addr=None,
                     cluster_role='sub',
                     cluster_idx=3,
                     cluster_hostname="sub2",
@@ -402,6 +416,7 @@ def example_pending_sessions():
                 ),
             ],
             access_key=AccessKey('user03'),
+            status_data={},
             session_id=pending_session_kernel_ids[2].session_id,
             session_creation_id='aaa102',
             session_name='es01',
@@ -430,6 +445,8 @@ def example_existing_sessions():
                     kernel_id=existing_session_kernel_ids[0].kernel_ids[0],
                     session_id=existing_session_kernel_ids[0].session_id,
                     access_key='dummy-access-key',
+                    agent_id=None,
+                    agent_addr=None,
                     cluster_role=DEFAULT_ROLE,
                     cluster_idx=1,
                     cluster_hostname=f"{DEFAULT_ROLE}0",
@@ -448,6 +465,8 @@ def example_existing_sessions():
                     kernel_id=existing_session_kernel_ids[0].kernel_ids[1],
                     session_id=existing_session_kernel_ids[0].session_id,
                     access_key='dummy-access-key',
+                    agent_id=None,
+                    agent_addr=None,
                     cluster_role='sub',
                     cluster_idx=2,
                     cluster_hostname="sub1",
@@ -484,6 +503,8 @@ def example_existing_sessions():
                     kernel_id=existing_session_kernel_ids[1].kernel_ids[0],
                     session_id=existing_session_kernel_ids[1].session_id,
                     access_key='dummy-access-key',
+                    agent_id=None,
+                    agent_addr=None,
                     cluster_role=DEFAULT_ROLE,
                     cluster_idx=1,
                     cluster_hostname=f"{DEFAULT_ROLE}0",
@@ -520,6 +541,8 @@ def example_existing_sessions():
                     kernel_id=existing_session_kernel_ids[2].kernel_ids[0],
                     session_id=existing_session_kernel_ids[2].session_id,
                     access_key='dummy-access-key',
+                    agent_id=None,
+                    agent_addr=None,
                     cluster_role=DEFAULT_ROLE,
                     cluster_idx=1,
                     cluster_hostname=f"{DEFAULT_ROLE}0",
@@ -614,6 +637,136 @@ def test_fifo_scheduler_favor_cpu_for_requests_without_accelerators(
             # It should favor the CPU-only agent if the requested slots
             # do not include accelerators.
             assert agent_id == AgentId('i-cpu')
+
+
+def gen_pending_for_holb_tests(session_id: str, status_data: Mapping[str, Any]) -> PendingSession:
+    return PendingSession(
+        session_id=SessionId(session_id),  # type: ignore
+        session_name=secrets.token_hex(8),
+        access_key=AccessKey('ak1'),
+        status_data=status_data,
+        session_creation_id=secrets.token_urlsafe(8),
+        kernels=[],
+        session_type=SessionTypes.INTERACTIVE,
+        cluster_mode=ClusterMode.SINGLE_NODE,
+        cluster_size=1,
+        scaling_group='sg01',
+        requested_slots=ResourceSlot({'cpu': Decimal(1), 'mem': Decimal(1024)}),
+        target_sgroup_names=[],
+        **_common_dummy_for_pending_session,
+    )
+
+
+def test_fifo_scheduler_hol_blocking_avoidance_empty_status_data():
+    """
+    Without any status_data, it should just pick the first session.
+    """
+    scheduler = FIFOSlotScheduler({'num_retries_to_skip': 5})
+    pending_sessions = [
+        gen_pending_for_holb_tests("s0", {}),
+        gen_pending_for_holb_tests("s1", {}),
+        gen_pending_for_holb_tests("s2", {}),
+    ]
+    picked_session_id = scheduler.pick_session(
+        example_total_capacity,
+        pending_sessions,
+        [])
+    assert picked_session_id == 's0'
+
+
+def test_fifo_scheduler_hol_blocking_avoidance_config():
+    """
+    If the upfront sessions have enough number of retries,
+    it should skip them.
+    """
+    scheduler = FIFOSlotScheduler({'num_retries_to_skip': 0})
+    pending_sessions = [
+        gen_pending_for_holb_tests("s0", {'scheduler': {'retries': 5}}),
+        gen_pending_for_holb_tests("s1", {}),
+        gen_pending_for_holb_tests("s2", {}),
+    ]
+    picked_session_id = scheduler.pick_session(
+        example_total_capacity,
+        pending_sessions,
+        [])
+    assert picked_session_id == 's0'
+
+    scheduler = FIFOSlotScheduler({'num_retries_to_skip': 5})
+    pending_sessions = [
+        gen_pending_for_holb_tests("s0", {'scheduler': {'retries': 5}}),
+        gen_pending_for_holb_tests("s1", {'scheduler': {'retries': 4}}),
+        gen_pending_for_holb_tests("s2", {'scheduler': {'retries': 3}}),
+    ]
+    picked_session_id = scheduler.pick_session(
+        example_total_capacity,
+        pending_sessions,
+        [])
+    assert picked_session_id == 's1'
+
+
+def test_fifo_scheduler_hol_blocking_avoidance_skips():
+    """
+    If the upfront sessions have enough number of retries,
+    it should skip them.
+    """
+    scheduler = FIFOSlotScheduler({'num_retries_to_skip': 5})
+    pending_sessions = [
+        gen_pending_for_holb_tests("s0", {'scheduler': {'retries': 5}}),
+        gen_pending_for_holb_tests("s1", {}),
+        gen_pending_for_holb_tests("s2", {}),
+    ]
+    picked_session_id = scheduler.pick_session(
+        example_total_capacity,
+        pending_sessions,
+        [])
+    assert picked_session_id == 's1'
+
+    pending_sessions = [
+        gen_pending_for_holb_tests("s0", {'scheduler': {'retries': 5}}),
+        gen_pending_for_holb_tests("s1", {'scheduler': {'retries': 10}}),
+        gen_pending_for_holb_tests("s2", {}),
+    ]
+    picked_session_id = scheduler.pick_session(
+        example_total_capacity,
+        pending_sessions,
+        [])
+    assert picked_session_id == 's2'
+
+
+def test_fifo_scheduler_hol_blocking_avoidance_all_skipped():
+    """
+    If all sessions are skipped due to excessive number of retries,
+    then we go back to the normal FIFO by choosing the first of them.
+    """
+    scheduler = FIFOSlotScheduler({'num_retries_to_skip': 5})
+    pending_sessions = [
+        gen_pending_for_holb_tests("s0", {'scheduler': {'retries': 5}}),
+        gen_pending_for_holb_tests("s1", {'scheduler': {'retries': 5}}),
+        gen_pending_for_holb_tests("s2", {'scheduler': {'retries': 5}}),
+    ]
+    picked_session_id = scheduler.pick_session(
+        example_total_capacity,
+        pending_sessions,
+        [])
+    assert picked_session_id == 's0'
+
+
+def test_fifo_scheduler_hol_blocking_avoidance_no_skip():
+    """
+    If non-first sessions have to be skipped, the scheduler should still
+    choose the first session.
+    """
+    scheduler = FIFOSlotScheduler({'num_retries_to_skip': 5})
+    pending_sessions = [
+        gen_pending_for_holb_tests("s0", {}),
+        gen_pending_for_holb_tests("s1", {'scheduler': {'retries': 10}}),
+        gen_pending_for_holb_tests("s2", {}),
+    ]
+    picked_session_id = scheduler.pick_session(
+        example_total_capacity,
+        pending_sessions,
+        [])
+    assert picked_session_id == 's0'
 
 
 def test_lifo_scheduler_favor_cpu_for_requests_without_accelerators(

@@ -1,1 +1,0 @@
-Add `cloneable` parameter in list_folders, update_vfolder_options and clone function in class vfolder

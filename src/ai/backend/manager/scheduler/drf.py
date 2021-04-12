@@ -11,13 +11,15 @@ from typing import (
     Set,
 )
 
+import trafaret as t
+
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
     AccessKey, AgentId,
     ResourceSlot,
     SessionId,
 )
-from . import (
+from .types import (
     AbstractScheduler,
     AgentContext,
     PendingSession,
@@ -30,6 +32,7 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.scheduler'))
 
 class DRFScheduler(AbstractScheduler):
 
+    config_iv = t.Dict({}).allow_extra('*')
     per_user_dominant_share: Dict[AccessKey, Decimal]
     total_capacity: ResourceSlot
 

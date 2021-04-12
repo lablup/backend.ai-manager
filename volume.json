@@ -4,7 +4,7 @@
     "local": {
       "client_api": "http://127.0.0.1:6021",
       "manager_api": "https://127.0.0.1:6022",
-      "secret": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "secret": "0000000000000000000000000000000000000000000",
       "ssl_verify": false
     }
   }

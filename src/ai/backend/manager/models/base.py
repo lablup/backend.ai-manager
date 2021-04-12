@@ -103,15 +103,9 @@ class EnumType(TypeDecorator, SchemaType):
         if 'name' not in opts:
             opts['name'] = enum_cls.__name__.lower()
         self._opts = opts
-        self._enum_cls = enum_cls
         enums = (m.name for m in enum_cls)
         super().__init__(*enums, **opts)
-
-    def _set_parent(self, column):
-        self.impl._set_parent(column)
-
-    def _set_table(self, table, column):
-        self.impl._set_table(table, column)
+        self._enum_cls = enum_cls
 
     def process_bind_param(self, value, dialect):
         return value.name if value else None
@@ -121,6 +115,10 @@ class EnumType(TypeDecorator, SchemaType):
 
     def copy(self):
         return EnumType(self._enum_cls, **self._opts)
+
+    @property
+    def python_type(self):
+        return self._enum_class
 
 
 class EnumValueType(TypeDecorator, SchemaType):
@@ -138,15 +136,9 @@ class EnumValueType(TypeDecorator, SchemaType):
         if 'name' not in opts:
             opts['name'] = enum_cls.__name__.lower()
         self._opts = opts
-        self._enum_cls = enum_cls
         enums = (m.value for m in enum_cls)
         super().__init__(*enums, **opts)
-
-    def _set_parent(self, column):
-        self.impl._set_parent(column)
-
-    def _set_table(self, table, column):
-        self.impl._set_table(table, column)
+        self._enum_cls = enum_cls
 
     def process_bind_param(self, value, dialect):
         return value.value if value else None
@@ -156,6 +148,10 @@ class EnumValueType(TypeDecorator, SchemaType):
 
     def copy(self):
         return EnumValueType(self._enum_cls, **self._opts)
+
+    @property
+    def python_type(self):
+        return self._enum_class
 
 
 class ResourceSlotColumn(TypeDecorator):

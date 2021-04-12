@@ -82,9 +82,10 @@ __all__: Sequence[str] = (
 
 
 class KernelStatus(enum.Enum):
-    # values are only meaningful inside the gateway
+    # values are only meaningful inside the manager
     PENDING = 0
     # ---
+    SCHEDULED = 5
     PREPARING = 10
     # ---
     BUILDING = 20
@@ -225,7 +226,7 @@ kernels = sa.Table(
     sa.Index('ix_kernels_updated_order',
              sa.func.greatest('created_at', 'terminated_at', 'status_changed'),
              unique=False),
-    sa.Index('ix_kernels_unique_sess_token', 'access_key', 'session_id',
+    sa.Index('ix_kernels_unique_sess_token', 'access_key', 'session_name',
              unique=True,
              postgresql_where=sa.text(
                  "status NOT IN ('TERMINATED', 'CANCELLED') and "

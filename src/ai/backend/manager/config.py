@@ -56,7 +56,7 @@ Alias keys are also URL-quoted in the same way.
          + {registry-name}: {registry-URL}  # {registry-name} is url-quoted
            - username: {username}
            - password: {password}
-           - type: "docker" | "harbor"
+           - type: "docker" | "harbor" | "harbor2"
            - project: "project1-name,porject2-name,..."  # harbor only
            - ssl-verify: "yes" | "no"
          ...
@@ -111,13 +111,13 @@ Alias keys are also URL-quoted in the same way.
      - default_host: "{default-proxy}:{default-volume}"
      + proxies:   # each proxy may provide multiple volumes
        + "local"  # proxy name
-         - client_api: "localhost:6021"
-         - manager_api: "localhost:6022"
+         - client_api: "http://localhost:6021"
+         - manager_api: "http://localhost:6022"
          - secret: "xxxxxx..."       # for manager API
          - ssl_verify: true | false  # for manager API
        + "mynas1"
-         - client_api: "proxy1.example.com:6021"
-         - manager_api: "proxy1.example.com:6022"
+         - client_api: "https://proxy1.example.com:6021"
+         - manager_api: "https://proxy1.example.com:6022"
          - secret: "xxxxxx..."       # for manager API
          - ssl_verify: true | false  # for manager API
        ...

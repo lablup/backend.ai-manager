@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import atexit
 import logging
-import os
 from setproctitle import setproctitle
 import subprocess
 import sys
@@ -11,10 +9,11 @@ from pathlib import Path
 import click
 
 from ai.backend.common.cli import LazyGroup
-from ai.backend.common.logging import Logger, BraceStyleAdapter
+from ai.backend.common.logging import BraceStyleAdapter
 
 from ..config import load as load_config
-from .context import CLIContext
+from ..models.keypair import generate_keypair as _gen_keypair
+from .context import CLIContext, init_logger
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.cli'))
 
@@ -28,25 +27,10 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.cli'))
 def main(ctx, config_path, debug):
     local_config = load_config(config_path)
     setproctitle(f"backend.ai: manager.cli {local_config['etcd']['namespace']}")
-    if 'file' in local_config['logging']['drivers']:
-        local_config['logging']['drivers'].remove('file')
-    # log_endpoint = f'tcp://127.0.0.1:{find_free_port()}'
-    log_sockpath = Path(f'/tmp/backend.ai/ipc/manager-cli-{os.getpid()}.sock')
-    log_sockpath.parent.mkdir(parents=True, exist_ok=True)
-    log_endpoint = f'ipc://{log_sockpath}'
-    logger = Logger(local_config['logging'], is_master=True, log_endpoint=log_endpoint)
     ctx.obj = CLIContext(
-        logger=logger,
+        logger=init_logger(local_config),
         local_config=local_config,
     )
-
-    def _clean_logger():
-        try:
-            os.unlink(log_sockpath)
-        except FileNotFoundError:
-            pass
-
-    atexit.register(_clean_logger)
 
 
 @main.command(context_settings=dict(
@@ -111,6 +95,18 @@ def dbshell(cli_ctx: CLIContext, container_name, psql_help, psql_args):
         *psql_args,
     ]
     subprocess.call(cmd)
+
+
+@main.command()
+@click.pass_obj
+def generate_keypair(cli_ctx: CLIContext):
+    """
+    Generate a random keypair and print it out to stdout.
+    """
+    log.info('generating keypair...')
+    ak, sk = _gen_keypair()
+    print(f'Access Key: {ak} ({len(ak)} bytes)')
+    print(f'Secret Key: {sk} ({len(sk)} bytes)')
 
 
 @main.group(cls=LazyGroup, import_name='ai.backend.manager.cli.dbschema:cli')
