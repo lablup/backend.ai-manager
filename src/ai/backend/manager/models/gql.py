@@ -31,12 +31,8 @@ if TYPE_CHECKING:
 
 from .base import DataLoaderManager, privileged_query, scoped_query
 from .agent import (
-<<<<<<< HEAD
-    Agent, AgentList, ModifyAgent
-=======
     Agent,
     AgentList,
->>>>>>> main
 )
 from .domain import (
     Domain,

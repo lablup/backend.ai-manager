@@ -17,10 +17,6 @@ from sqlalchemy.engine.row import Row
 from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common import msgpack, redis
-<<<<<<< HEAD
-from ai.backend.common.types import AgentId, BinarySize, ResourceSlot
-from .user import UserRole
-=======
 from ai.backend.common.types import (
     AgentId,
     BinarySize,
@@ -28,7 +24,6 @@ from ai.backend.common.types import (
     ResourceSlot,
 )
 
->>>>>>> main
 from .kernel import AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES, kernels
 from .base import (
     metadata,
