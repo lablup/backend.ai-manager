@@ -165,7 +165,7 @@ class SchedulerDispatcher(aobject):
             "prepare_tick",
             self.event_producer,
             lambda: DoPrepareEvent(),
-            interval=1.0,
+            interval=10.0,
         )
         await self.schedule_timer.join()
         await self.prepare_timer.join()
@@ -264,6 +264,7 @@ class SchedulerDispatcher(aobject):
         log.debug('running scheduler (sgroup:{}, pending:{}, existing:{})',
                   sgroup_name, len(pending_sessions), len(existing_sessions))
         zero = ResourceSlot()
+        num_scheduled = 0
         while len(pending_sessions) > 0:
             async with agent_db_conn.begin():
                 candidate_agents = await _list_agents_by_sgroup(agent_db_conn, sgroup_name)
@@ -421,6 +422,9 @@ class SchedulerDispatcher(aobject):
                 raise RuntimeError(
                     f"should not reach here; unknown cluster_mode: {sess_ctx.cluster_mode}"
                 )
+            num_scheduled += 1
+        if num_scheduled > 0:
+            await self.event_producer.produce_event(DoPrepareEvent())
 
     async def _schedule_single_node_session(
         self,
