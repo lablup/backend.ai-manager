@@ -166,6 +166,7 @@ class SchedulerDispatcher(aobject):
             self.event_producer,
             lambda: DoPrepareEvent(),
             interval=10.0,
+            initial_delay=5.0,
         )
         await self.schedule_timer.join()
         await self.prepare_timer.join()
