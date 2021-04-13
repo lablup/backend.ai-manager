@@ -213,7 +213,6 @@ async def query_accessible_vfolders(
                 vfolders.c.id,
                 vfolders.c.host,
                 vfolders.c.usage_mode,
-                vfolders.c.permission,
                 vfolders.c.created_at,
                 vfolders.c.last_used,
                 vfolders.c.max_files,
@@ -223,6 +222,7 @@ async def query_accessible_vfolders(
                 vfolders.c.group,
                 vfolders.c.creator,
                 vfolders.c.unmanaged_path,
+                vfolders.c.permission,
                 vfolders.c.cloneable,
                 users.c.email,
             ])

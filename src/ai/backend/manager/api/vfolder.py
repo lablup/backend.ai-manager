@@ -1287,6 +1287,115 @@ async def delete_invitation(request: web.Request, params: Any) -> web.Response:
     return web.json_response({})
 
 
+@atomic
+@admin_required
+@server_status_required(ALL_ALLOWED)
+@check_api_params(
+    t.Dict({
+        t.Key('id'): t.String,
+        t.Key('permission', default='rw'): VFolderPermissionValidator,
+        t.Key('emails'): t.List(t.String),
+    })
+)
+async def share(request: web.Request, params: Any) -> web.Response:
+    """
+    Share a folder to users with overriding permission. This will create
+    vfolder_permission(s) relation directly without creating invitation(s).
+    """
+    root_ctx: RootContext = request.app['_root.context']
+    access_key = request['keypair']['access_key']
+    user_uuid = request['user']['uuid']
+    log.info('VFOLDER.SHARE (ak:{}, vf:{}, perm:{}, users:{})',
+             access_key, params['id'], params['permission'], ','.join(params['emails']))
+    async with root_ctx.db.begin() as conn:
+        # Ensure the target folder exists.
+        query = (
+            sa.select([vfolders.c.ownership_type])
+            .select_from(vfolders)
+            .where(vfolders.c.id == params['id'])
+        )
+        ownership_type = await conn.scalar(query)
+        if ownership_type is None:
+            raise VFolderNotFound()
+
+        # Convert users' emails to uuids.
+        query = (
+            sa.select([users.c.uuid])
+            .select_from(users)
+            .where(users.c.email.in_(params['emails']))
+            .where(users.c.email != request['user']['email'])
+        )
+        result = await conn.execute(query)
+        users_to_share = result.fetchall()
+        if len(users_to_shares) < 1:
+            raise GenericNotFound('No users to share.')
+
+        # Do not share to users who have already been shared the folder.
+        query = (
+            sa.select([vfolder_permissions.c.user])
+            .select_from(vfolder_permissions)
+            .where(
+                vfolder_permissions.c.user.in_(users_to_share) &
+                vfolder_permissions.c.vfolder == params['id']
+           )
+        )
+        result = await conn.execute(query)
+        users_not_to_share = result.fetchall()
+        users_to_share = list(set(users_to_share) - set(users_not_to_share))
+
+        # Create vfolder_permission(s).
+        for _user in users_to_share:
+            query = (sa.insert(vfolder_permissions, {
+                'permission': params['permission'],
+                'vfolder': params['id'],
+                'user': _user,
+            }))
+            await conn.execute(query)
+        return web.json_response({}, status=201)
+
+
+@atomic
+@admin_required
+@server_status_required(ALL_ALLOWED)
+@check_api_params(
+    t.Dict({
+        t.Key('id'): t.String,
+        t.Key('emails'): t.List(t.String),
+    })
+)
+async def unshare(request: web.Request, params: Any) -> web.Response:
+    """
+    Unshare a folder from users.
+    """
+    root_ctx: RootContext = request.app['_root.context']
+    access_key = request['keypair']['access_key']
+    user_uuid = request['user']['uuid']
+    log.info('VFOLDER.UNSHARE (ak:{}, vf:{}, users:{})',
+             access_key, params['id'], ','.join(invitee_emails))
+    async with root_ctx.db.begin() as conn:
+        # Convert users' emails to uuids.
+        query = (
+            sa.select([users.c.uuid])
+            .select_from(users)
+            .where(users.c.email.in_(params['emails']))
+        )
+        result = await conn.execute(query)
+        users_to_unshare = result.fetchall()
+        if len(users_to_unshares) < 1:
+            raise GenericNotFound('No users to unshare.')
+
+        # Delete vfolder_permission(s).
+        query = (
+            sa.delete(vfolder_permissions)
+            .where(
+                (vfolder_permissions.c.vfolder == params['id']) &
+                (vfolder_permissions.c.user.in_(users_to_unshare))
+            )
+        )
+        await conn.execute(query)
+        return web.json_response({}, status=200)
+
+
 @auth_required
 @server_status_required(ALL_ALLOWED)
 async def delete(request: web.Request) -> web.Response:
@@ -2032,6 +2141,8 @@ def create_app(default_cors_options):
     cors.add(add_route('GET',    r'/invitations/list', invitations))
     cors.add(add_route('POST',   r'/invitations/accept', accept_invitation))
     cors.add(add_route('DELETE', r'/invitations/delete', delete_invitation))
+    cors.add(add_route('POST',   r'/_/share', share))
+    cors.add(add_route('DELETE', r'/_/unshare', unshare))
     cors.add(add_route('GET',    r'/_/shared', list_shared_vfolders))
     cors.add(add_route('POST',   r'/_/shared', update_shared_vfolder))
     cors.add(add_route('GET',    r'/_/fstab', get_fstab_contents))
