@@ -16,6 +16,19 @@ Changes
 
 .. towncrier release notes start
 
+20.09.16 (2021-04-13)
+---------------------
+
+### Features
+* Rewrite the session scheduler to avoid HoL blocking ([#415](https://github.com/lablup/backend.ai-manager/issues/415))
+  - Skip over sessions in the queue if they fail to satisfy predicates for multiple retries -> 1st case of HoL blocking: a rogue pending session blocks everything in the same scaling group
+  - You may configure the maximum number of retries in the `config/plugins/scheduler/fifo/num_retries_to_skip` etcd key.
+  - Split the scheduler into two async loops for scheduling decision and session spawning by inserting "SCHEDULED" status between "PENDING" and "PREPARING" statuses -> 2nd case of HoL blocking: failure isolation with each task
+
+### Fixes
+* Adjust the firing rate of `DoPrepareEvent` to follow and alternate with the scheduler execution ([#418](https://github.com/lablup/backend.ai-manager/issues/418))
+
+
 20.09.15 (2021-04-02)
 ---------------------
 
