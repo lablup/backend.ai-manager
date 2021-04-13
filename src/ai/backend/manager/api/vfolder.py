@@ -50,7 +50,7 @@ from ..models import (
     get_allowed_vfolder_hosts_by_user,
     verify_vfolder_name,
 )
-from .auth import auth_required, superadmin_required
+from .auth import admin_required, auth_required, superadmin_required
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists, VFolderOperationFailed,
     GenericForbidden, GenericNotFound, InvalidAPIParameters, ServerMisconfiguredError,
@@ -1304,7 +1304,6 @@ async def share(request: web.Request, params: Any) -> web.Response:
     """
     root_ctx: RootContext = request.app['_root.context']
     access_key = request['keypair']['access_key']
-    user_uuid = request['user']['uuid']
     log.info('VFOLDER.SHARE (ak:{}, vf:{}, perm:{}, users:{})',
              access_key, params['id'], params['permission'], ','.join(params['emails']))
     async with root_ctx.db.begin() as conn:
@@ -1327,7 +1326,7 @@ async def share(request: web.Request, params: Any) -> web.Response:
         )
         result = await conn.execute(query)
         users_to_share = result.fetchall()
-        if len(users_to_shares) < 1:
+        if len(users_to_share) < 1:
             raise GenericNotFound('No users to share.')
 
         # Do not share to users who have already been shared the folder.
@@ -1337,7 +1336,7 @@ async def share(request: web.Request, params: Any) -> web.Response:
             .where(
                 vfolder_permissions.c.user.in_(users_to_share) &
                 vfolder_permissions.c.vfolder == params['id']
-           )
+            )
         )
         result = await conn.execute(query)
         users_not_to_share = result.fetchall()
@@ -1369,9 +1368,8 @@ async def unshare(request: web.Request, params: Any) -> web.Response:
     """
     root_ctx: RootContext = request.app['_root.context']
     access_key = request['keypair']['access_key']
-    user_uuid = request['user']['uuid']
     log.info('VFOLDER.UNSHARE (ak:{}, vf:{}, users:{})',
-             access_key, params['id'], ','.join(invitee_emails))
+             access_key, params['id'], ','.join(emails))
     async with root_ctx.db.begin() as conn:
         # Convert users' emails to uuids.
         query = (
@@ -1381,7 +1379,7 @@ async def unshare(request: web.Request, params: Any) -> web.Response:
         )
         result = await conn.execute(query)
         users_to_unshare = result.fetchall()
-        if len(users_to_unshares) < 1:
+        if len(users_to_unshare) < 1:
             raise GenericNotFound('No users to unshare.')
 
         # Delete vfolder_permission(s).
