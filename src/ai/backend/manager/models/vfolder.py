@@ -203,59 +203,8 @@ async def query_accessible_vfolders(
     if allowed_vfolder_types is None:
         allowed_vfolder_types = ['user']  # legacy default
     entries = []
-    # User vfolders.
     if 'user' in allowed_vfolder_types:
-        # Scan my owned vfolders.
-        j = (vfolders.join(users, vfolders.c.user == users.c.uuid))
-        query = (
-            sa.select([
-                vfolders.c.name,
-                vfolders.c.id,
-                vfolders.c.host,
-                vfolders.c.usage_mode,
-                vfolders.c.created_at,
-                vfolders.c.last_used,
-                vfolders.c.max_files,
-                vfolders.c.max_size,
-                vfolders.c.ownership_type,
-                vfolders.c.user,
-                vfolders.c.group,
-                vfolders.c.creator,
-                vfolders.c.unmanaged_path,
-                vfolders.c.permission,
-                vfolders.c.cloneable,
-                users.c.email,
-            ])
-            .select_from(j)
-            .where(vfolders.c.user == user_uuid)
-        )
-        if extra_vf_conds is not None:
-            query = query.where(extra_vf_conds)
-        if extra_vf_user_conds is not None:
-            query = query.where(extra_vf_user_conds)
-        result = await conn.execute(query)
-        for row in result:
-            entries.append({
-                'name': row.name,
-                'id': row.id,
-                'host': row.host,
-                'usage_mode': row.usage_mode,
-                'created_at': row.created_at,
-                'last_used': row.last_used,
-                'max_size': row.max_size,
-                'max_files': row.max_files,
-                'ownership_type': row.ownership_type,
-                'user': str(row.user) if row.user else None,
-                'group': str(row.group) if row.group else None,
-                'creator': row.creator,
-                'user_email': row.email,
-                'group_name': None,
-                'is_owner': True,
-                'permission': row.permission,
-                'unmanaged_path': row.unmanaged_path,
-                'cloneable': row.cloneable,
-            })
-        # Scan vfolders shared with me.
+        # User vfolders.
         j = (
             vfolders.join(
                 vfolder_permissions,
@@ -283,13 +232,16 @@ async def query_accessible_vfolders(
                 vfolders.c.group,
                 vfolders.c.creator,
                 vfolders.c.unmanaged_path,
-                # vfolders.c.permission,
-                vfolder_permissions.c.permission,  # override vfolder perm
+                vfolders.c.permission,
+                vfolder_permissions.c.permission,  # override vfolder perm if exists
                 vfolders.c.cloneable,
                 users.c.email,
-            ])
+            ], use_labels=True)
             .select_from(j)
-            .where(vfolder_permissions.c.user == user_uuid)
+            .where(
+                (vfolders.c.user == user_uuid) |
+                (vfolder_permissions.c.user == user_uuid)
+            )
         )
         if extra_vf_conds is not None:
             query = query.where(extra_vf_conds)
@@ -298,24 +250,26 @@ async def query_accessible_vfolders(
         result = await conn.execute(query)
         for row in result:
             entries.append({
-                'name': row.name,
-                'id': row.id,
-                'host': row.host,
-                'usage_mode': row.usage_mode,
-                'created_at': row.created_at,
-                'last_used': row.last_used,
-                'max_size': row.max_size,
-                'max_files': row.max_files,
-                'ownership_type': row.ownership_type,
-                'user': str(row.user) if row.user else None,
-                'group': str(row.group) if row.group else None,
-                'creator': row.creator,
-                'user_email': row.email,
+                'name': row.vfolders_name,
+                'id': row.vfolders_id,
+                'host': row.vfolders_host,
+                'usage_mode': row.vfolders_usage_mode,
+                'created_at': row.vfolders_created_at,
+                'last_used': row.vfolders_last_used,
+                'max_size': row.vfolders_max_size,
+                'max_files': row.vfolders_max_files,
+                'ownership_type': row.vfolders_ownership_type,
+                'user': str(row.vfolders_user) if row.vfolders_user else None,
+                'group': str(row.vfolders_group) if row.vfolders_group else None,
+                'creator': row.vfolders_creator,
+                'user_email': row.users_email,
                 'group_name': None,
                 'is_owner': False,
-                'permission': row.permission,  # not vfolders.c.permission!
-                'unmanaged_path': row.unmanaged_path,
-                'cloneable': row.cloneable,
+                'permission': row.vfolder_permissions_permission \
+                              if row.vfolder_permissions_permission \
+                              else row.vfolders_permission,
+                'unmanaged_path': row.vfolders_unmanaged_path,
+                'cloneable': row.vfolders_cloneable,
             })
 
     if 'group' in allowed_vfolder_types:
