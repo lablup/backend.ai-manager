@@ -50,7 +50,7 @@ from ..models import (
     get_allowed_vfolder_hosts_by_user,
     verify_vfolder_name,
 )
-from .auth import admin_required, auth_required, superadmin_required
+from .auth import auth_required, superadmin_required
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists, VFolderOperationFailed,
     GenericForbidden, GenericNotFound, InvalidAPIParameters, ServerMisconfiguredError,
