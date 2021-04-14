@@ -397,17 +397,53 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
         raise InvalidAuthParameters('Date/time sync error')
 
     # PRE_AUTH_MIDDLEWARE allows authentication via 3rd-party request headers/cookies.
-    # Any responsible hook must return a valid set of auth parameters.
+    # Any responsible hook must return a valid keypair.
     hook_result = await root_ctx.hook_plugin_ctx.dispatch(
         'PRE_AUTH_MIDDLEWARE',
         (request, ),
         return_when=FIRST_COMPLETED,
     )
+    row = None
     if hook_result.status != PASSED:
         raise RejectedByHook.from_hook_result(hook_result)
     elif hook_result.result:
-        # Passed one of the hook
-        auth_result = hook_result.result
+        # Passed one of the hook.
+        # The "None" access_key means that the hook has allowed anonymous access.
+        access_key = hook_result.result
+        if access_key is not None:
+            async with root_ctx.db.begin() as conn:
+                j = (
+                    keypairs
+                    .join(users, keypairs.c.user == users.c.uuid)
+                    .join(
+                        keypair_resource_policies,
+                        keypairs.c.resource_policy == keypair_resource_policies.c.name,
+                    )
+                )
+                query = (
+                    sa.select([users, keypairs, keypair_resource_policies], use_labels=True)
+                    .select_from(j)
+                    .where(
+                        (keypairs.c.access_key == access_key) &
+                        (keypairs.c.is_active.is_(True))
+                    )
+                )
+                result = await conn.execute(query)
+                row = result.first()
+                if row is None:
+                    raise AuthorizationFailed('Access key not found')
+                query = (
+                    keypairs.update()
+                    .values(
+                        last_used=datetime.now(tzutc()),
+                        num_queries=keypairs.c.num_queries + 1,
+                    )
+                    .where(keypairs.c.access_key == access_key)
+                )
+                await conn.execute(query)
+        else:
+            # unsigned requests may be still accepted for public APIs
+            pass
     else:
         params = _extract_auth_params(request)
         if params:
@@ -445,29 +481,33 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
                         .where(keypairs.c.access_key == access_key)
                     )
                     await conn.execute(query)
-            auth_result = {
-                'is_authorized': True,
-                'keypair': {
-                    col.name: row[f'keypairs_{col.name}']
-                    for col in keypairs.c
-                    if col.name != 'secret_key'
-                },
-                'user': {
-                    col.name: row[f'users_{col.name}']
-                    for col in users.c
-                    if col.name not in ('password', 'description', 'created_at')
-                },
-                'is_admin': row['keypairs_is_admin'],
-                'is_superadmin': request['user']['role'] == 'superadmin',
-            }
-            auth_result['keypair']['resource_policy'] = {
-                col.name: row[f'keypair_resource_policies_{col.name}']
-                for col in keypair_resource_policies.c
-            }
-            auth_result['user']['id'] = row['keypairs_user_id']  # legacy
+        else:
+            # unsigned requests may be still accepted for public APIs
+            pass
 
-    # Populate the result to the per-request state dict.
-    request.update(auth_result)
+    if row is not None:
+        auth_result = {
+            'is_authorized': True,
+            'keypair': {
+                col.name: row[f'keypairs_{col.name}']
+                for col in keypairs.c
+                if col.name != 'secret_key'
+            },
+            'user': {
+                col.name: row[f'users_{col.name}']
+                for col in users.c
+                if col.name not in ('password', 'description', 'created_at')
+            },
+            'is_admin': row['keypairs_is_admin'],
+        }
+        auth_result['keypair']['resource_policy'] = {
+            col.name: row[f'keypair_resource_policies_{col.name}']
+            for col in keypair_resource_policies.c
+        }
+        auth_result['user']['id'] = row['keypairs_user_id']  # legacy
+        auth_result['is_superadmin'] = (auth_result['user']['role'] == 'superadmin')
+        # Populate the result to the per-request state dict.
+        request.update(auth_result)
 
     # No matter if authenticated or not, pass-through to the handler.
     # (if it's required, auth_required decorator will handle the situation.)
