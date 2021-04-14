@@ -445,6 +445,8 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
             # unsigned requests may be still accepted for public APIs
             pass
     else:
+        # There were no hooks configured.
+        # Perform our own authentication.
         params = _extract_auth_params(request)
         if params:
             sign_method, access_key, signature = params
