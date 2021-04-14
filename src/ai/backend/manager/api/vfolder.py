@@ -1369,7 +1369,7 @@ async def unshare(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.UNSHARE (ak:{}, vf:{}, users:{})',
-             access_key, params['id'], ','.join(emails))
+             access_key, params['id'], ','.join(params['emails']))
     async with root_ctx.db.begin() as conn:
         # Convert users' emails to uuids.
         query = (
