@@ -14,6 +14,7 @@ import uuid
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
+from sqlalchemy import func
 from sqlalchemy.engine.row import Row
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 import trafaret as t
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
 
 __all__: Sequence[str] = (
     'vfolders',
+    'vfolder_attachment',
     'vfolder_invitations',
     'vfolder_permissions',
     'VirtualFolder',
@@ -39,6 +41,7 @@ __all__: Sequence[str] = (
     'VFolderPermission',
     'VFolderPermissionValidator',
     'query_accessible_vfolders',
+    'query_mounted_sessions',
     'get_allowed_vfolder_hosts_by_group',
     'get_allowed_vfolder_hosts_by_user',
     'verify_vfolder_name'
@@ -186,6 +189,37 @@ def verify_vfolder_name(folder: str) -> bool:
             return False
     return True
 
+
+async def query_mounted_sessions(
+    conn: SAConnection,
+    vfid: uuid.UUID,
+) -> Sequence[Mapping[str, Any]]:
+    from ai.backend.manager.models import kernels, users
+    entries = []
+    j = (vfolder_attachment
+        .join(kernels, kernels.c.id == vfolder_attachment.c.kernel)
+        .join(users, users.c.uuid == kernels.c.user_uuid)
+    )
+
+    query = (
+        sa.select([
+            vfolder_attachment.c.kernel,
+            kernels.c.session_name,
+            kernels.c.user_uuid,
+            users.c.email
+            ])
+            .select_from(j)
+            .where(vfolder_attachment.c.vfolder == vfid)
+    )
+    result = await conn.execute(query)
+    for row in result:
+        entries.append({
+            'kernel_id': str(row.kernel),
+            'session_name': row.session_name,
+            'user_uuid': str(row.user_uuid),
+            'user_email': row.email
+        })
+    return entries
 
 async def query_accessible_vfolders(
     conn: SAConnection,

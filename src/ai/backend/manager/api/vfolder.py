@@ -45,6 +45,7 @@ from ..models import (
     VFolderUsageMode,
     UserRole,
     query_accessible_vfolders,
+    query_mounted_sessions,
     query_owned_dotfiles,
     get_allowed_vfolder_hosts_by_group,
     get_allowed_vfolder_hosts_by_user,
@@ -1321,24 +1322,36 @@ async def delete(request: web.Request) -> web.Response:
             raise InvalidAPIParameters('No such vfolder.')
         folder_host = entry['host']
         folder_id = entry['id']
-        query = (sa.delete(vfolders).where(vfolders.c.id == folder_id))
-        await conn.execute(query)
-    # fs-level deletion may fail or take longer time
-    # but let's complete the db transaction to reflect that it's deleted.
-    proxy_name, volume_name = root_ctx.storage_manager.split_host(folder_host)
-    try:
-        async with root_ctx.storage_manager.request(
-            proxy_name, 'POST', 'folder/delete',
-            json={
-                'volume': volume_name,
-                'vfid': str(folder_id),
-            },
-            raise_for_status=True,
-        ):
-            pass
-    except aiohttp.ClientResponseError:
-        raise VFolderOperationFailed
-    return web.Response(status=204)
+        entries = await query_mounted_sessions(
+            conn,
+            vfid=folder_id
+        )
+        # if session is not mounted with any folders
+        if not entries:
+            query = (sa.delete(vfolders).where(vfolders.c.id == folder_id))
+            await conn.execute(query)
+            # fs-level deletion may fail or take longer time
+            # but let's complete the db transaction to reflect that it's deleted.
+            proxy_name, volume_name = root_ctx.storage_manager.split_host(folder_host)
+            try:
+                async with root_ctx.storage_manager.request(
+                    proxy_name, 'POST', 'folder/delete',
+                    json={
+                        'volume': volume_name,
+                        'vfid': str(folder_id),
+                    },
+                    raise_for_status=True,
+                ):
+                    pass
+            except aiohttp.ClientResponseError:
+                raise VFolderOperationFailed
+            return web.Response(status=204)
+        else:
+            log.info('cannot delete folder mounted in one or more sessions {}', [session['session_name'] for session in entries])
+            resp = {'msg': 'cannot delete folder mounted in one or more sessions.'}
+            if user_role in (UserRole.ADMIN, UserRole.SUPERADMIN):
+                resp['sessions_info'] = entries
+            return web.json_response(resp, status=202)
 
 
 @atomic
