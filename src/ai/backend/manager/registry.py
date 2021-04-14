@@ -7,6 +7,7 @@ import copy
 from datetime import datetime
 import itertools
 import logging
+import json
 import secrets
 import time
 from typing import (
@@ -106,6 +107,7 @@ from .models import (
     query_accessible_vfolders, query_allowed_sgroups,
     recalc_agent_resource_occupancy,
     recalc_concurrency_used,
+    vfolder_attachment,
     AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
     USER_RESOURCE_OCCUPYING_KERNEL_STATUSES,
     DEAD_KERNEL_STATUSES,
@@ -761,6 +763,7 @@ class AgentRegistry:
         # allowed_vfolder_types = await root_ctx.shared_config.etcd.get('path-to-vfolder-type')
         determined_mounts = []
         matched_mounts = set()
+        mounts_id_list = []
         async with self.db.begin() as conn:
             if mounts:
                 extra_vf_conds = (
@@ -796,6 +799,7 @@ class AgentRegistry:
                         # the server may respond with error if the directory already exists
                         pass
                     matched_mounts.add(item['name'])
+                    mounts_id_list.append({'vfolder': item['id']})
                     determined_mounts.append((
                         item['name'],
                         item['host'],
@@ -805,6 +809,7 @@ class AgentRegistry:
                     ))
                 else:
                     matched_mounts.add(item['name'])
+                    mounts_id_list.append({'vfolder': item['id']})
                     determined_mounts.append((
                         item['name'],
                         item['host'],
@@ -1019,7 +1024,7 @@ class AgentRegistry:
                             raise BackendError(
                                 f'There is a vfolder whose name conflicts with '
                                 f'dotfile {dotfile["path"]}')
-
+                
                 query = kernels.insert().values({
                     'id': kernel_id,
                     'status': KernelStatus.PENDING,
@@ -1059,6 +1064,9 @@ class AgentRegistry:
                 await conn.execute(query)
                 ids.append(kernel_id)
 
+                mounts_id_list = [dict(item, kernel=kernel_id) for item in mounts_id_list]
+                await conn.execute(vfolder_attachment.insert(), mounts_id_list)
+                
         await self.hook_plugin_ctx.notify(
             'POST_ENQUEUE_SESSION',
             (session_id, session_name, access_key),
@@ -1628,6 +1636,9 @@ class AgentRegistry:
                                 })
                                 .where(kernels.c.id == kernel['id'])
                             )
+                            await conn.execute(
+                                sa.delete(vfolder_attachment).where(vfolder_attachment.c.kernel == kernel['id'])
+                            )
                             await self.event_producer.produce_event(
                                 KernelTerminatedEvent(kernel['id'], reason)
                             )
@@ -1650,6 +1661,9 @@ class AgentRegistry:
                                     'status_info': reason,
                                 })
                                 .where(kernels.c.id == kernel['id'])
+                            )
+                            await conn.execute(
+                                sa.delete(vfolder_attachment).where(vfolder_attachment.c.kernel == kernel['id'])
                             )
                         await self.event_producer.produce_event(
                             KernelTerminatingEvent(kernel['id'], reason),
