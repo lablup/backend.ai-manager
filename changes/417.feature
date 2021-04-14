@@ -1,1 +1,3 @@
-rearrange mounts information according to MountExpression type
+- Rearrange mounts information according to MountExpression type
+- Add querying mounted sessions when the folder deletion request received
+- Create alembic migration about vfolder_attachment table
