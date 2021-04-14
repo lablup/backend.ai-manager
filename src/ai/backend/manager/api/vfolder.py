@@ -1543,11 +1543,12 @@ async def delete(request: web.Request) -> web.Response:
                 raise VFolderOperationFailed
             return web.Response(status=204)
         else:
+            resp: MutableMapping[str, Any] = {"msg": None, "sessions_info": None}
             log.info(
                 "cannot delete folder mounted in one or more sessions {}",
                 [session["session_name"] for session in entries],
             )
-            resp = {"msg": "cannot delete folder mounted in one or more sessions."}
+            resp["msg"] = "cannot delete folder mounted in one or more sessions."
             if user_role in (UserRole.ADMIN, UserRole.SUPERADMIN):
                 resp["sessions_info"] = entries
             return web.json_response(resp, status=202)
