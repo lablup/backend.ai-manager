@@ -8,7 +8,6 @@ import graphene
 import sqlalchemy as sa
 import trafaret as t
 from graphene.types.datetime import DateTime as GQLDateTime
-from sqlalchemy import func
 from sqlalchemy.engine.row import Row
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
