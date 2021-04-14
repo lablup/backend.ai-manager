@@ -315,7 +315,7 @@ def _extract_auth_params(request):
         raise InvalidAuthParameters('Missing or malformed authorization parameters')
 
 
-def check_date(request) -> bool:
+def check_date(request: web.Request) -> bool:
     raw_date = request.headers.get('Date')
     if not raw_date:
         raw_date = request.headers.get('X-BackendAI-Date',
@@ -341,7 +341,7 @@ def check_date(request) -> bool:
     return True
 
 
-async def sign_request(sign_method, request, secret_key) -> str:
+async def sign_request(sign_method: str, request: web.Request, secret_key: str) -> str:
     try:
         mac_type, hash_type = map(lambda s: s.lower(), sign_method.split('-'))
         assert mac_type == 'hmac', 'Unsupported request signing method (MAC type)'
@@ -395,61 +395,77 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
         return (await handler(request))
     if not check_date(request):
         raise InvalidAuthParameters('Date/time sync error')
-    params = _extract_auth_params(request)
-    if params:
-        sign_method, access_key, signature = params
-        async with root_ctx.db.begin() as conn:
-            j = (
-                keypairs
-                .join(users, keypairs.c.user == users.c.uuid)
-                .join(keypair_resource_policies,
-                      keypairs.c.resource_policy == keypair_resource_policies.c.name)
-            )
-            query = (
-                sa.select([users, keypairs, keypair_resource_policies], use_labels=True)
-                .select_from(j)
-                .where(
-                    (keypairs.c.access_key == access_key) &
-                    (keypairs.c.is_active.is_(True))
+
+    # PRE_AUTH_MIDDLEWARE allows authentication via 3rd-party request headers/cookies.
+    # Any responsible hook must return a valid set of auth parameters.
+    hook_result = await root_ctx.hook_plugin_ctx.dispatch(
+        'PRE_AUTH_MIDDLEWARE',
+        (request, ),
+        return_when=FIRST_COMPLETED,
+    )
+    if hook_result.status != PASSED:
+        raise RejectedByHook.from_hook_result(hook_result)
+    elif hook_result.result:
+        # Passed one of the hook
+        auth_result = hook_result.result
+    else:
+        params = _extract_auth_params(request)
+        if params:
+            sign_method, access_key, signature = params
+            async with root_ctx.db.begin() as conn:
+                j = (
+                    keypairs
+                    .join(users, keypairs.c.user == users.c.uuid)
+                    .join(keypair_resource_policies,
+                        keypairs.c.resource_policy == keypair_resource_policies.c.name)
                 )
-            )
-            result = await conn.execute(query)
-            row = result.first()
-            if row is None:
-                raise AuthorizationFailed('Access key not found')
-            my_signature = \
-                await sign_request(sign_method, request, row['keypairs_secret_key'])
-            if secrets.compare_digest(my_signature, signature):
                 query = (
-                    keypairs.update()
-                    .values(
-                        last_used=datetime.now(tzutc()),
-                        num_queries=keypairs.c.num_queries + 1,
+                    sa.select([users, keypairs, keypair_resource_policies], use_labels=True)
+                    .select_from(j)
+                    .where(
+                        (keypairs.c.access_key == access_key) &
+                        (keypairs.c.is_active.is_(True))
                     )
-                    .where(keypairs.c.access_key == access_key)
                 )
-                await conn.execute(query)
-        request['is_authorized'] = True
-        request['keypair'] = {
-            col.name: row[f'keypairs_{col.name}']
-            for col in keypairs.c
-            if col.name != 'secret_key'
-        }
-        request['keypair']['resource_policy'] = {
-            col.name: row[f'keypair_resource_policies_{col.name}']
-            for col in keypair_resource_policies.c
-        }
-        request['user'] = {
-            col.name: row[f'users_{col.name}']
-            for col in users.c
-            if col.name not in ('password', 'description', 'created_at')
-        }
-        request['user']['id'] = row['keypairs_user_id']  # legacy
-        # if request['role'] in ['admin', 'superadmin']:
-        if row['keypairs_is_admin']:
-            request['is_admin'] = True
-        if request['user']['role'] == 'superadmin':
-            request['is_superadmin'] = True
+                result = await conn.execute(query)
+                row = result.first()
+                if row is None:
+                    raise AuthorizationFailed('Access key not found')
+                my_signature = \
+                    await sign_request(sign_method, request, row['keypairs_secret_key'])
+                if secrets.compare_digest(my_signature, signature):
+                    query = (
+                        keypairs.update()
+                        .values(
+                            last_used=datetime.now(tzutc()),
+                            num_queries=keypairs.c.num_queries + 1,
+                        )
+                        .where(keypairs.c.access_key == access_key)
+                    )
+                    await conn.execute(query)
+            auth_result = {
+                'is_authorized': True,
+                'keypair': {
+                    col.name: row[f'keypairs_{col.name}']
+                    for col in keypairs.c
+                    if col.name != 'secret_key'
+                },
+                'user': {
+                    col.name: row[f'users_{col.name}']
+                    for col in users.c
+                    if col.name not in ('password', 'description', 'created_at')
+                },
+                'is_admin': row['keypairs_is_admin'],
+                'is_superadmin': request['user']['role'] == 'superadmin',
+            }
+            auth_result['keypair']['resource_policy'] = {
+                col.name: row[f'keypair_resource_policies_{col.name}']
+                for col in keypair_resource_policies.c
+            }
+            auth_result['user']['id'] = row['keypairs_user_id']  # legacy
+
+    # Populate the result to the per-request state dict.
+    request.update(auth_result)
 
     # No matter if authenticated or not, pass-through to the handler.
     # (if it's required, auth_required decorator will handle the situation.)
