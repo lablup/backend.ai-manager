@@ -32,7 +32,6 @@ from aiojobs.aiohttp import atomic
 
 from ..models import (
     AgentStatus,
-    KernelStatus,
     UserRole,
     VFolderInvitationState,
     VFolderOwnershipType,
@@ -43,13 +42,13 @@ from ..models import (
     get_allowed_vfolder_hosts_by_group,
     get_allowed_vfolder_hosts_by_user,
     groups,
-    kernels,
     keypairs,
     query_accessible_vfolders,
     query_mounted_sessions,
     query_owned_dotfiles,
     users,
     verify_vfolder_name,
+    vfolder_attachment,
     vfolder_invitations,
     vfolder_permissions,
     vfolders,

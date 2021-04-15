@@ -946,7 +946,7 @@ class PurgeUser(graphene.Mutation):
         query = (
             sa.select([sa.func.count(vfolder_attachment.c.kernel)])
             .select_from(vfolder_attachment)
-            .where(vfolder_attachment.c.vfolder.in_(user_voflder_ids)) 
+            .where(vfolder_attachment.c.vfolder.in_(user_vfolder_ids))
         )
         result = await conn.execute(query)
         if result.scalar() > 0:

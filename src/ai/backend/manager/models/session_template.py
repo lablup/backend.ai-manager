@@ -89,6 +89,7 @@ task_template_v1 = t.Dict({
 def check_task_template(raw_data: Mapping[str, Any]) -> Mapping[str, Any]:
     data = task_template_v1.check(raw_data)
     if mounts := data['spec'].get('mounts'):
+        print('mounts: {}', mounts)
         for p in mounts.values():
             if p is None:
                 continue

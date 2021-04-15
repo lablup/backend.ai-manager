@@ -528,7 +528,7 @@ class PurgeGroup(graphene.Mutation):
             .select_from(vfolder_attachment)
             .where(vfolder_attachment.c.vfolder.in_(group_vfolder_ids))
         )
-        result = await conn.execute(query)
+        result = await db_conn.execute(query)
         if result.scalar() > 0:
             return True
         else:
