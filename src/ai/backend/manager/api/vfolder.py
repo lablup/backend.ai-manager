@@ -2193,16 +2193,12 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
     async with root_ctx.db.begin() as conn, conn.begin():
         # Prevent unmount if target host is mounted to running kernels.
         query = (
-            sa.select([kernels.c.mounts])
-            .select_from(kernels)
-            .where(kernels.c.status != KernelStatus.TERMINATED)
+            sa.select([sa.func.distinct(vfolder_attachment.c.vfolder)])
+            .select_from(vfolder_attachment)
         )
         result = await conn.execute(query)
-        _kernels = result.fetchall()
-        _mounted = set()
-        for kern in _kernels:
-            if kern.mounts:
-                _mounted.update([m[1] for m in kern.mounts])
+        _mounted = result.fetchall()
+
         if params["name"] in _mounted:
             return web.json_response(
                 {

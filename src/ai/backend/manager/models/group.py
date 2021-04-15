@@ -514,7 +514,7 @@ class PurgeGroup(graphene.Mutation):
 
         :return: True if a virtual folder is mounted to active kernels.
         """
-        from . import kernels, vfolders, AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES
+        from . import vfolder_attachment, vfolders
         query = (
             sa.select([vfolders.c.id])
             .select_from(vfolders)
@@ -524,22 +524,15 @@ class PurgeGroup(graphene.Mutation):
         rows = result.fetchall()
         group_vfolder_ids = [row['id'] for row in rows]
         query = (
-            sa.select([kernels.c.mounts])
-            .select_from(kernels)
-            .where(
-                (kernels.c.group_id == group_id) &
-                (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES))
-            )
+            sa.select([sa.func.count(vfolder_attachment.c.kernel)])
+            .select_from(vfolder_attachment)
+            .where(vfolder_attachment.c.vfolder.in_(group_vfolder_ids))
         )
-        async for row in (await db_conn.stream(query)):
-            for _mount in row['mounts']:
-                try:
-                    vfolder_id = uuid.UUID(_mount[2])
-                    if vfolder_id in group_vfolder_ids:
-                        return True
-                except Exception:
-                    pass
-        return False
+        result = await conn.execute(query)
+        if result.scalar() > 0:
+            return True
+        else:
+            return False
 
     @classmethod
     async def group_has_active_kernels(

@@ -868,6 +868,7 @@ class AgentRegistry:
                         )
                     )
             if mounts and set(mounts) > matched_mounts:
+            # if mounts_id_list > matched_mounts:
                 raise VFolderNotFound
         mounts = determined_mounts
 

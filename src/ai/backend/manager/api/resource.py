@@ -36,6 +36,7 @@ from ai.backend.common.types import DefaultForUnspecified, ResourceSlot
 from ..models import (
     agents, resource_presets,
     domains, groups, kernels, users,
+    vfolders, vfolder_attachment,
     AgentStatus,
     association_groups_users,
     query_allowed_sgroups,
@@ -317,13 +318,27 @@ async def get_container_stats_for_period(request: web.Request, start_date, end_d
 
     objs_per_group = {}
     local_tz = root_ctx.shared_config['system']['timezone']
+    j = (
+        vfolder_attachment
+        .join(kernels, kernels.c.id == vfolder_attachment.c.kernel)
+        .join(vfolders, vfolders.c.id.in_(vfolder_attachment.vfolder))
+    )
 
     for row in rows:
         group_id = str(row['group_id'])
         last_stat = row['last_stat']
         nfs = None
-        if row['mounts'] is not None:
-            nfs = list(set([mount[1] for mount in row['mounts']]))
+        query = (
+            sa.select([sa.func.distinct(vfolders.host)])
+            .select_from(j)
+            .where(row[id] == kernels.c.id)
+        )
+        result = await conn.execute(query)
+        mounts = result.fetchall()
+        if len(mounts) > 0:
+            nfs = mounts
+        # if row['mounts'] is not None:
+            # nfs = list(set([mount[1] for mount in row['mounts']]))
         if row['terminated_at'] is None:
             used_time = used_days = None
         else:
