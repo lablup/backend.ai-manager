@@ -1299,15 +1299,19 @@ async def delete_invitation(request: web.Request, params: Any) -> web.Response:
 )
 async def share(request: web.Request, params: Any) -> web.Response:
     """
-    Share a folder to users with overriding permission. This will create
-    vfolder_permission(s) relation directly without creating invitation(s).
+    Share a folder to users with overriding permission.
+
+    This will create vfolder_permission(s) relation directly without
+    creating invitation(s). Only group-type vfolders are allowed to
+    be shared directly.
     """
     root_ctx: RootContext = request.app['_root.context']
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.SHARE (ak:{}, vf:{}, perm:{}, users:{})',
              access_key, params['id'], params['permission'], ','.join(params['emails']))
     async with root_ctx.db.begin() as conn:
-        # Ensure the target folder exists.
+        # Do not allow to share user-type vfolders directly.
+        # User-type vfolders are shared by invitation.
         query = (
             sa.select([vfolders.c.ownership_type])
             .select_from(vfolders)
@@ -1316,6 +1320,8 @@ async def share(request: web.Request, params: Any) -> web.Response:
         ownership_type = await conn.scalar(query)
         if ownership_type is None:
             raise VFolderNotFound()
+        if ownership_type != VFolderOwnershipType.GROUP:
+            raise GenericForbidden('Only project folders are directly sharable.')
 
         # Convert users' emails to uuids.
         query = (
@@ -1365,6 +1371,8 @@ async def share(request: web.Request, params: Any) -> web.Response:
 async def unshare(request: web.Request, params: Any) -> web.Response:
     """
     Unshare a folder from users.
+
+    Unshare can also be applied to user-type vfolders as well.
     """
     root_ctx: RootContext = request.app['_root.context']
     access_key = request['keypair']['access_key']
