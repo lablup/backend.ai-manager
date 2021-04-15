@@ -286,7 +286,10 @@ async def query_accessible_vfolders(
                 use_labels=True
             )
             .select_from(j)
-            .where(vfolder_permissions.c.user == user_uuid)
+            .where(
+                (vfolder_permissions.c.user == user_uuid) &
+                (vfolders.c.ownership_type == VFolderOwnershipType.USER)
+            )
         )
         await _append_entries(query, _is_owner=False)
 
@@ -317,6 +320,28 @@ async def query_accessible_vfolders(
         is_owner = ((user_role == UserRole.ADMIN or user_role == 'admin') or
                     (user_role == UserRole.SUPERADMIN or user_role == 'superadmin'))
         await _append_entries(query, is_owner)
+
+        # Override permissions, if exists, for group vfolders.
+        query = (
+            sa.select(vfolder_permissions.c.permission, vfolder_permissions.c.vfolder)
+            .select_from(vfolder_permissions)
+            .where(
+                (vfolder_permissions.c.user == user_uuid) &
+                (vfolder_permissions.c.vfolder.in_(group_ids))
+            )
+        )
+        if extra_vf_conds is not None:
+            query = query.where(extra_vf_conds)
+        if extra_vf_user_conds is not None:
+            query = query.where(extra_vf_user_conds)
+        result = await conn.execute(query)
+        overriding_permissions: dict = {}
+        overriding_permissions = {row.vfolder: row.permission for row in result}
+        for entry in entries:
+            if entry['id'] in overriding_permissions and \
+                    entry['ownership_type'] == VFolderOwnershipType.GROUP:
+                entry['permission'] = overriding_permissions[entry['id']]
+
     return entries
 
 
