@@ -1368,7 +1368,7 @@ async def share(request: web.Request, params: Any) -> web.Response:
                 'user': _user,
             }))
             await conn.execute(query)
-        return web.json_response(emails_to_share, status=201)
+        return web.json_response({'shared_emails': emails_to_share}, status=201)
 
 
 @atomic
@@ -1429,7 +1429,7 @@ async def unshare(request: web.Request, params: Any) -> web.Response:
             )
         )
         await conn.execute(query)
-        return web.json_response({}, status=200)
+        return web.json_response({'unshared_emails': params['emails']}, status=200)
 
 
 @auth_required
