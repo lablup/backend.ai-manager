@@ -1310,30 +1310,40 @@ async def share(request: web.Request, params: Any) -> web.Response:
     log.info('VFOLDER.SHARE (ak:{}, vf:{}, perm:{}, users:{})',
              access_key, params['id'], params['permission'], ','.join(params['emails']))
     async with root_ctx.db.begin() as conn:
+        from ai.backend.models.group import association_groups_users as agus
+
         # Do not allow to share user-type vfolders directly.
         # User-type vfolders are shared by invitation.
         query = (
-            sa.select([vfolders.c.ownership_type])
+            sa.select([vfolders.c.ownership_type, vfolders.c.group])
             .select_from(vfolders)
             .where(vfolders.c.id == params['id'])
         )
-        ownership_type = await conn.scalar(query)
-        if ownership_type is None:
+        result = await conn.execute(query)
+        vf_info = await result.first()
+        if vf_info['ownership_type'] is None:
             raise VFolderNotFound()
-        if ownership_type != VFolderOwnershipType.GROUP:
+        if vf_info['ownership_type'] != VFolderOwnershipType.GROUP:
             raise GenericForbidden('Only project folders are directly sharable.')
 
-        # Convert users' emails to uuids.
+        # Convert users' emails to uuids and check if user belong to the group of vfolder.
+        j = users.join(agus, users.c.uuid == agus.c.user_id)
         query = (
-            sa.select([users.c.uuid])
-            .select_from(users)
+            sa.select([users.c.uuid, users.c.email])
+            .select_from(j)
             .where(users.c.email.in_(params['emails']))
             .where(users.c.email != request['user']['email'])
         )
         result = await conn.execute(query)
-        users_to_share = result.fetchall()
-        if len(users_to_share) < 1:
+        user_info = result.fetchall()
+        if len(user_info) < 1:
             raise GenericNotFound('No users to share.')
+        if len(user_info) < len(params['emails']):
+            _emails = [u['email'] for u in user_info]
+            users_not_in_vfolder_group = list(set(params['emails']) - set(_emails))
+            raise GenericNotFound('Some user does not belong to folder\'s group: '
+                                  ','.join(users_not_in_vfolder_group))
+        users_to_share = [u['uuid'] for u in user_info]
 
         # Do not share to users who have already been shared the folder.
         query = (
