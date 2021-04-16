@@ -1310,7 +1310,7 @@ async def share(request: web.Request, params: Any) -> web.Response:
     log.info('VFOLDER.SHARE (ak:{}, vf:{}, perm:{}, users:{})',
              access_key, folder_name, params['permission'], ','.join(params['emails']))
     async with root_ctx.db.begin() as conn:
-        from ai.backend.models.group import association_groups_users as agus
+        from ..models import association_groups_users as agus
 
         # Get the group-type virtual folder.
         query = (
@@ -1322,11 +1322,12 @@ async def share(request: web.Request, params: Any) -> web.Response:
             )
         )
         result = await conn.execute(query)
-        if len(result) > 1:
-            raise InternalServerError(f'Multiple project folders found: {folder_name}')
-        vf_info = await result.first()
-        if vf_info is None:
+        vf_infos = result.fetchall()
+        if len(vf_infos) < 1:
             raise VFolderNotFound('Only project folders are directly sharable.')
+        if len(vf_infos) > 1:
+            raise InternalServerError(f'Multiple project folders found: {folder_name}')
+        vf_info = vf_infos[0]
 
         # Convert users' emails to uuids and check if user belong to the group of vfolder.
         j = users.join(agus, users.c.uuid == agus.c.user_id)
@@ -1352,12 +1353,12 @@ async def share(request: web.Request, params: Any) -> web.Response:
             sa.select([vfolder_permissions.c.user])
             .select_from(vfolder_permissions)
             .where(
-                vfolder_permissions.c.user.in_(users_to_share) &
-                vfolder_permissions.c.vfolder == vf_info['id']
+                (vfolder_permissions.c.user.in_(users_to_share)) &
+                (vfolder_permissions.c.vfolder == vf_info['id'])
             )
         )
         result = await conn.execute(query)
-        users_not_to_share = result.fetchall()
+        users_not_to_share = [u.user for u in result.fetchall()]
         users_to_share = list(set(users_to_share) - set(users_not_to_share))
 
         # Create vfolder_permission(s).
@@ -1368,6 +1369,16 @@ async def share(request: web.Request, params: Any) -> web.Response:
                 'user': _user,
             }))
             await conn.execute(query)
+        # Update existing vfolder_permission(s).
+        for _user in users_not_to_share:
+            query = (
+                sa.update(vfolder_permissions)
+                .values(permission=params['permission'])
+                .where(vfolder_permissions.c.vfolder == vf_info['id'])
+                .where(vfolder_permissions.c.user == _user)
+            )
+            await conn.execute(query)
+
         return web.json_response({'shared_emails': emails_to_share}, status=201)
 
 
@@ -1399,15 +1410,12 @@ async def unshare(request: web.Request, params: Any) -> web.Response:
             )
         )
         result = await conn.execute(query)
-        if len(result) > 1:
+        vf_infos = result.fetchall()
+        if len(vf_infos) < 1:
+            raise VFolderNotFound('Only project folders are directly unsharable.')
+        if len(vf_infos) > 1:
             raise InternalServerError(f'Multiple project folders found: {folder_name}')
-        vf_info = await result.first()
-        if vf_info is None:
-            raise VFolderNotFound()
-        if vf_info['ownership_type'] != VFolderOwnershipType.GROUP:
-            # Do not allow to share user-type vfolders directly.
-            # User-type vfolders are shared by invitation.
-            raise GenericForbidden('Only project folders are directly unsharable.')
+        vf_info = vf_infos[0]
 
         # Convert users' emails to uuids.
         query = (
@@ -1416,7 +1424,7 @@ async def unshare(request: web.Request, params: Any) -> web.Response:
             .where(users.c.email.in_(params['emails']))
         )
         result = await conn.execute(query)
-        users_to_unshare = result.fetchall()
+        users_to_unshare = [u['uuid'] for u in result.fetchall()]
         if len(users_to_unshare) < 1:
             raise GenericNotFound('No users to unshare.')
 
