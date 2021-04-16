@@ -1292,14 +1292,13 @@ async def delete_invitation(request: web.Request, params: Any) -> web.Response:
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
     t.Dict({
-        t.Key('id'): t.String,
         t.Key('permission', default='rw'): VFolderPermissionValidator,
         t.Key('emails'): t.List(t.String),
     })
 )
 async def share(request: web.Request, params: Any) -> web.Response:
     """
-    Share a folder to users with overriding permission.
+    Share a group folder to users with overriding permission.
 
     This will create vfolder_permission(s) relation directly without
     creating invitation(s). Only group-type vfolders are allowed to
@@ -1307,24 +1306,27 @@ async def share(request: web.Request, params: Any) -> web.Response:
     """
     root_ctx: RootContext = request.app['_root.context']
     access_key = request['keypair']['access_key']
+    folder_name = request.match_info['name']
     log.info('VFOLDER.SHARE (ak:{}, vf:{}, perm:{}, users:{})',
-             access_key, params['id'], params['permission'], ','.join(params['emails']))
+             access_key, folder_name, params['permission'], ','.join(params['emails']))
     async with root_ctx.db.begin() as conn:
         from ai.backend.models.group import association_groups_users as agus
 
-        # Do not allow to share user-type vfolders directly.
-        # User-type vfolders are shared by invitation.
+        # Get the group-type virtual folder.
         query = (
-            sa.select([vfolders.c.ownership_type, vfolders.c.group])
+            sa.select([vfolders.c.id, vfolders.c.ownership_type, vfolders.c.group])
             .select_from(vfolders)
-            .where(vfolders.c.id == params['id'])
+            .where(
+                (vfolders.c.ownership_type == VFolderOwnershipType.GROUP) &
+                (vfolders.c.name == folder_name)
+            )
         )
         result = await conn.execute(query)
+        if len(result) > 1:
+            raise InternalServerError(f'Multiple project folders found: {folder_name}')
         vf_info = await result.first()
-        if vf_info['ownership_type'] is None:
-            raise VFolderNotFound()
-        if vf_info['ownership_type'] != VFolderOwnershipType.GROUP:
-            raise GenericForbidden('Only project folders are directly sharable.')
+        if vf_info is None:
+            raise VFolderNotFound('Only project folders are directly sharable.')
 
         # Convert users' emails to uuids and check if user belong to the group of vfolder.
         j = users.join(agus, users.c.uuid == agus.c.user_id)
@@ -1336,14 +1338,14 @@ async def share(request: web.Request, params: Any) -> web.Response:
         )
         result = await conn.execute(query)
         user_info = result.fetchall()
+        users_to_share = [u['uuid'] for u in user_info]
+        emails_to_share = [u['email'] for u in user_info]
         if len(user_info) < 1:
             raise GenericNotFound('No users to share.')
         if len(user_info) < len(params['emails']):
-            _emails = [u['email'] for u in user_info]
-            users_not_in_vfolder_group = list(set(params['emails']) - set(_emails))
+            users_not_in_vfolder_group = list(set(params['emails']) - set(emails_to_share))
             raise GenericNotFound('Some user does not belong to folder\'s group: '
                                   ','.join(users_not_in_vfolder_group))
-        users_to_share = [u['uuid'] for u in user_info]
 
         # Do not share to users who have already been shared the folder.
         query = (
@@ -1351,7 +1353,7 @@ async def share(request: web.Request, params: Any) -> web.Response:
             .select_from(vfolder_permissions)
             .where(
                 vfolder_permissions.c.user.in_(users_to_share) &
-                vfolder_permissions.c.vfolder == params['id']
+                vfolder_permissions.c.vfolder == vf_info['id']
             )
         )
         result = await conn.execute(query)
@@ -1362,11 +1364,11 @@ async def share(request: web.Request, params: Any) -> web.Response:
         for _user in users_to_share:
             query = (sa.insert(vfolder_permissions, {
                 'permission': params['permission'],
-                'vfolder': params['id'],
+                'vfolder': vf_info['id'],
                 'user': _user,
             }))
             await conn.execute(query)
-        return web.json_response({}, status=201)
+        return web.json_response(emails_to_share, status=201)
 
 
 @atomic
@@ -1374,21 +1376,39 @@ async def share(request: web.Request, params: Any) -> web.Response:
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
     t.Dict({
-        t.Key('id'): t.String,
         t.Key('emails'): t.List(t.String),
     })
 )
 async def unshare(request: web.Request, params: Any) -> web.Response:
     """
-    Unshare a folder from users.
-
-    Unshare can also be applied to user-type vfolders as well.
+    Unshare a group folder from users.
     """
     root_ctx: RootContext = request.app['_root.context']
     access_key = request['keypair']['access_key']
+    folder_name = request.match_info['name']
     log.info('VFOLDER.UNSHARE (ak:{}, vf:{}, users:{})',
-             access_key, params['id'], ','.join(params['emails']))
+             access_key, folder_name, ','.join(params['emails']))
     async with root_ctx.db.begin() as conn:
+        # Get the group-type virtual folder.
+        query = (
+            sa.select([vfolders.c.id])
+            .select_from(vfolders)
+            .where(
+                (vfolders.c.ownership_type == VFolderOwnershipType.GROUP) &
+                (vfolders.c.name == folder_name)
+            )
+        )
+        result = await conn.execute(query)
+        if len(result) > 1:
+            raise InternalServerError(f'Multiple project folders found: {folder_name}')
+        vf_info = await result.first()
+        if vf_info is None:
+            raise VFolderNotFound()
+        if vf_info['ownership_type'] != VFolderOwnershipType.GROUP:
+            # Do not allow to share user-type vfolders directly.
+            # User-type vfolders are shared by invitation.
+            raise GenericForbidden('Only project folders are directly unsharable.')
+
         # Convert users' emails to uuids.
         query = (
             sa.select([users.c.uuid])
@@ -1404,7 +1424,7 @@ async def unshare(request: web.Request, params: Any) -> web.Response:
         query = (
             sa.delete(vfolder_permissions)
             .where(
-                (vfolder_permissions.c.vfolder == params['id']) &
+                (vfolder_permissions.c.vfolder == vf_info['id']) &
                 (vfolder_permissions.c.user.in_(users_to_unshare))
             )
         )
@@ -2150,6 +2170,8 @@ def create_app(default_cors_options):
     cors.add(add_route('GET',    r'/{name}/files', list_files))
     cors.add(add_route('POST',   r'/{name}/invite', invite))
     cors.add(add_route('POST',   r'/{name}/leave', leave))
+    cors.add(add_route('POST',   r'/{name}/share', share))
+    cors.add(add_route('DELETE', r'/{name}/unshare', unshare))
     cors.add(add_route('POST',   r'/{name}/clone', clone))
     cors.add(add_route('GET',    r'/invitations/list-sent', list_sent_invitations))
     cors.add(add_route('GET',    r'/invitations/list_sent', list_sent_invitations))  # legacy underbar
@@ -2157,8 +2179,6 @@ def create_app(default_cors_options):
     cors.add(add_route('GET',    r'/invitations/list', invitations))
     cors.add(add_route('POST',   r'/invitations/accept', accept_invitation))
     cors.add(add_route('DELETE', r'/invitations/delete', delete_invitation))
-    cors.add(add_route('POST',   r'/_/share', share))
-    cors.add(add_route('DELETE', r'/_/unshare', unshare))
     cors.add(add_route('GET',    r'/_/shared', list_shared_vfolders))
     cors.add(add_route('POST',   r'/_/shared', update_shared_vfolder))
     cors.add(add_route('GET',    r'/_/fstab', get_fstab_contents))
