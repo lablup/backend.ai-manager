@@ -1692,14 +1692,15 @@ async def list_shared_vfolders(request: web.Request, params: Any) -> web.Respons
     target_vfid = params['vfolder_id']
     log.info('VFOLDER.LIST_SHARED_VFOLDERS (ak:{})', access_key)
     async with root_ctx.db.begin() as conn:
-        j = (vfolder_permissions
-             .join(vfolders, vfolders.c.id == vfolder_permissions.c.vfolder)
-             .join(users, users.c.uuid == vfolder_permissions.c.user))
-        query = (sa.select([vfolder_permissions,
-                            vfolders.c.id, vfolders.c.name,
-                            users.c.email])
-                   .select_from(j)
-                   .where((vfolders.c.user == request['user']['uuid'])))
+        j = (
+            vfolder_permissions
+            .join(vfolders, vfolders.c.id == vfolder_permissions.c.vfolder)
+            .join(users, users.c.uuid == vfolder_permissions.c.user)
+        )
+        query = (
+            sa.select([vfolder_permissions, vfolders.c.id, vfolders.c.name, users.c.email])
+            .select_from(j)
+        )
         if target_vfid is not None:
             query = query.where(vfolders.c.id == target_vfid)
         result = await conn.execute(query)
