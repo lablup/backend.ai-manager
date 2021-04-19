@@ -1334,8 +1334,11 @@ async def share(request: web.Request, params: Any) -> web.Response:
         query = (
             sa.select([users.c.uuid, users.c.email])
             .select_from(j)
-            .where(users.c.email.in_(params['emails']))
-            .where(users.c.email != request['user']['email'])
+            .where(
+                (users.c.email.in_(params['emails'])) &
+                (users.c.email != request['user']['email']) &
+                (agus.c.group_id == vf_info['group'])
+            )
         )
         result = await conn.execute(query)
         user_info = result.fetchall()
