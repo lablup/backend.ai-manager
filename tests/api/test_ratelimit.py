@@ -20,7 +20,14 @@ async def test_check_rlim_for_anonymous_query(
     create_app_and_client,
 ):
     app, client = await create_app_and_client(
-        [shared_config_ctx, redis_ctx, database_ctx, monitoring_ctx],
+        [
+            shared_config_ctx,
+            redis_ctx,
+            event_dispatcher_ctx,
+            database_ctx,
+            monitoring_ctx,
+            hook_plugin_ctx,
+        ],
         ['.auth', '.ratelimit'],
     )
     ret = await client.get('/')
