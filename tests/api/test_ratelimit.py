@@ -3,7 +3,12 @@ import json
 import pytest
 
 from ai.backend.manager.server import (
-    shared_config_ctx, redis_ctx, database_ctx, monitoring_ctx,
+    database_ctx,
+    event_dispatcher_ctx,
+    hook_plugin_ctx,
+    monitoring_ctx,
+    redis_ctx,
+    shared_config_ctx,
 )
 import ai.backend.manager.api.ratelimit as rlim
 
@@ -33,7 +38,14 @@ async def test_check_rlim_for_authorized_query(
     get_headers,
 ):
     app, client = await create_app_and_client(
-        [shared_config_ctx, redis_ctx, database_ctx, monitoring_ctx],
+        [
+            shared_config_ctx,
+            redis_ctx,
+            event_dispatcher_ctx,
+            database_ctx,
+            monitoring_ctx,
+            hook_plugin_ctx,
+        ],
         ['.auth', '.ratelimit'],
     )
     url = '/auth/test'
