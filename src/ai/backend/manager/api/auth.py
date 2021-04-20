@@ -419,16 +419,8 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
                 raise AuthorizationFailed('Access key not found')
             my_signature = \
                 await sign_request(sign_method, request, row['keypairs_secret_key'])
-            if secrets.compare_digest(my_signature, signature):
-                query = (
-                    keypairs.update()
-                    .values(
-                        last_used=datetime.now(tzutc()),
-                        num_queries=keypairs.c.num_queries + 1,
-                    )
-                    .where(keypairs.c.access_key == access_key)
-                )
-                await conn.execute(query)
+            if not secrets.compare_digest(my_signature, signature):
+                raise AuthorizationFailed('Signature mismatch')
         request['is_authorized'] = True
         request['keypair'] = {
             col.name: row[f'keypairs_{col.name}']
