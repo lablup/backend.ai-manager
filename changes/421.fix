@@ -1,0 +1,1 @@
+Remove `keypairs.num_queries` counting to avoid excessive DB writes
