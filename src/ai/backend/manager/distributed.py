@@ -31,15 +31,18 @@ class GlobalTimer:
         event_producer: EventProducer,
         event_factory: Callable[[], AbstractEvent],
         interval: float = 10.0,
+        initial_delay: float = 0.0,
     ) -> None:
         self._lock_manager = Aioredlock([redis])
         self._event_producer = event_producer
         self._event_factory = event_factory
         self.lock_key = f"timer.{timer_name}.lock"
         self.interval = interval
+        self.initial_delay = initial_delay
 
     async def generate_tick(self) -> None:
         try:
+            await asyncio.sleep(self.initial_delay)
             while True:
                 try:
                     async with (
