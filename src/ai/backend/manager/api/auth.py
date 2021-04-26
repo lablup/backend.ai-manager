@@ -762,6 +762,7 @@ async def signout(request: web.Request, params: Any) -> web.Response:
         await conn.execute(query)
     return web.json_response({})
 
+
 @atomic
 @auth_required
 @check_api_params(
@@ -779,8 +780,8 @@ async def update_full_name(request: web.Request, params: Any) -> web.Response:
     async with root_ctx.db.begin() as conn:
         query = (
             sa.select([users])
-                .select_from(users)
-                .where(
+            .select_from(users)
+            .where(
                 (users.c.email == email) &
                 (users.c.domain_name == domain_name)
             )
