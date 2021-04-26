@@ -9,24 +9,26 @@
       "type": "TASK",
       "name": "jupyter",
       "template": {
-        "api_version": 6,
+        "api_version": "6",
         "kind": "task_template",
         "metadata": {
           "name": "cr.backend.ai/testing/ngc-tensorflow",
           "tag": "20.11-tf2-py3"
         },
         "spec": {
-          "type": "interacitve",
+          "session_type": "interacitve",
           "kernel": {
-            "image": "cr.backend.ai/testing/ngc-pytorch:20.11-tf2-py3",
-            "environ": {}
+            "image": "cr.backend.ai/testing/ngc-pytorch:20.11-py3",
+            "environ": {},
+            "run": null,
+            "git": null
           },
           "mounts": {
           },
           "resources": {
-            "cpu": 2,
+            "cpu": "2",
             "mem": "4g",
-            "cuda.shares": 0.2
+            "cuda.shares": "0.2"
           }
         }
       }
@@ -40,22 +42,24 @@
       "type": "TASK",
       "name": "rstudio",
       "template": {
-        "api_version": 6,
+        "api_version": "6",
         "kind": "task_template",
         "metadata": {
           "name": "cr.backend.ai/cloud/r-base",
           "tag": "4.0"
         },
         "spec": {
-          "type": "interacitve",
+          "session_type": "interacitve",
           "kernel": {
             "image": "cr.backend.ai/cloud/r-base:4.0",
-            "environ": {}
+            "environ": {},
+            "run": null,
+            "git": null
           },
           "mounts": {
           },
           "resources": {
-            "cpu": 1,
+            "cpu": "1",
             "mem": "2g"
           }
         }
