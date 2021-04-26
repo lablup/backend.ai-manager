@@ -364,7 +364,7 @@ async def _query_userinfo(
     return owner_uuid, group_id, resource_policy
 
 
-async def _create(request: web.Request, params: Any, db) -> web.Response:
+async def _create(request: web.Request, params: Any) -> web.Response:
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
     scopes_param = {
@@ -405,7 +405,7 @@ async def _create(request: web.Request, params: Any, db) -> web.Response:
     try:
         requested_image_ref = \
             await ImageRef.resolve_alias(params['image'], root_ctx.shared_config.etcd)
-        async with db.begin() as conn:
+        async with root_ctx.db.begin() as conn:
             query = (sa.select([domains.c.allowed_docker_registries])
                        .select_from(domains)
                        .where(domains.c.name == params['domain']))
@@ -462,7 +462,7 @@ async def _create(request: web.Request, params: Any, db) -> web.Response:
     session_creation_tracker = app_ctx.session_creation_tracker
     session_creation_tracker[session_creation_id] = start_event
 
-    async with db.begin() as conn:
+    async with root_ctx.db.begin() as conn:
         owner_uuid, group_id, resource_policy = await _query_userinfo(request, params, conn)
 
         # Use keypair bootstrap_script if it is not delivered as a parameter
@@ -708,7 +708,7 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
         bootstrap += '\n'
         bootstrap += cmd_builder
         params['bootstrap_script'] = base64.b64encode(bootstrap.encode()).decode()
-    return await _create(request, params, root_ctx.db)
+    return await _create(request, params)
 
 
 @server_status_required(ALL_ALLOWED)
@@ -757,7 +757,7 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
         raise InvalidAPIParameters('API version not supported')
     params['config'] = creation_config
 
-    return await _create(request, params, root_ctx.db)
+    return await _create(request, params)
 
 
 @server_status_required(ALL_ALLOWED)
