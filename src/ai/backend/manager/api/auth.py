@@ -762,6 +762,43 @@ async def signout(request: web.Request, params: Any) -> web.Response:
         await conn.execute(query)
     return web.json_response({})
 
+@atomic
+@auth_required
+@check_api_params(
+    t.Dict({
+        t.Key('email'): t.String,
+        t.Key('full_name'): t.String,
+    }))
+async def update_full_name(request: web.Request, params: Any) -> web.Response:
+    root_ctx: RootContext = request.app['_root.context']
+    domain_name = request['user']['domain_name']
+    email = request['user']['email']
+    log_fmt = 'AUTH.UPDATE_FULL_NAME(d:{}, email:{})'
+    log_args = (domain_name, email)
+    log.info(log_fmt, *log_args)
+    async with root_ctx.db.begin() as conn:
+        query = (
+            sa.select([users])
+                .select_from(users)
+                .where(
+                (users.c.email == email) &
+                (users.c.domain_name == domain_name)
+            )
+        )
+        result = await conn.execute(query)
+        user = result.first()
+        if user is None:
+            log.info(log_fmt + ': Unknown user', *log_args)
+            return web.json_response({'error_msg': 'Unknown user'}, status=400)
+
+        # If user is not null, then it updates user full_name.
+        data = {
+            'full_name': params['full_name'],
+        }
+        update_query = (users.update().values(data).where(users.c.email == email))
+        await conn.execute(update_query)
+    return web.json_response({}, status=200)
+
 
 @atomic
 @auth_required
@@ -871,6 +908,7 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     cors.add(app.router.add_route('POST', '/signup', signup))
     cors.add(app.router.add_route('POST', '/signout', signout))
     cors.add(app.router.add_route('POST', '/update-password', update_password))
+    cors.add(app.router.add_route('POST', '/update-full-name', update_full_name))
     cors.add(app.router.add_route('GET', '/ssh-keypair', get_ssh_keypair))
     cors.add(app.router.add_route('PATCH', '/ssh-keypair', refresh_ssh_keypair))
     return app, [auth_middleware]
