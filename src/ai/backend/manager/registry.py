@@ -1628,9 +1628,9 @@ class AgentRegistry:
                                 })
                                 .where(kernels.c.id == kernel['id'])
                             )
-                            await self.event_producer.produce_event(
-                                KernelTerminatedEvent(kernel['id'], reason)
-                            )
+                        await self.event_producer.produce_event(
+                            KernelTerminatedEvent(kernel['id'], reason)
+                        )
                     else:
                         async with self.db.begin() as conn:
                             if kernel['cluster_role'] == DEFAULT_ROLE:
