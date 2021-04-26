@@ -1599,11 +1599,14 @@ class AgentRegistry:
                     elif kernel['status'] == KernelStatus.PULLING:
                         raise GenericForbidden('Cannot destroy kernels in pulling status')
                     elif kernel['status'] in (
-                        KernelStatus.PREPARING, KernelStatus.TERMINATING, KernelStatus.ERROR,
+                        KernelStatus.SCHEDULED,
+                        KernelStatus.PREPARING,
+                        KernelStatus.TERMINATING,
+                        KernelStatus.ERROR,
                     ):
                         if not forced:
                             raise GenericForbidden(
-                                'Cannot destroy kernels in preparing/terminating/error status'
+                                'Cannot destroy kernels in scheduled/preparing/terminating/error status'
                             )
                         log.warning('force-terminating kernel (k:{}, status:{})',
                                     kernel['id'], kernel['status'])
@@ -1673,9 +1676,10 @@ class AgentRegistry:
                         rpc_coros = []
                         for kernel in destroyed_kernels:
                             # internally it enqueues a "destroy" lifecycle event.
-                            rpc_coros.append(
-                                rpc.call.destroy_kernel(str(kernel['id']), reason)
-                            )
+                            if kernel['status'] != KernelStatus.SCHEDULED:
+                                rpc_coros.append(
+                                    rpc.call.destroy_kernel(str(kernel['id']), reason)
+                                )
                         await asyncio.gather(*rpc_coros)
                         for kernel in destroyed_kernels:
                             last_stat: Optional[Dict[str, Any]]
@@ -2378,8 +2382,9 @@ class AgentRegistry:
         the resource slots occupied by it.
         """
         post_task = self._post_kernel_creation_tasks.get(kernel_id, None)
-        if post_task is not None:
+        if post_task is not None and not post_task.done():
             post_task.cancel()
+            await post_task
 
         async with self.db.begin() as conn:
             # Check the current status.
