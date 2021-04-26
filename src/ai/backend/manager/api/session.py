@@ -623,7 +623,8 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
         if not template:
             raise TaskTemplateNotFound
 
-    template = json.loads(template)
+    if isinstance(template, str):
+        template = json.loads(template)
     log.debug('Template: {0}', template)
 
     param_from_template = {
