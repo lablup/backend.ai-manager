@@ -400,7 +400,7 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
     # Any responsible hook must return a valid keypair.
     hook_result = await root_ctx.hook_plugin_ctx.dispatch(
         'PRE_AUTH_MIDDLEWARE',
-        (request, ),
+        (request,),
         return_when=FIRST_COMPLETED,
     )
     row = None
