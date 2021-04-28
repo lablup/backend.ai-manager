@@ -5,6 +5,7 @@ from contextvars import ContextVar
 from collections import defaultdict
 import copy
 from datetime import datetime
+from decimal import Decimal
 import itertools
 import logging
 import secrets
@@ -2095,7 +2096,7 @@ class AgentRegistry:
             SlotName(k): SlotTypes(v[0]) for k, v in
             agent_info['resource_slots'].items()}
         available_slots = ResourceSlot({
-            SlotName(k): v[1] for k, v in
+            SlotName(k): Decimal(v[1]) for k, v in
             agent_info['resource_slots'].items()})
         current_addr = agent_info['addr']
         sgroup = agent_info.get('scaling_group', 'default')
@@ -2115,6 +2116,8 @@ class AgentRegistry:
                         agents.c.addr,
                         agents.c.scaling_group,
                         agents.c.available_slots,
+                        agents.c.version,
+                        agents.c.compute_plugins,
                     ])
                     .select_from(agents)
                     .where(agents.c.id == agent_id)
@@ -2150,8 +2153,10 @@ class AgentRegistry:
                         updates['scaling_group'] = sgroup
                     if row['addr'] != current_addr:
                         updates['addr'] = current_addr
-                    updates['version'] = agent_info['version']
-                    updates['compute_plugins'] = agent_info['compute_plugins']
+                    if row['version'] != agent_info['version']:
+                        updates['version'] = agent_info['version']
+                    if row['compute_plugins'] != agent_info['compute_plugins']:
+                        updates['compute_plugins'] = agent_info['compute_plugins']
                     # occupied_slots are updated when kernels starts/terminates
                     if updates:
                         await self.shared_config.update_resource_slots(slot_key_and_units)
