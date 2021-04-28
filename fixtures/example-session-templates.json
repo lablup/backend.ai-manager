@@ -23,6 +23,7 @@
             "run": null,
             "git": null
           },
+          "scaling_group": "default",
           "mounts": {
           },
           "resources": {
@@ -56,6 +57,7 @@
             "run": null,
             "git": null
           },
+          "scaling_group": "default",
           "mounts": {
           },
           "resources": {

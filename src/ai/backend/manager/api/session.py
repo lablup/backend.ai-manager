@@ -226,17 +226,21 @@ overwritten_param_check = t.Dict({
     t.Key('session_name'): t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
     t.Key('image', default=None): t.Null | t.String,
     tx.AliasedKey(['session_type', 'sess_type']): tx.Enum(SessionTypes),
-    t.Key('group', default='default'): t.String,
-    t.Key('domain', default='default'): t.String,
-    t.Key('config', default=dict): t.Mapping(t.String, t.Any),
+    t.Key('group', default=None): t.Null | t.String,
+    t.Key('domain', default=None): t.Null | t.String,
+    t.Key('config', default=None): t.Null | t.Mapping(t.String, t.Any),
     t.Key('tag', default=None): t.Null | t.String,
     t.Key('enqueue_only', default=False): t.ToBool,
     t.Key('max_wait_seconds', default=0): t.Int[0:],
     t.Key('reuse', default=True): t.ToBool,
     t.Key('startup_command', default=None): t.Null | t.String,
     t.Key('bootstrap_script', default=None): t.Null | t.String,
-    t.Key('owner_access_key', default=None): t.Null | t.String
-})
+    t.Key('owner_access_key', default=None): t.Null | t.String,
+    tx.AliasedKey(['scaling_group', 'scalingGroup'], default=None): t.Null | t.String,
+    tx.AliasedKey(['cluster_size', 'clusterSize'], default=None): t.Null | t.Int[1:],
+    tx.AliasedKey(['cluster_mode', 'clusterMode'], default='single-node'): tx.Enum(ClusterMode),
+    tx.AliasedKey(['starts_at', 'startsAt'], default=None): t.Null | t.String,
+}).allow_extra('*')
 
 
 def sub(d, old, new):
@@ -575,10 +579,12 @@ async def _create(request: web.Request, params: Any, db) -> web.Response:
         tx.AliasedKey(['image', 'lang'], default=undefined): UndefChecker | t.Null | t.String,
         tx.AliasedKey(['type', 'sessionType'], default='interactive') >> 'session_type':
             tx.Enum(SessionTypes),
-        tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
-        tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
+        tx.AliasedKey(['group', 'groupName', 'group_name'], default=undefined):
+            UndefChecker | t.Null | t.String,
+        tx.AliasedKey(['domain', 'domainName', 'domain_name'], default=undefined):
+            UndefChecker | t.Null | t.String,
         tx.AliasedKey(['cluster_size', 'clusterSize'], default=1):
-            t.ToInt[1:],             # new in APIv6
+            t.ToInt[1:],           # new in APIv6
         tx.AliasedKey(['cluster_mode', 'clusterMode'], default='single-node'):
             tx.Enum(ClusterMode),  # new in APIv6
         t.Key('config', default=dict): t.Mapping(t.String, t.Any),
@@ -595,6 +601,8 @@ async def _create(request: web.Request, params: Any, db) -> web.Response:
     }
 ), loads=_json_loads)
 async def create_from_template(request: web.Request, params: Any) -> web.Response:
+    # TODO: we need to refactor session_template model to load the template configs
+    #       by one batch. Currently, we need to set every template configs one by one.
     root_ctx: RootContext = request.app['_root.context']
 
     if params['image'] is None and params['template_id'] is None:
@@ -614,14 +622,26 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
                                    extra_data=e.as_dict())
     async with root_ctx.db.begin() as conn:
         query = (
-                    sa.select([session_templates.c.template])
-                      .select_from(session_templates)
-                      .where((session_templates.c.id == params['template_id']) &
-                                session_templates.c.is_active)
-                )
-        template = await conn.scalar(query)
+            sa.select([session_templates])
+            .select_from(session_templates)
+            .where((session_templates.c.id == params['template_id']) &
+                   session_templates.c.is_active)
+        )
+        result = await conn.execute(query)
+        template_info = result.fetchone()
+        template = template_info['template']
         if not template:
             raise TaskTemplateNotFound
+
+        group_name = None
+        if template_info['domain_name'] and template_info['group_id']:
+            query = (
+                sa.select([groups.c.name])
+                .select_from(groups)
+                .where((groups.c.domain_name == template_info['domain_name']) &
+                       (groups.c.id == template_info['group_id']))
+            )
+            group_name = await conn.scalar(query)
 
     if isinstance(template, str):
         template = json.loads(template)
@@ -630,7 +650,10 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
     param_from_template = {
         'image': template['spec']['kernel']['image'],
     }
-
+    if 'domain_name' in template_info:
+        param_from_template['domain'] = template_info['domain_name']
+    if group_name:
+        param_from_template['group'] = group_name
     if template['spec']['session_type'] == 'interactive':
         param_from_template['session_type'] = SessionTypes.INTERACTIVE
     elif template['spec']['session_type'] == 'batch':
@@ -649,6 +672,8 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
             param_from_template['startup_command'] = startup
 
     config_from_template: MutableMapping[Any, Any] = {}
+    if scaling_group := template['spec'].get('scaling_group'):  # noqa
+        config_from_template['scaling_group'] = scaling_group
     if mounts := template['spec'].get('mounts'):  # noqa
         config_from_template['mounts'] = list(mounts.keys())
         config_from_template['mount_map'] = {
@@ -669,9 +694,10 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
 
     log.debug('Override config: {0}', override_config)
     log.debug('Override params: {0}', override_params)
-    config_from_template.update(override_config)
-    param_from_template.update(override_params)
-
+    if override_config:
+        config_from_template.update(override_config)
+    if override_params:
+        param_from_template.update(override_params)
     try:
         params = overwritten_param_check.check(param_from_template)
     except RuntimeError as e1:
