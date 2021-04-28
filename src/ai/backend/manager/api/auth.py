@@ -628,7 +628,7 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
     # their own authentication steps, like LDAP authentication, etc.
     hook_result = await root_ctx.hook_plugin_ctx.dispatch(
         'AUTHORIZE',
-        (params, root_ctx.db),
+        (request, params,),
         return_when=FIRST_COMPLETED,
     )
     if hook_result.status != PASSED:
