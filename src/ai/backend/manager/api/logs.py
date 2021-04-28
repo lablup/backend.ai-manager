@@ -1,25 +1,26 @@
 from __future__ import annotations
 
-import asyncio
 import datetime as dt
 from datetime import datetime
-import functools
 import logging
 import uuid
+from ai.backend.common.events import EventHandler
 
 from aiohttp import web
 import aiohttp_cors
-import aioredlock
-import aiotools
+import aioredis
 import attr
 import sqlalchemy as sa
 import trafaret as t
 from typing import Any, TYPE_CHECKING, Tuple, MutableMapping
 
 from ai.backend.common import validators as tx
+from ai.backend.common.events import AbstractEvent, EmptyEventArgs
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.types import LogSeverity
+from ai.backend.common.types import AgentId, LogSeverity
 
+from ..defs import REDIS_LIVE_DB
+from ..distributed import GlobalTimer
 from ..models import (
     error_logs, UserRole, groups,
     association_groups_users as agus
@@ -33,6 +34,10 @@ if TYPE_CHECKING:
     from .context import RootContext
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
+
+
+class DoLogCleanupEvent(EmptyEventArgs, AbstractEvent):
+    name = "do_log_cleanup"
 
 
 @server_status_required(READ_ALLOWED)
@@ -191,9 +196,8 @@ async def mark_cleared(request: web.Request) -> web.Response:
         return web.json_response({'success': True}, status=200)
 
 
-async def log_cleanup_task(app: web.Application, interval):
+async def log_cleanup_task(app: web.Application, src: AgentId, event: DoLogCleanupEvent) -> None:
     root_ctx: RootContext = app['_root.context']
-    app_ctx: PrivateContext = app['logs.context']
     etcd = root_ctx.shared_config.etcd
     raw_lifetime = await etcd.get('config/logs/error/retention')
     if raw_lifetime is None:
@@ -206,46 +210,50 @@ async def log_cleanup_task(app: web.Application, interval):
         log.info('Retention value specified in etcd not recognized by'
                  'trafaret validator, falling back to 90 days')
     boundary = datetime.now() - lifetime
-    try:
-        lock = await app_ctx.log_cleanup_lock.lock('gateway.logs')
-        async with lock:
-            async with root_ctx.db.begin() as conn:
-                query = (sa.select([error_logs.c.id])
-                            .select_from(error_logs)
-                            .where(error_logs.c.created_at < boundary))
-                result = await conn.execute(query)
-                log_ids = []
-                for row in result:
-                    log_ids.append(row['id'])
-                if len(log_ids) > 0:
-                    log.info('Cleaning up {} log{}', len(log_ids), 's' if len(log_ids) > 1 else '')
-                query = error_logs.delete().where(error_logs.c.id.in_(log_ids))
-                result = await conn.execute(query)
-                assert result.rowcount == len(log_ids)
-
-    except aioredlock.LockError:
-        log.debug('schedule(): temporary locking failure; will be retried.')
+    async with root_ctx.db.begin() as conn:
+        query = (
+            sa.delete(error_logs)
+            .where(error_logs.c.created_at < boundary)
+        )
+        result = await conn.execute(query)
+        if result.rowcount > 0:
+            log.info('Cleaned up {} log(s) filed before {}', result.rowcount, boundary)
 
 
 @attr.s(slots=True, auto_attribs=True, init=False)
 class PrivateContext:
-    log_cleanup_lock: aioredlock.Aioredlock
-    log_cleanup_task: asyncio.Task
+    log_cleanup_timer: GlobalTimer
+    log_cleanup_timer_redis: aioredis.Redis
+    log_cleanup_timer_evh: EventHandler[web.Application, DoLogCleanupEvent]
 
 
 async def init(app: web.Application) -> None:
     root_ctx: RootContext = app['_root.context']
     app_ctx: PrivateContext = app['logs.context']
-    redis_url = root_ctx.shared_config.get_redis_url()
-    app_ctx.log_cleanup_lock = aioredlock.Aioredlock([str(redis_url)])
-    app_ctx.log_cleanup_task = aiotools.create_timer(
-        functools.partial(log_cleanup_task, app), 5.0)
+    app_ctx.log_cleanup_timer_evh = root_ctx.event_dispatcher.consume(
+        DoLogCleanupEvent, app, log_cleanup_task,
+    )
+    app_ctx.log_cleanup_timer_redis = await aioredis.create_redis(
+        str(root_ctx.shared_config.get_redis_url(db=REDIS_LIVE_DB))
+    )
+    app_ctx.log_cleanup_timer = GlobalTimer(
+        app_ctx.log_cleanup_timer_redis,
+        "manager_log_cleanup",
+        root_ctx.event_producer,
+        lambda: DoLogCleanupEvent(),
+        20.0,
+        initial_delay=17.0,
+    )
+    await app_ctx.log_cleanup_timer.join()
 
 
 async def shutdown(app: web.Application) -> None:
+    root_ctx: RootContext = app['_root.context']
     app_ctx: PrivateContext = app['logs.context']
-    app_ctx.log_cleanup_task.cancel()
-    await app_ctx.log_cleanup_task
+    await app_ctx.log_cleanup_timer.leave()
+    app_ctx.log_cleanup_timer_redis.close()
+    await app_ctx.log_cleanup_timer_redis.wait_closed()
+    root_ctx.event_dispatcher.unconsume(app_ctx.log_cleanup_timer_evh)
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
