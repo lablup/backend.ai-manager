@@ -202,13 +202,15 @@ async def log_cleanup_task(app: web.Application, src: AgentId, event: DoLogClean
     raw_lifetime = await etcd.get('config/logs/error/retention')
     if raw_lifetime is None:
         raw_lifetime = '90d'
-    checker = tx.TimeDuration()
     try:
-        lifetime = checker.check(raw_lifetime)
+        lifetime = tx.TimeDuration().check(raw_lifetime)
     except ValueError:
         lifetime = dt.timedelta(days=90)
-        log.info('Retention value specified in etcd not recognized by'
-                 'trafaret validator, falling back to 90 days')
+        log.warning(
+            "Failed to parse the error log retention period ({}) read from etcd; "
+            "falling back to 90 days",
+            raw_lifetime,
+        )
     boundary = datetime.now() - lifetime
     async with root_ctx.db.begin() as conn:
         query = (
