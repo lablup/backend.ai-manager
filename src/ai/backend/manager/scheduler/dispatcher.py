@@ -613,6 +613,8 @@ class SchedulerDispatcher(aobject):
             )
             rows = (await conn.execute(query)).fetchall()
             scheduled_sessions = PendingSession.from_rows(rows)
+            if not scheduled_sessions:
+                return
             # Change the status within a single transaction to avoid races.
             now = datetime.now(tzutc())
             query = kernels.update().values({
