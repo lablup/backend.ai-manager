@@ -740,8 +740,6 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
 async def create_from_params(request: web.Request, params: Any) -> web.Response:
     if params['session_name'] in ['from-template']:
         raise InvalidAPIParameters(f'Requested session ID {params["session_name"]} is reserved word')
-
-    root_ctx: RootContext = request.app['_root.context']
     api_version = request['api_version']
     if 6 <= api_version[0]:
         creation_config = creation_config_v5.check(params['config'])
@@ -756,7 +754,6 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
     else:
         raise InvalidAPIParameters('API version not supported')
     params['config'] = creation_config
-
     return await _create(request, params)
 
 
