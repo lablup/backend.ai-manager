@@ -101,6 +101,7 @@ from ..models import (
     DEAD_KERNEL_STATUSES,
 )
 from ..models.kernel import match_session_ids
+from ..models.utils import execute_with_retry
 from .exceptions import (
     InvalidAPIParameters,
     GenericNotFound,
@@ -1038,7 +1039,8 @@ async def handle_kernel_creation_lifecycle(
         return
     log.debug('handle_kernel_creation_lifecycle: ev:{} k:{}', event.name, event.kernel_id)
     if event.name == 'kernel_preparing':
-        await root_ctx.registry.set_kernel_status(event.kernel_id, KernelStatus.PREPARING, event.reason)
+        # State transition is done by the DoPrepareEvent handler inside the scheduler-distpacher object.
+        pass
     elif event.name == 'kernel_pulling':
         await root_ctx.registry.set_kernel_status(event.kernel_id, KernelStatus.PULLING, event.reason)
     elif event.name == 'kernel_creating':
@@ -1227,7 +1229,7 @@ async def handle_kernel_log(
                 query = (sa.update(kernels)
                            .values(container_log=log_buffer.getvalue())
                            .where(kernels.c.id == event.kernel_id))
-                await conn.execute(query)
+                await execute_with_retry(conn, query)
         finally:
             # Clear the log data from Redis when done.
             await redis.execute_with_retries(

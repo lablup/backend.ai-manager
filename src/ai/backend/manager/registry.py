@@ -40,7 +40,6 @@ from ai.backend.common.events import (
 
 import aiodocker
 import aiohttp
-
 import aiotools
 from aioredis import Redis
 from async_timeout import timeout as _timeout
@@ -112,7 +111,7 @@ from .models import (
     DEAD_KERNEL_STATUSES,
 )
 from .models.kernel import match_session_ids, get_all_kernels, get_main_kernels
-from .models.utils import reenter_txn
+from .models.utils import reenter_txn, execute_with_retry
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import (
@@ -1057,7 +1056,7 @@ class AgentRegistry:
                     'stdout_port': 0,
                     'preopen_ports': creation_config.get('preopen_ports', []),
                 })
-                await conn.execute(query)
+                await execute_with_retry(conn, query)
                 ids.append(kernel_id)
 
         await self.hook_plugin_ctx.notify(
@@ -1216,7 +1215,7 @@ class AgentRegistry:
                             'service_ports': service_ports,
                         })
                         .where(kernels.c.id == created_info['id']))
-                    await conn.execute(query)
+                    await execute_with_retry(conn, query)
 
             async def _create_kernels_in_one_agent(
                 agent_alloc_ctx: AgentAllocationContext,
@@ -1443,18 +1442,18 @@ class AgentRegistry:
                     query = (sa.update(keypairs)
                                .values(concurrency_used=used)
                                .where(keypairs.c.access_key == ak))
-                    await conn.execute(query)
+                    await execute_with_retry(conn, query)
                 # Update all other keypairs to have concurrency_used = 0.
                 query = (sa.update(keypairs)
                            .values(concurrency_used=0)
                            .where(keypairs.c.concurrency_used != 0)
                            .where(sa.not_(keypairs.c.access_key.in_(concurrency_used_per_key.keys()))))
-                await conn.execute(query)
+                await execute_with_retry(conn, query)
             else:
                 query = (sa.update(keypairs)
                            .values(concurrency_used=0)
                            .where(keypairs.c.concurrency_used != 0))
-                await conn.execute(query)
+                await execute_with_retry(conn, query)
 
             if len(occupied_slots_per_agent) > 0:
                 # Update occupied_slots for agents with running containers.
@@ -1462,18 +1461,18 @@ class AgentRegistry:
                     query = (sa.update(agents)
                                .values(occupied_slots=slots)
                                .where(agents.c.id == aid))
-                    await conn.execute(query)
+                    await execute_with_retry(conn, query)
                 # Update all other agents to have empty occupied_slots.
                 query = (sa.update(agents)
                            .values(occupied_slots=ResourceSlot({}))
                            .where(agents.c.status == AgentStatus.ALIVE)
                            .where(sa.not_(agents.c.id.in_(occupied_slots_per_agent.keys()))))
-                await conn.execute(query)
+                await execute_with_retry(conn, query)
             else:
                 query = (sa.update(agents)
                            .values(occupied_slots=ResourceSlot({}))
                            .where(agents.c.status == AgentStatus.ALIVE))
-                await conn.execute(query)
+                await execute_with_retry(conn, query)
 
     async def destroy_session_lowlevel(
         self,
@@ -1559,7 +1558,7 @@ class AgentRegistry:
                     .select_from(kernels)
                     .where(kernels.c.session_id == session['id'])
                 )
-                result = await conn.execute(query)
+                result = await execute_with_retry(conn, query)
                 kernel_list = result.fetchall()
 
             main_stat = {}
@@ -1575,7 +1574,8 @@ class AgentRegistry:
                 for kernel in grouped_kernels:
                     if kernel['status'] == KernelStatus.PENDING:
                         async with self.db.begin() as conn:
-                            await conn.execute(
+                            await execute_with_retry(
+                                conn,
                                 sa.update(kernels)
                                 .values({
                                     'status': KernelStatus.CANCELLED,
@@ -1617,14 +1617,16 @@ class AgentRegistry:
                             if kernel['cluster_role'] == DEFAULT_ROLE:
                                 # The main session is terminated;
                                 # decrement the user's concurrency counter
-                                await conn.execute(
+                                await execute_with_retry(
+                                    conn,
                                     sa.update(keypairs)
                                     .values({
                                         'concurrency_used': keypairs.c.concurrency_used - 1,
                                     })
                                     .where(keypairs.c.access_key == kernel['access_key'])
                                 )
-                            await conn.execute(
+                            await execute_with_retry(
+                                conn,
                                 sa.update(kernels)
                                 .values({
                                     'status': KernelStatus.TERMINATED,
@@ -1647,7 +1649,8 @@ class AgentRegistry:
                                     })
                                     .where(keypairs.c.access_key == kernel['access_key'])
                                 )
-                            await conn.execute(
+                            await execute_with_retry(
+                                conn,
                                 sa.update(kernels)
                                 .values({
                                     'status': KernelStatus.TERMINATING,
@@ -1732,7 +1735,7 @@ class AgentRegistry:
                     (kernels.c.cluster_role == DEFAULT_ROLE)
                 )
             )
-            result = await conn.execute(query)
+            result = await execute_with_retry(conn, query)
             session = result.first()
             if session is None:
                 return
@@ -2110,7 +2113,7 @@ class AgentRegistry:
 
             # Check and update status of the agent record in DB
             async with self.db.begin() as conn:
-                query = (
+                fetch_query = (
                     sa.select([
                         agents.c.status,
                         agents.c.addr,
@@ -2123,14 +2126,14 @@ class AgentRegistry:
                     .where(agents.c.id == agent_id)
                     .with_for_update()
                 )
-                result = await conn.execute(query)
+                result = await execute_with_retry(conn, fetch_query)
                 row = result.first()
 
                 if row is None or row['status'] is None:
                     # new agent detected!
                     log.info('agent {0} joined!', agent_id)
                     await self.shared_config.update_resource_slots(slot_key_and_units)
-                    query = sa.insert(agents).values({
+                    insert_query = sa.insert(agents).values({
                         'id': agent_id,
                         'status': AgentStatus.ALIVE,
                         'region': agent_info['region'],
@@ -2143,7 +2146,7 @@ class AgentRegistry:
                         'version': agent_info['version'],
                         'compute_plugins': agent_info['compute_plugins'],
                     })
-                    result = await conn.execute(query)
+                    result = await execute_with_retry(conn, insert_query)
                     assert result.rowcount == 1
                 elif row['status'] == AgentStatus.ALIVE:
                     updates = {}
@@ -2160,14 +2163,16 @@ class AgentRegistry:
                     # occupied_slots are updated when kernels starts/terminates
                     if updates:
                         await self.shared_config.update_resource_slots(slot_key_and_units)
-                        query = (sa.update(agents)
-                                   .values(updates)
-                                   .where(agents.c.id == agent_id))
-                        await conn.execute(query)
+                        update_query = (
+                            sa.update(agents)
+                            .values(updates)
+                            .where(agents.c.id == agent_id)
+                        )
+                        await execute_with_retry(conn, update_query)
                 elif row['status'] in (AgentStatus.LOST, AgentStatus.TERMINATED):
                     await self.shared_config.update_resource_slots(slot_key_and_units)
                     instance_rejoin = True
-                    query = (
+                    update_query = (
                         sa.update(agents)
                         .values({
                             'status': AgentStatus.ALIVE,
@@ -2181,7 +2186,7 @@ class AgentRegistry:
                         })
                         .where(agents.c.id == agent_id)
                     )
-                    await conn.execute(query)
+                    await execute_with_retry(conn, update_query)
                 else:
                     log.error('should not reach here! {0}', type(row['status']))
 
@@ -2208,7 +2213,7 @@ class AgentRegistry:
             (agent_id, sgroup, available_slots),
         )
 
-    async def mark_agent_terminated(self, agent_id, status, conn=None):
+    async def mark_agent_terminated(self, agent_id: AgentId, status: AgentStatus) -> None:
         global agent_peers
         await self.redis_live.hdel('agent.last_seen', agent_id)
 
@@ -2219,8 +2224,8 @@ class AgentRegistry:
             return pipe
         await redis.execute_with_retries(_pipe_builder)
 
-        async with reenter_txn(self.db, conn) as conn:
-            query = (
+        async with self.db.begin() as conn:
+            fetch_query = (
                 sa.select([
                     agents.c.status,
                     agents.c.addr,
@@ -2229,7 +2234,7 @@ class AgentRegistry:
                 .where(agents.c.id == agent_id)
                 .with_for_update()
             )
-            result = await conn.execute(query)
+            result = await execute_with_retry(conn, fetch_query)
             row = result.first()
             peer = agent_peers.pop(row['addr'], None)
             if peer is not None:
@@ -2243,7 +2248,7 @@ class AgentRegistry:
             elif status == AgentStatus.TERMINATED:
                 log.info('agent {0} has terminated.', agent_id)
             now = datetime.now(tzutc())
-            query = (
+            update_query = (
                 sa.update(agents)
                 .values({
                     'status': status,
@@ -2252,7 +2257,7 @@ class AgentRegistry:
                 })
                 .where(agents.c.id == agent_id)
             )
-            await conn.execute(query)
+            await execute_with_retry(conn, update_query)
 
     async def set_session_status(
         self,
@@ -2272,7 +2277,8 @@ class AgentRegistry:
         if status in (KernelStatus.CANCELLED, KernelStatus.TERMINATED):
             data['terminated_at'] = now
         data.update(extra_fields)
-        async with reenter_txn(self.db, db_connection) as conn:
+        # async with reenter_txn(self.db, db_connection) as conn:
+        async with self.db.begin() as conn:
             query = (
                 sa.update(kernels)
                 .values(data)
@@ -2282,7 +2288,7 @@ class AgentRegistry:
                     ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES))
                 )
             )
-            await conn.execute(query)
+            await execute_with_retry(conn, query)
 
     async def set_kernel_status(
         self, kernel_id: KernelId,
@@ -2301,13 +2307,14 @@ class AgentRegistry:
         }
         if status in (KernelStatus.CANCELLED, KernelStatus.TERMINATED):
             data['terminated_at'] = now
-        async with reenter_txn(self.db, db_conn) as conn:
+        # async with reenter_txn(self.db, db_conn) as conn:
+        async with self.db.begin() as conn:
             query = (
                 sa.update(kernels)
                 .values(data)
                 .where(kernels.c.id == kernel_id)
             )
-            await conn.execute(query)
+            await execute_with_retry(conn, query)
 
     async def set_session_result(
         self,
@@ -2320,13 +2327,14 @@ class AgentRegistry:
         data = {
             'result': SessionResult.SUCCESS if success else SessionResult.FAILURE,
         }
-        async with reenter_txn(self.db, db_conn) as conn:
+        # async with reenter_txn(self.db, db_conn) as conn:
+        async with self.db.begin() as conn:
             query = (
                 sa.update(kernels)
                 .values(data)
                 .where(kernels.c.id == session_id)
             )
-            await conn.execute(query)
+            await execute_with_retry(conn, query)
 
     async def sync_kernel_stats(
         self, kernel_ids: Sequence[KernelId], *,
@@ -2367,14 +2375,15 @@ class AgentRegistry:
                 continue
             per_kernel_updates[kernel_id] = updates
 
-        async with reenter_txn(self.db, db_conn) as conn:
+        # async with reenter_txn(self.db, db_conn) as conn:
+        async with self.db.begin() as conn:
             for kernel_id, updates in per_kernel_updates.items():
-                query = (
+                update_query = (
                     sa.update(kernels)
                     .values(updates)
                     .where(kernels.c.id == kernel_id)
                 )
-                await conn.execute(query)
+                await execute_with_retry(conn, update_query)
 
     async def mark_kernel_terminated(
         self,
@@ -2393,7 +2402,7 @@ class AgentRegistry:
 
         async with self.db.begin() as conn:
             # Check the current status.
-            query = (
+            select_query = (
                 sa.select([
                     kernels.c.access_key,
                     kernels.c.agent,
@@ -2405,7 +2414,7 @@ class AgentRegistry:
                 .where(kernels.c.id == kernel_id)
                 .with_for_update()
             )
-            result = await conn.execute(query)
+            result = await conn.execute(select_query)
             kernel = result.first()
             if (
                 kernel is None
@@ -2421,7 +2430,7 @@ class AgentRegistry:
             # Change the status to TERMINATED.
             # (we don't delete the row for later logging and billing)
             now = datetime.now(tzutc())
-            query = (
+            update_query = (
                 sa.update(kernels)
                 .values({
                     'status': KernelStatus.TERMINATED,
@@ -2431,7 +2440,7 @@ class AgentRegistry:
                 })
                 .where(kernels.c.id == kernel_id)
             )
-            await conn.execute(query)
+            await execute_with_retry(conn, update_query)
             await recalc_concurrency_used(conn, kernel['access_key'])
             await recalc_agent_resource_occupancy(conn, kernel['agent'])
 

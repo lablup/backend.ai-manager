@@ -103,35 +103,41 @@ async def list_logs(request: web.Request, params: Any) -> web.Response:
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*')
     async with root_ctx.db.begin() as conn:
         is_admin = True
-        query = (sa.select('*')
-                   .select_from(error_logs)
-                   .order_by(sa.desc(error_logs.c.created_at))
-                   .limit(params['page_size']))
-        count_query = (sa.select([sa.func.count(error_logs.c.message)])
-                         .select_from(error_logs))
+        select_query = (
+            sa.select([error_logs])
+            .select_from(error_logs)
+            .order_by(sa.desc(error_logs.c.created_at))
+            .limit(params['page_size'])
+        )
+        count_query = (
+            sa.select([sa.func.count(error_logs.c.message)])
+            .select_from(error_logs)
+        )
         if params['page_no'] > 1:
-            query = query.offset((params['page_no'] - 1) * params['page_size'])
+            select_query = select_query.offset((params['page_no'] - 1) * params['page_size'])
         if request['is_superadmin']:
             pass
         elif user_role == UserRole.ADMIN or user_role == 'admin':
             j = (groups.join(agus, groups.c.id == agus.c.group_id))
-            usr_query = (sa.select([agus.c.user_id])
-                           .select_from(j)
-                           .where([groups.c.domain_name == domain_name]))
+            usr_query = (
+                sa.select([agus.c.user_id])
+                .select_from(j)
+                .where(groups.c.domain_name == domain_name)
+            )
             result = await conn.execute(usr_query)
             usrs = result.fetchall()
             user_ids = [g.id for g in usrs]
             where = error_logs.c.user.in_(user_ids)
-            query = query.where(where)
-            count_query = query.where(where)
+            select_query = select_query.where(where)
+            count_query = count_query.where(where)
         else:
             is_admin = False
             where = ((error_logs.c.user == user_uuid) &
                      (~error_logs.c.is_cleared))
-            query = query.where(where)
-            count_query = query.where(where)
+            select_query = select_query.where(where)
+            count_query = count_query.where(where)
 
-        result = await conn.execute(query)
+        result = await conn.execute(select_query)
         for row in result:
             result_item = {
                 'log_id': str(row['id']),
@@ -154,10 +160,12 @@ async def list_logs(request: web.Request, params: Any) -> web.Response:
             resp['logs'].append(result_item)
         resp['count'] = await conn.scalar(count_query)
         if params['mark_read']:
-            update = (sa.update(error_logs)
-                        .values(is_read=True)
-                        .where(error_logs.c.id.in_([x['log_id'] for x in resp['logs']])))
-            await conn.execute(update)
+            read_update_query = (
+                sa.update(error_logs)
+                .values(is_read=True)
+                .where(error_logs.c.id.in_([x['log_id'] for x in resp['logs']]))
+            )
+            await conn.execute(read_update_query)
         return web.json_response(resp, status=200)
 
 
@@ -172,25 +180,33 @@ async def mark_cleared(request: web.Request) -> web.Response:
 
     log.info('CLEAR')
     async with root_ctx.db.begin() as conn:
-        query = (sa.update(error_logs)
-                   .values(is_cleared=True))
+        update_query = (
+            sa.update(error_logs)
+            .values(is_cleared=True)
+        )
         if request['is_superadmin']:
-            query = query.where(error_logs.c.id == log_id)
+            update_query = update_query.where(error_logs.c.id == log_id)
         elif user_role == UserRole.ADMIN or user_role == 'admin':
             j = (groups.join(agus, groups.c.id == agus.c.group_id))
-            usr_query = (sa.select([agus.c.user_id])
-                           .select_from(j)
-                           .where([groups.c.domain_name == domain_name]))
+            usr_query = (
+                sa.select([agus.c.user_id])
+                .select_from(j)
+                .where(groups.c.domain_name == domain_name)
+            )
             result = await conn.execute(usr_query)
             usrs = result.fetchall()
             user_ids = [g.id for g in usrs]
-            query = query.where((error_logs.c.user.in_(user_ids)) &
-                                (error_logs.c.id == log_id))
+            update_query = update_query.where(
+                (error_logs.c.user.in_(user_ids)) &
+                (error_logs.c.id == log_id)
+            )
         else:
-            query = (query.where((error_logs.c.user == user_uuid) &
-                                 (error_logs.c.id == log_id)))
+            update_query = update_query.where(
+                (error_logs.c.user == user_uuid) &
+                (error_logs.c.id == log_id)
+            )
 
-        result = await conn.execute(query)
+        result = await conn.execute(update_query)
         assert result.rowcount == 1
 
         return web.json_response({'success': True}, status=200)

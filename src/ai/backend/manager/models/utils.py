@@ -1,8 +1,15 @@
 from contextlib import asynccontextmanager as actxmgr
-from typing import Any, AsyncIterator, Mapping, Tuple
+from typing import (
+    Any,
+    AsyncIterator,
+    Final,
+    Mapping,
+    Tuple,
+)
 
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as psql
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import (
     AsyncConnection as SAConnection,
     AsyncEngine as SAEngine,
@@ -17,6 +24,60 @@ async def reenter_txn(pool: SAEngine, conn: SAConnection) -> AsyncIterator[SACon
     else:
         async with conn.begin_nested():
             yield conn
+
+
+@actxmgr
+async def advisory_lock(db: SAEngine, lock_id: int) -> AsyncIterator[None]:
+    async with db.connect() as lock_conn:
+        # It is usually a BAD practice to directly interpolate strings into SQL statements,
+        # but in this case:
+        #  - The lock ID is only given from trusted codes.
+        #  - asyncpg does not support parameter interpolation with raw SQL statements.
+        await lock_conn.exec_driver_sql(f"SELECT pg_advisory_lock({lock_id:d})")
+        try:
+            yield
+        finally:
+            await lock_conn.exec_driver_sql(f"SELECT pg_advisory_unlock({lock_id:d})")
+
+
+async def execute_with_retry(conn: SAConnection, query):
+    max_retries: Final = 10
+    num_retries = 0
+    while True:
+        if num_retries == max_retries:
+            raise RuntimeError(f"DB serialization failed after {max_retries} retries")
+        try:
+            result = await conn.execute(query)
+            # if num_retries > 0:
+            #    await conn.commit()
+            return result
+        except DBAPIError as e:
+            num_retries += 1
+            if getattr(e.orig, 'pgcode', None) == '40001':
+                await conn.rollback()
+                await conn.begin()
+                continue
+            raise
+
+
+async def execute_nested_with_retry(conn: SAConnection, query):
+    max_retries: Final = 10
+    num_retries = 0
+    while True:
+        if num_retries == max_retries:
+            raise RuntimeError(f"DB serialization failed after {max_retries} retries")
+        try:
+            result = await conn.execute(query)
+            # if num_retries > 0:
+            #    await conn.commit()
+            return result
+        except DBAPIError as e:
+            num_retries += 1
+            if getattr(e.orig, 'pgcode', None) == '40001':
+                await conn.rollback()
+                await conn.begin_nested()
+                continue
+            raise
 
 
 def sql_json_merge(

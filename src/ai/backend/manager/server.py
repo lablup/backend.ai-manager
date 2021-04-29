@@ -325,7 +325,7 @@ async def database_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     dbname = root_ctx.local_config['db']['name']
     url = f"postgresql+asyncpg://{urlquote(username)}:{urlquote(password)}@{address}/{urlquote(dbname)}"
 
-    version_check_db = create_async_engine(url)
+    version_check_db = create_async_engine(url, future=True)
     async with version_check_db.connect() as conn:
         result = await conn.execute(sa.text("show server_version"))
         major, minor, *_ = map(int, result.scalar().split("."))
@@ -338,7 +338,9 @@ async def database_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
         connect_args=pgsql_connect_opts,
         pool_size=8,
         max_overflow=64,
-        json_serializer=functools.partial(json.dumps, cls=ExtendedJSONEncoder)
+        json_serializer=functools.partial(json.dumps, cls=ExtendedJSONEncoder),
+        isolation_level="REPEATABLE READ",
+        future=True,
     )
     yield
     await root_ctx.db.dispose()
