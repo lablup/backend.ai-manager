@@ -256,7 +256,9 @@ def drop(d, dropval):
     newd = {}
     for k, v in d.items():
         if isinstance(v, Mapping) or isinstance(v, dict):
-            newd[k] = drop(v, dropval)
+            newval = drop(v, dropval)
+            if len(newval.keys()) > 0:  # exclude empty dict always
+                newd[k] = newval
         elif v != dropval:
             newd[k] = v
     return newd
