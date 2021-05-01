@@ -28,6 +28,7 @@ from sqlalchemy.sql.expression import true
 
 from ai.backend.common.events import (
     AgentStartedEvent,
+    CoalescingOptions,
     DoScheduleEvent,
     DoPrepareEvent,
     SessionCancelledEvent,
@@ -154,11 +155,17 @@ class SchedulerDispatcher(aobject):
         self.db = registry.db
 
     async def __ainit__(self) -> None:
-        self.registry.event_dispatcher.consume(SessionEnqueuedEvent, None, self.schedule)
-        self.registry.event_dispatcher.consume(SessionTerminatedEvent, None, self.schedule)
-        self.registry.event_dispatcher.consume(AgentStartedEvent, None, self.schedule)
-        self.registry.event_dispatcher.consume(DoScheduleEvent, None, self.schedule)
-        self.registry.event_dispatcher.consume(DoPrepareEvent, None, self.prepare)
+        coalescing_opts: CoalescingOptions = {
+            'max_wait': 0.5,
+            'max_batch_size': 32,
+        }
+        # coalescing_opts = None
+        evd = self.registry.event_dispatcher
+        evd.consume(SessionEnqueuedEvent, None, self.schedule, coalescing_opts, name="dispatcher.enq")
+        evd.consume(SessionTerminatedEvent, None, self.schedule, coalescing_opts, name="dispatcher.term")
+        evd.consume(AgentStartedEvent, None, self.schedule)
+        evd.consume(DoScheduleEvent, None, self.schedule, coalescing_opts)
+        evd.consume(DoPrepareEvent, None, self.prepare)
         redis_url = self.shared_config.get_redis_url(db=REDIS_STREAM_DB)
         self.schedule_timer_redis = await aioredis.create_redis(str(redis_url))
         self.prepare_timer_redis = await aioredis.create_redis(str(redis_url))
@@ -553,7 +560,7 @@ class SchedulerDispatcher(aobject):
                                 }
                             ),
                         }).where(kernels.c.id == kernel.kernel_id)
-                        await kernel_db_conn.execute(query)
+                        await execute_with_retry(kernel_db_conn, query)
                     raise
                 except Exception as e:
                     log.exception(
@@ -568,7 +575,7 @@ class SchedulerDispatcher(aobject):
                             'status_info': "scheduler-error",
                             'status_data': convert_to_status_data(e),
                         }).where(kernels.c.id == kernel.kernel_id)
-                        await kernel_db_conn.execute(query)
+                        await execute_with_retry(kernel_db_conn, query)
                     raise
                 else:
                     kernel_agent_bindings.append(KernelAgentBinding(kernel, agent_alloc_ctx))
@@ -586,7 +593,7 @@ class SchedulerDispatcher(aobject):
                     'status_data': {},
                     'status_changed': datetime.now(tzutc()),
                 }).where(kernels.c.id == binding.kernel.kernel_id)
-                await kernel_db_conn.execute(query)
+                await execute_with_retry(kernel_db_conn, query)
         await self.registry.event_producer.produce_event(
             SessionScheduledEvent(sess_ctx.session_id, sess_ctx.session_creation_id)
         )

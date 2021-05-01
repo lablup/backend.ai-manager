@@ -1866,15 +1866,15 @@ async def init(app: web.Application) -> None:
 
     # passive events
     evd = root_ctx.event_dispatcher
-    evd.subscribe(KernelPreparingEvent, app, handle_kernel_creation_lifecycle)
-    evd.subscribe(KernelPullingEvent, app, handle_kernel_creation_lifecycle)
-    evd.subscribe(KernelCreatingEvent, app, handle_kernel_creation_lifecycle)
-    evd.subscribe(KernelStartedEvent, app, handle_kernel_creation_lifecycle)
-    evd.subscribe(SessionStartedEvent, app, handle_session_creation_lifecycle)
-    evd.subscribe(SessionCancelledEvent, app, handle_session_creation_lifecycle)
-    evd.consume(KernelTerminatingEvent, app, handle_kernel_termination_lifecycle)
-    evd.consume(KernelTerminatedEvent, app, handle_kernel_termination_lifecycle)
-    evd.consume(SessionTerminatedEvent, app, handle_session_termination_lifecycle)
+    evd.subscribe(KernelPreparingEvent, app, handle_kernel_creation_lifecycle, name="api.session.kprep")
+    evd.subscribe(KernelPullingEvent, app, handle_kernel_creation_lifecycle, name="api.session.kpull")
+    evd.subscribe(KernelCreatingEvent, app, handle_kernel_creation_lifecycle, name="api.session.kcreat")
+    evd.subscribe(KernelStartedEvent, app, handle_kernel_creation_lifecycle, name="api.session.kstart")
+    evd.subscribe(SessionStartedEvent, app, handle_session_creation_lifecycle, name="api.session.sstart")
+    evd.subscribe(SessionCancelledEvent, app, handle_session_creation_lifecycle, name="api.session.scancel")
+    evd.consume(KernelTerminatingEvent, app, handle_kernel_termination_lifecycle, name="api.session.kterming")
+    evd.consume(KernelTerminatedEvent, app, handle_kernel_termination_lifecycle, name="api.session.kterm")
+    evd.consume(SessionTerminatedEvent, app, handle_session_termination_lifecycle, name="api.session.sterm")
     evd.consume(SessionSuccessEvent, app, handle_batch_result)
     evd.consume(SessionFailureEvent, app, handle_batch_result)
     evd.consume(AgentStartedEvent, app, handle_agent_lifecycle)
@@ -1882,9 +1882,9 @@ async def init(app: web.Application) -> None:
     evd.consume(AgentHeartbeatEvent, app, handle_agent_heartbeat)
 
     # action-trigerring events
-    evd.consume(DoSyncKernelStatsEvent, app, handle_kernel_stat_sync)
-    evd.consume(DoSyncKernelLogsEvent, app, handle_kernel_log)
-    evd.consume(DoTerminateSessionEvent, app, handle_destroy_session)
+    evd.consume(DoSyncKernelStatsEvent, app, handle_kernel_stat_sync, name="api.session.synckstat")
+    evd.consume(DoSyncKernelLogsEvent, app, handle_kernel_log, name="api.session.syncklog")
+    evd.consume(DoTerminateSessionEvent, app, handle_destroy_session, name="api.session.doterm")
 
     app_ctx.pending_waits = set()
 

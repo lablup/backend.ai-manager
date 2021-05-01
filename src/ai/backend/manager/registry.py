@@ -277,7 +277,7 @@ class AgentRegistry:
             query = (sa.update(agents)
                        .values(**updated_fields)
                        .where(agents.c.id == inst_id))
-            await conn.execute(query)
+            await execute_with_retry(conn, query)
 
     async def gather_agent_hwinfo(self, instance_id: AgentId) -> Mapping[str, HardwareMetadata]:
         agent = await self.get_instance(instance_id, agents.c.addr)
@@ -1642,7 +1642,8 @@ class AgentRegistry:
                             if kernel['cluster_role'] == DEFAULT_ROLE:
                                 # The main session is terminated;
                                 # decrement the user's concurrency counter
-                                await conn.execute(
+                                await execute_with_retry(
+                                    conn,
                                     sa.update(keypairs)
                                     .values({
                                         'concurrency_used': keypairs.c.concurrency_used - 1,

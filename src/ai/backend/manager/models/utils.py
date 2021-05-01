@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import asyncio
 from contextlib import asynccontextmanager as actxmgr
 from typing import (
     Any,
@@ -55,6 +58,7 @@ async def execute_with_retry(conn: SAConnection, query):
             num_retries += 1
             if getattr(e.orig, 'pgcode', None) == '40001':
                 await conn.rollback()
+                await asyncio.sleep((num_retries - 1) * 0.02)
                 await conn.begin()
                 continue
             raise
