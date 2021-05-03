@@ -27,16 +27,7 @@ from typing import (
     cast,
 )
 import uuid
-from ai.backend.common.events import (
-    AgentStartedEvent,
-    KernelCancelledEvent,
-    KernelTerminatedEvent,
-    KernelTerminatingEvent,
-    SessionCancelledEvent,
-    SessionEnqueuedEvent,
-    SessionStartedEvent,
-    SessionTerminatedEvent,
-)
+import weakref
 
 import aiodocker
 import aiohttp
@@ -56,6 +47,16 @@ from yarl import URL
 
 from ai.backend.common import msgpack, redis
 from ai.backend.common.docker import get_registry_info, get_known_registries, ImageRef
+from ai.backend.common.events import (
+    AgentStartedEvent,
+    KernelCancelledEvent,
+    KernelTerminatedEvent,
+    KernelTerminatingEvent,
+    SessionCancelledEvent,
+    SessionEnqueuedEvent,
+    SessionStartedEvent,
+    SessionTerminatedEvent,
+)
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.plugin.hook import (
     HookPluginContext,
@@ -217,7 +218,7 @@ class AgentRegistry:
     """
 
     kernel_creation_tracker: Dict[Tuple[str, KernelId], asyncio.Event]
-    _post_kernel_creation_tasks: Dict[KernelId, asyncio.Task]
+    _post_kernel_creation_tasks: weakref.WeakValueDictionary[KernelId, asyncio.Task]
 
     def __init__(
         self,
@@ -242,7 +243,7 @@ class AgentRegistry:
         self.storage_manager = storage_manager
         self.hook_plugin_ctx = hook_plugin_ctx
         self.kernel_creation_tracker = {}
-        self._post_kernel_creation_tasks = {}
+        self._post_kernel_creation_tasks = weakref.WeakValueDictionary()
 
     async def init(self) -> None:
         self.heartbeat_lock = asyncio.Lock()
@@ -1188,7 +1189,7 @@ class AgentRegistry:
             # Within a group, agent_alloc_ctx are same.
             agent_alloc_ctx = items[0].agent_alloc_ctx
 
-            async def _post_create_kernel(kernel_creation_id: str, created_info):
+            async def _post_create_kernel(agent_alloc_ctx, kernel_creation_id: str, created_info):
                 # Wait until the kernel_started event.
                 kernel_id = KernelId(uuid.UUID(created_info['id']))
                 start_event = self.kernel_creation_tracker[(kernel_creation_id, kernel_id)]
@@ -1219,6 +1220,7 @@ class AgentRegistry:
 
             async def _create_kernels_in_one_agent(
                 agent_alloc_ctx: AgentAllocationContext,
+                scheduled_session: PendingSession,
                 items: Sequence[KernelAgentBinding],
             ) -> None:
                 async with RPCContext(
@@ -1287,17 +1289,14 @@ class AgentRegistry:
                             agent_alloc_ctx.agent_id,
                         )
                         # Post-process kernel creation
-                        try:
-                            async with aiotools.TaskGroup() as tg:
-                                for created_info in created_infos:
-                                    post_task = tg.create_task(_post_create_kernel(
-                                        kernel_creation_id,
-                                        created_info,
-                                    ))
-                                    self._post_kernel_creation_tasks[created_info['id']] = post_task
-                        finally:
-                            for binding in items:
-                                self._post_kernel_creation_tasks.pop(binding.kernel.kernel_id, None)
+                        async with aiotools.TaskGroup() as tg:
+                            for created_info in created_infos:
+                                post_task = tg.create_task(_post_create_kernel(
+                                    agent_alloc_ctx,
+                                    kernel_creation_id,
+                                    created_info,
+                                ))
+                                self._post_kernel_creation_tasks[created_info['id']] = post_task
                     except Exception:
                         # The agent has already cancelled or issued the destruction lifecycle event
                         # for this batch of kernels.
@@ -1310,7 +1309,7 @@ class AgentRegistry:
                             ]
 
             per_agent_tasks.append(
-                (agent_alloc_ctx, _create_kernels_in_one_agent(agent_alloc_ctx, items))
+                (agent_alloc_ctx, _create_kernels_in_one_agent(agent_alloc_ctx, scheduled_session, items))
             )
 
         if per_agent_tasks:
@@ -1670,7 +1669,7 @@ class AgentRegistry:
                     else:
                         destroyed_kernels.append(kernel)
 
-                async def _destroy_kernels_in_agent(destroyed_kernels) -> None:
+                async def _destroy_kernels_in_agent(session, destroyed_kernels) -> None:
                     nonlocal main_stat
                     async with RPCContext(
                         destroyed_kernels[0]['agent'],
@@ -1705,7 +1704,7 @@ class AgentRegistry:
                                 }
 
                 if destroyed_kernels:
-                    per_agent_tasks.append(_destroy_kernels_in_agent(destroyed_kernels))
+                    per_agent_tasks.append(_destroy_kernels_in_agent(session, destroyed_kernels))
 
             if per_agent_tasks:
                 await asyncio.gather(*per_agent_tasks)
