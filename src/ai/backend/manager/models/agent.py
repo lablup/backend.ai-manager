@@ -297,7 +297,7 @@ async def recalc_agent_resource_occupancy(db_conn: SAConnection, agent_id: Agent
         )
     )
     occupied_slots = ResourceSlot()
-    result = await db_conn.execute(query)
+    result = await execute_with_retry(db_conn, query)
     for row in result:
         occupied_slots += row['occupied_slots']
     query = (

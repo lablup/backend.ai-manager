@@ -17,6 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 
+from ai.backend.manager.models.utils import execute_with_retry
+
 from .base import (
     metadata,
     simple_db_mutate,
@@ -127,7 +129,7 @@ async def query_allowed_sgroups(
         sa.select([sgroups_for_domains])
         .where(sgroups_for_domains.c.domain == domain_name)
     )
-    result = await db_conn.execute(query)
+    result = await execute_with_retry(db_conn, query)
     from_domain = {row['scaling_group'] for row in result}
 
     group_id = await resolve_group_name_or_id(db_conn, domain_name, group)
@@ -141,12 +143,12 @@ async def query_allowed_sgroups(
                 (sgroups_for_groups.c.group == group_id)
             )
         )
-        result = await db_conn.execute(query)
+        result = await execute_with_retry(db_conn, query)
         from_group = {row['scaling_group'] for row in result}
 
     query = (sa.select([sgroups_for_keypairs])
                .where(sgroups_for_keypairs.c.access_key == access_key))
-    result = await db_conn.execute(query)
+    result = await execute_with_retry(db_conn, query)
     from_keypair = {row['scaling_group'] for row in result}
 
     sgroups = from_domain | from_group | from_keypair
@@ -155,7 +157,7 @@ async def query_allowed_sgroups(
                    (scaling_groups.c.name.in_(sgroups)) &
                    (scaling_groups.c.is_active)
                ))
-    result = await db_conn.execute(query)
+    result = await execute_with_retry(db_conn, query)
     return [row for row in result]
 
 
