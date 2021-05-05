@@ -398,29 +398,31 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
     params = _extract_auth_params(request)
     if params:
         sign_method, access_key, signature = params
-        async with root_ctx.db.begin() as conn:
-            j = (
-                keypairs
-                .join(users, keypairs.c.user == users.c.uuid)
-                .join(keypair_resource_policies,
-                      keypairs.c.resource_policy == keypair_resource_policies.c.name)
-            )
-            query = (
-                sa.select([users, keypairs, keypair_resource_policies], use_labels=True)
-                .select_from(j)
-                .where(
-                    (keypairs.c.access_key == access_key) &
-                    (keypairs.c.is_active.is_(True))
+        async with root_ctx.db.connect() as conn:
+            await conn.execution_options(postgresql_readonly=True)
+            async with conn.begin():
+                j = (
+                    keypairs
+                    .join(users, keypairs.c.user == users.c.uuid)
+                    .join(keypair_resource_policies,
+                          keypairs.c.resource_policy == keypair_resource_policies.c.name)
                 )
-            )
-            result = await conn.execute(query)
-            row = result.first()
-            if row is None:
-                raise AuthorizationFailed('Access key not found')
-            my_signature = \
-                await sign_request(sign_method, request, row['keypairs_secret_key'])
-            if not secrets.compare_digest(my_signature, signature):
-                raise AuthorizationFailed('Signature mismatch')
+                query = (
+                    sa.select([users, keypairs, keypair_resource_policies], use_labels=True)
+                    .select_from(j)
+                    .where(
+                        (keypairs.c.access_key == access_key) &
+                        (keypairs.c.is_active.is_(True))
+                    )
+                )
+                result = await conn.execute(query)
+                row = result.first()
+        if row is None:
+            raise AuthorizationFailed('Access key not found')
+        my_signature = \
+            await sign_request(sign_method, request, row['keypairs_secret_key'])
+        if not secrets.compare_digest(my_signature, signature):
+            raise AuthorizationFailed('Signature mismatch')
         request['is_authorized'] = True
         request['keypair'] = {
             col.name: row[f'keypairs_{col.name}']
