@@ -339,7 +339,7 @@ async def database_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
         pool_size=8,
         max_overflow=64,
         json_serializer=functools.partial(json.dumps, cls=ExtendedJSONEncoder),
-        isolation_level="REPEATABLE READ",
+        isolation_level="SERIALIZABLE",
         future=True,
     )
     yield
