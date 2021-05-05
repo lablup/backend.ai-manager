@@ -754,12 +754,14 @@ class AgentRegistry:
         # If scaling_group is not provided, it will be selected in scheduling step.
         if scaling_group is not None:
             async with self.db.begin() as conn:
-                sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
-                for sgroup in sgroups:
-                    if scaling_group == sgroup['name']:
-                        break
-                else:
-                    raise ScalingGroupNotFound
+                await conn.execution_options(postgresql_readonly=True)
+                async with conn.begin():
+                    sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
+                    for sgroup in sgroups:
+                        if scaling_group == sgroup['name']:
+                            break
+                    else:
+                        raise ScalingGroupNotFound
 
         # sanity check for vfolders
         allowed_vfolder_types = ['user', 'group']
