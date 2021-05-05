@@ -20,10 +20,13 @@ from sqlalchemy.ext.asyncio import (
 
 
 @actxmgr
-async def reenter_txn(pool: SAEngine, conn: SAConnection) -> AsyncIterator[SAConnection]:
+async def reenter_txn(pool: SAEngine, conn: SAConnection, execution_opts: Mapping[str, Any] = None) -> AsyncIterator[SAConnection]:
     if conn is None:
-        async with pool.connect() as conn, conn.begin():
-            yield conn
+        async with pool.connect() as conn:
+            if execution_opts:
+                await conn.execution_options(**execution_opts)
+            async with conn.begin():
+                yield conn
     else:
         async with conn.begin_nested():
             yield conn

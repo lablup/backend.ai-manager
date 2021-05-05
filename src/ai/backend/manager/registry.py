@@ -135,6 +135,10 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.registry'))
 
 agent_peers: MutableMapping[str, PeerInvoker] = {}  # agent-addr to socket
 
+_read_only_txn_opts = {
+    'postgresql_readonly': True,
+}
+
 
 class PeerInvoker(Peer):
 
@@ -408,7 +412,7 @@ class AgentRegistry:
             cols.append(field)
         elif isinstance(field, str):
             cols.append(sa.column(field))
-        async with reenter_txn(self.db, db_connection) as conn:
+        async with reenter_txn(self.db, db_connection, _read_only_txn_opts) as conn:
             if allow_stale:
                 query = (
                     sa.select(cols)
@@ -626,7 +630,7 @@ class AgentRegistry:
         :param db_connection: Database connection for reuse.
         :param cluster_role: Filter kernels by role. "main", "sub", or None (all).
         """
-        async with reenter_txn(self.db, db_connection) as conn:
+        async with reenter_txn(self.db, db_connection, _read_only_txn_opts) as conn:
             if allow_stale:
                 extra_cond = None
             else:
@@ -703,7 +707,7 @@ class AgentRegistry:
             cols.append(field)
         elif isinstance(field, str):
             cols.append(sa.column(field))
-        async with reenter_txn(self.db, db_connection) as conn:
+        async with reenter_txn(self.db, db_connection, _read_only_txn_opts) as conn:
             if allow_stale:
                 query = (sa.select(cols)
                            .select_from(kernels)
@@ -1526,8 +1530,10 @@ class AgentRegistry:
                        However, PULLING session still cannot be destroyed.
         :param reason: Reason to destroy a session if client wants to specify it manually.
         """
-        async with self.db.begin() as conn:
-            session = await session_getter(db_connection=conn)
+        async with self.db.connect() as conn:
+            await conn.execution_options(postgresql_readonly=True)
+            async with conn.begin():
+                session = await session_getter(db_connection=conn)
         if forced:
             reason = 'force-terminated'
         hook_result = await self.hook_plugin_ctx.dispatch(
@@ -1541,24 +1547,26 @@ class AgentRegistry:
         async with self.handle_kernel_exception(
             'destroy_session', session['id'], session['access_key'], set_error=True,
         ):
-            async with self.db.begin() as conn:
-                query = (
-                    sa.select([
-                        kernels.c.id,
-                        kernels.c.session_id,
-                        kernels.c.session_creation_id,
-                        kernels.c.status,
-                        kernels.c.access_key,
-                        kernels.c.cluster_role,
-                        kernels.c.agent,
-                        kernels.c.agent_addr,
-                        kernels.c.container_id,
-                    ])
-                    .select_from(kernels)
-                    .where(kernels.c.session_id == session['id'])
-                )
-                result = await execute_with_retry(conn, query)
-                kernel_list = result.fetchall()
+            async with self.db.connect() as conn:
+                await conn.execution_options(postgresql_readonly=True)
+                async with conn.begin():
+                    query = (
+                        sa.select([
+                            kernels.c.id,
+                            kernels.c.session_id,
+                            kernels.c.session_creation_id,
+                            kernels.c.status,
+                            kernels.c.access_key,
+                            kernels.c.cluster_role,
+                            kernels.c.agent,
+                            kernels.c.agent_addr,
+                            kernels.c.container_id,
+                        ])
+                        .select_from(kernels)
+                        .where(kernels.c.session_id == session['id'])
+                    )
+                    result = await execute_with_retry(conn, query)
+                    kernel_list = result.fetchall()
 
             main_stat = {}
             per_agent_tasks = []
@@ -1684,7 +1692,14 @@ class AgentRegistry:
                                 rpc_coros.append(
                                     rpc.call.destroy_kernel(str(kernel['id']), reason)
                                 )
-                        await asyncio.gather(*rpc_coros)
+                        try:
+                            await asyncio.gather(*rpc_coros)
+                        except Exception:
+                            log.exception(
+                                "destroy_kernels_in_agent(a:{}, s:{}): unexpected error",
+                                destroyed_kernels[0]['agent'],
+                                session['session_id'],
+                            )
                         for kernel in destroyed_kernels:
                             last_stat: Optional[Dict[str, Any]]
                             last_stat = None
@@ -2081,17 +2096,17 @@ class AgentRegistry:
             return await coro
 
     async def kill_all_sessions(self, conn=None):
-        async with reenter_txn(self.db, conn) as conn:
+        async with reenter_txn(self.db, conn, {'postgresql_readonly': True}) as conn:
             query = (sa.select([agents.c.id, agents.c.addr])
                        .where(agents.c.status == AgentStatus.ALIVE))
             result = await conn.execute(query)
             rows = result.fetchall()
-            tasks = []
-            for row in rows:
-                tasks.append(
-                    self.kill_all_sessions_in_agent(row['id'], row['addr'])
-                )
-            await asyncio.gather(*tasks, return_exceptions=True)
+        tasks = []
+        for row in rows:
+            tasks.append(
+                self.kill_all_sessions_in_agent(row['id'], row['addr'])
+            )
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     async def handle_heartbeat(self, agent_id, agent_info):
         now = datetime.now(tzutc())
@@ -2441,6 +2456,8 @@ class AgentRegistry:
                 .where(kernels.c.id == kernel_id)
             )
             await execute_with_retry(conn, update_query)
+
+        async with self.db.begin() as conn:
             await recalc_concurrency_used(conn, kernel['access_key'])
             await recalc_agent_resource_occupancy(conn, kernel['agent'])
 
