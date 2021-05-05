@@ -2078,17 +2078,18 @@ class AgentRegistry:
         access_key: AccessKey,
         conn: SAConnection = None,
     ) -> None:
-        async with reenter_txn(self.db, conn) as conn:
-            query = (
-                sa.update(kernels)
-                .values(num_queries=kernels.c.num_queries + 1)
-                .where(
-                    (kernels.c.session_name == session_name) &
-                    (kernels.c.access_key == access_key) &
-                    (kernels.c.cluster_role == DEFAULT_ROLE)
-                )
-            )
-            await conn.execute(query)
+        pass
+        # async with reenter_txn(self.db, conn) as conn:
+        #     query = (
+        #         sa.update(kernels)
+        #         .values(num_queries=kernels.c.num_queries + 1)
+        #         .where(
+        #             (kernels.c.session_name == session_name) &
+        #             (kernels.c.access_key == access_key) &
+        #             (kernels.c.cluster_role == DEFAULT_ROLE)
+        #         )
+        #     )
+        #     await execute_with_retry(conn, query)
 
     async def kill_all_sessions_in_agent(self, agent_id, agent_addr):
         async with RPCContext(agent_id, agent_addr, None) as rpc:
