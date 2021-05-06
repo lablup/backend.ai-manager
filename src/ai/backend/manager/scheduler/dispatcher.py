@@ -23,7 +23,6 @@ from dateutil.tz import tzutc
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 from sqlalchemy.sql.expression import true
-from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
 
 from ai.backend.common.events import (
     AgentStartedEvent,
