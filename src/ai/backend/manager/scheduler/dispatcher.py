@@ -23,8 +23,7 @@ from dateutil.tz import tzutc
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 from sqlalchemy.sql.expression import true
-from sqlalchemy.orm.exc import NoResultFound
-from sqlalchemy.orm.exc import MultipleResultsFound
+from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
 
 from ai.backend.common.events import (
     AgentStartedEvent,
@@ -244,21 +243,19 @@ class SchedulerDispatcher(aobject):
         db_conn: SAConnection,
         sgroup_name: str,
     ) -> AbstractScheduler:
-        try:
-            query = (
-                sa.select([scaling_groups.c.scheduler, scaling_groups.c.scheduler_opts])
-                .select_from(scaling_groups)
-                .where(scaling_groups.c.name == sgroup_name)
-            )
-            result = await db_conn.execute(query)
-            row = result.one()
-            scheduler_name = row['scheduler']
-            scheduler_opts = row['scheduler_opts']
-        except MultipleResultsFound as e:
-            log.exception('_load_scheduler(): multiple scheduler! \n{}', repr(e))
-        except NoResultFound as e:
-            log.exception('_load_scheduler(): scheduler does not exist! \n{}', repr(e))
-        scheduler_opts = {**self.shared_config['plugins']['scheduler'][scheduler_name], **scheduler_opts}
+        query = (
+            sa.select([scaling_groups.c.scheduler, scaling_groups.c.scheduler_opts])
+            .select_from(scaling_groups)
+            .where(scaling_groups.c.name == sgroup_name)
+        )
+        result = await db_conn.execute(query)
+        row = result.first()
+        scheduler_name = row['scheduler']
+        local_scheduler_opts = row['scheduler_opts']
+        global_scheduler_opts = {}
+        if self.shared_config['plugins']['scheduler']:
+            global_scheduler_opts = self.shared_config['plugins']['scheduler'][scheduler_name]
+        scheduler_opts = {**global_scheduler_opts, **local_scheduler_opts}
         return load_scheduler(scheduler_name, scheduler_opts)
 
     async def _schedule_in_sgroup(
