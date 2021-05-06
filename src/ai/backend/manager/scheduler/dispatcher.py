@@ -254,10 +254,10 @@ class SchedulerDispatcher(aobject):
             row = result.one()
             scheduler_name = row['scheduler']
             scheduler_opts = row['scheduler_opts']
-        except MultipleResultsFound as err:
-            log.error('_load_scheduler(): multiple scheduler', exc_info=err)
-        except NoResultFound as err:
-            log.error('_load_SCHEDULER(): scheduler does not exist', exc_info=err)
+        except MultipleResultsFound as e:
+            log.exception('_load_scheduler(): multiple scheduler! \n{}', repr(e))
+        except NoResultFound as e:
+            log.exception('_load_scheduler(): scheduler does not exist! \n{}', repr(e))
         scheduler_opts = {**self.shared_config['plugins']['scheduler'][scheduler_name], **scheduler_opts}
         return load_scheduler(scheduler_name, scheduler_opts)
 
