@@ -244,7 +244,7 @@ class SchedulerDispatcher(aobject):
         db_conn: SAConnection,
         sgroup_name: str,
     ) -> AbstractScheduler:
-        try: 
+        try:
             query = (
                 sa.select([scaling_groups.c.scheduler, scaling_groups.c.scheduler_opts])
                 .select_from(scaling_groups)
@@ -258,8 +258,8 @@ class SchedulerDispatcher(aobject):
             log.error('_load_scheduler(): multiple scheduler', exc_info=err)
         except NoResultFound as err:
             log.error('_load_SCHEDULER(): scheduler does not exist', exc_info=err)
-        
-        return load_scheduler(scheduler_name, {**self.shared_config['plugins']['scheduler'][scheduler_name], **scheduler_opts})
+        scheduler_opts = {**self.shared_config['plugins']['scheduler'][scheduler_name], **scheduler_opts}
+        return load_scheduler(scheduler_name, scheduler_opts)
 
     async def _schedule_in_sgroup(
         self,
