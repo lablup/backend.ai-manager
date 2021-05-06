@@ -23,6 +23,8 @@ from dateutil.tz import tzutc
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 from sqlalchemy.sql.expression import true
+from sqlalchemy.orm.exc import NoResultFound
+from sqlalchemy.orm.exc import MultipleResultsFound
 
 from ai.backend.common.events import (
     AgentStartedEvent,
@@ -242,14 +244,22 @@ class SchedulerDispatcher(aobject):
         db_conn: SAConnection,
         sgroup_name: str,
     ) -> AbstractScheduler:
-        query = (
-            sa.select([scaling_groups.c.scheduler])
-            .select_from(scaling_groups)
-            .where(scaling_groups.c.name == sgroup_name)
-        )
-        result = await db_conn.execute(query)
-        scheduler_name = result.scalar()
-        return load_scheduler(scheduler_name, self.shared_config['plugins']['scheduler'])
+        try: 
+            query = (
+                sa.select([scaling_groups.c.scheduler, scaling_groups.c.scheduler_opts])
+                .select_from(scaling_groups)
+                .where(scaling_groups.c.name == sgroup_name)
+            )
+            result = await db_conn.execute(query)
+            row = result.one()
+            scheduler_name = row['scheduler']
+            scheduler_opts = row['scheduler_opts']
+        except MultipleResultsFound as err:
+            log.error('_load_scheduler(): multiple scheduler', exc_info=err)
+        except NoResultFound as err:
+            log.error('_load_SCHEDULER(): scheduler does not exist', exc_info=err)
+        
+        return load_scheduler(scheduler_name, {**self.shared_config['plugins']['scheduler'][scheduler_name], **scheduler_opts})
 
     async def _schedule_in_sgroup(
         self,
