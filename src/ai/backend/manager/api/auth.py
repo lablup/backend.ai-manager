@@ -419,16 +419,13 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
                 raise AuthorizationFailed('Access key not found')
             my_signature = \
                 await sign_request(sign_method, request, row['keypairs_secret_key'])
-            if secrets.compare_digest(my_signature, signature):
-                query = (
-                    keypairs.update()
-                    .values(
-                        last_used=datetime.now(tzutc()),
-                        num_queries=keypairs.c.num_queries + 1,
-                    )
-                    .where(keypairs.c.access_key == access_key)
-                )
-                await conn.execute(query)
+            if not secrets.compare_digest(my_signature, signature):
+                raise AuthorizationFailed('Signature mismatch')
+            redis = root_ctx.redis_stat.pipeline()
+            num_queries_key = f'kp:{access_key}:num_queries'
+            redis.incr(num_queries_key)
+            redis.expire(num_queries_key, 86400 * 30)  # retention: 1 month
+            await redis.execute()
         request['is_authorized'] = True
         request['keypair'] = {
             col.name: row[f'keypairs_{col.name}']
