@@ -1902,19 +1902,13 @@ async def shutdown(app: web.Application) -> None:
     app_ctx.stats_task.cancel()
     await app_ctx.stats_task
 
-    checked_tasks = ('kernel_agent_event_collector', 'kernel_ddtimer')
-    for tname in checked_tasks:
-        t = app.get(tname, None)
-        if t and not t.done():
-            t.cancel()
-            await t
-
     for task in {*app_ctx.pending_waits}:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:

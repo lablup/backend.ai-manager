@@ -971,7 +971,7 @@ class AgentRegistry:
             environ = kernel_enqueue_configs[0]['creation_config'].get('environ') or {}
 
             # Create kernel object in PENDING state.
-            async with self.db.begin() as conn:
+            async with self.db.begin_readonly() as conn:
                 # Feed SSH keypair and dotfiles if exists.
                 query = (sa.select([keypairs.c.ssh_public_key,
                                     keypairs.c.ssh_private_key,
@@ -1025,6 +1025,7 @@ class AgentRegistry:
                                 f'There is a vfolder whose name conflicts with '
                                 f'dotfile {dotfile["path"]}')
 
+            async with self.db.begin() as conn:
                 query = kernels.insert().values({
                     'id': kernel_id,
                     'status': KernelStatus.PENDING,
@@ -1102,7 +1103,7 @@ class AgentRegistry:
 
         # Get resource policy for the session
         # TODO: memoize with TTL
-        async with self.db.begin() as conn:
+        async with self.db.begin_readonly() as conn:
             query = (
                 sa.select([keypair_resource_policies])
                 .select_from(keypair_resource_policies)
@@ -2424,9 +2425,8 @@ class AgentRegistry:
                 ])
                 .select_from(kernels)
                 .where(kernels.c.id == kernel_id)
-                .with_for_update()
             )
-            result = await conn.execute(select_query)
+            result = await execute_with_retry(conn, select_query)
             kernel = result.first()
             if (
                 kernel is None

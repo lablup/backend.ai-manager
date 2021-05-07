@@ -66,7 +66,7 @@ async def handle_gql(request: web.Request, params: Any) -> web.Response:
     known_slot_types = await root_ctx.shared_config.get_resource_slots()
     async with root_ctx.db.connect() as db_conn:
         # TODO: apply the following execution options for non-mutation queries
-        # await db_conn.execution_options(postgresql_readonly=True, postgresql_deferrable=True)
+        # await db_conn.execution_options(postgresql_readonly=True)
         async with db_conn.begin():
             gql_ctx = GraphQueryContext(
                 dataloader_manager=DataLoaderManager(),
