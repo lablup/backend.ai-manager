@@ -50,8 +50,7 @@ from ai.backend.common.types import (
 from ..api.exceptions import InstanceNotAvailable
 from ..distributed import GlobalTimer
 from ..defs import (
-    LOCKID_PREPARE,
-    LOCKID_SCHEDULE,
+    AdvisoryLock,
     REDIS_STREAM_DB,
 )
 from ..exceptions import convert_to_status_data
@@ -63,7 +62,6 @@ from ..models import (
     AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
 )
 from ..models.utils import (
-    advisory_lock,
     execute_with_retry,
     execute_nested_with_retry,
     sql_json_increment,
@@ -223,7 +221,7 @@ class SchedulerDispatcher(aobject):
         # We use short transaction blocks to prevent deadlock timeouts under heavy loads
         # because this scheduling handler will be executed by only one process.
         # It is executed under a globally exclusive context using aioredlock.
-        async with advisory_lock(self.db, LOCKID_SCHEDULE):
+        async with self.db.advisory_lock(AdvisoryLock.LOCKID_SCHEDULE):
             async with self.db.connect() as agent_db_conn, \
                     self.db.connect() as kernel_db_conn:
                 async with agent_db_conn.begin():
@@ -621,7 +619,7 @@ class SchedulerDispatcher(aobject):
             self.registry,
             known_slot_types,
         )
-        async with advisory_lock(self.db, LOCKID_PREPARE):
+        async with self.db.advisory_lock(AdvisoryLock.LOCKID_PREPARE):
             async with self.db.begin() as conn:
                 now = datetime.now(tzutc())
                 update_query = (

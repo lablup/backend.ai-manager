@@ -12,15 +12,53 @@ from typing import (
 
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as psql
+from sqlalchemy.engine import create_engine as _create_engine
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import (
     AsyncConnection as SAConnection,
     AsyncEngine as SAEngine,
 )
 
+from ..defs import AdvisoryLock
+
+
+class ExtendedAsyncSAEngine(SAEngine):
+    """
+    A subclass to add a few more convenience methods to the SQLAlchemy's async engine.
+    """
+
+    @actxmgr
+    async def begin_readonly(self, deferrable: bool = False) -> AsyncIterator[SAConnection]:
+        async with self.connect() as conn:
+            await conn.execution_options(
+                postgresql_readonly=True,
+                postgresql_deferrable=deferrable,
+            )
+            async with conn.begin():
+                yield conn
+
+    @actxmgr
+    async def advisory_lock(self, lock_id: AdvisoryLock) -> AsyncIterator[None]:
+        async with self.connect() as lock_conn:
+            # It is usually a BAD practice to directly interpolate strings into SQL statements,
+            # but in this case:
+            #  - The lock ID is only given from trusted codes.
+            #  - asyncpg does not support parameter interpolation with raw SQL statements.
+            await lock_conn.exec_driver_sql(f"SELECT pg_advisory_lock({lock_id:d})")
+            try:
+                yield
+            finally:
+                await lock_conn.exec_driver_sql(f"SELECT pg_advisory_unlock({lock_id:d})")
+
+
+def create_async_engine(*args, **kwargs) -> ExtendedAsyncSAEngine:
+    kwargs["future"] = True
+    sync_engine = _create_engine(*args, **kwargs)
+    return ExtendedAsyncSAEngine(sync_engine)
+
 
 @actxmgr
-async def reenter_txn(pool: SAEngine, conn: SAConnection, execution_opts: Mapping[str, Any] = None) -> AsyncIterator[SAConnection]:
+async def reenter_txn(pool: ExtendedAsyncSAEngine, conn: SAConnection, execution_opts: Mapping[str, Any] = None) -> AsyncIterator[SAConnection]:
     if conn is None:
         async with pool.connect() as conn:
             if execution_opts:
@@ -30,20 +68,6 @@ async def reenter_txn(pool: SAEngine, conn: SAConnection, execution_opts: Mappin
     else:
         async with conn.begin_nested():
             yield conn
-
-
-@actxmgr
-async def advisory_lock(db: SAEngine, lock_id: int) -> AsyncIterator[None]:
-    async with db.connect() as lock_conn:
-        # It is usually a BAD practice to directly interpolate strings into SQL statements,
-        # but in this case:
-        #  - The lock ID is only given from trusted codes.
-        #  - asyncpg does not support parameter interpolation with raw SQL statements.
-        await lock_conn.exec_driver_sql(f"SELECT pg_advisory_lock({lock_id:d})")
-        try:
-            yield
-        finally:
-            await lock_conn.exec_driver_sql(f"SELECT pg_advisory_unlock({lock_id:d})")
 
 
 async def execute_with_retry(conn: SAConnection, query):

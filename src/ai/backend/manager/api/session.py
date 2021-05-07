@@ -463,16 +463,14 @@ async def _create(request: web.Request, params: Any) -> web.Response:
     session_creation_tracker = app_ctx.session_creation_tracker
     session_creation_tracker[session_creation_id] = start_event
 
-    async with root_ctx.db.connect() as conn:
-        await conn.execution_options(postgresql_readonly=True)
-        async with conn.begin():
-            owner_uuid, group_id, resource_policy = await _query_userinfo(request, params, conn)
+    async with root_ctx.db.begin_readonly() as conn:
+        owner_uuid, group_id, resource_policy = await _query_userinfo(request, params, conn)
 
-            # Use keypair bootstrap_script if it is not delivered as a parameter
-            # (only for INTERACTIVE sessions).
-            if params['session_type'] == SessionTypes.INTERACTIVE and not params['bootstrap_script']:
-                script, _ = await query_bootstrap_script(conn, owner_access_key)
-                params['bootstrap_script'] = script
+        # Use keypair bootstrap_script if it is not delivered as a parameter
+        # (only for INTERACTIVE sessions).
+        if params['session_type'] == SessionTypes.INTERACTIVE and not params['bootstrap_script']:
+            script, _ = await query_bootstrap_script(conn, owner_access_key)
+            params['bootstrap_script'] = script
 
     try:
 
@@ -521,19 +519,17 @@ async def _create(request: web.Request, params: Any) -> web.Response:
                 resp['status'] = 'TIMEOUT'
             else:
                 await asyncio.sleep(0.5)
-                async with root_ctx.db.connect() as conn:
-                    await conn.execution_options(postgresql_readonly=True)
-                    async with conn.begin():
-                        query = (
-                            sa.select([
-                                kernels.c.status,
-                                kernels.c.service_ports,
-                            ])
-                            .select_from(kernels)
-                            .where(kernels.c.id == kernel_id)
-                        )
-                        result = await conn.execute(query)
-                        row = result.first()
+                async with root_ctx.db.begin_readonly() as conn:
+                    query = (
+                        sa.select([
+                            kernels.c.status,
+                            kernels.c.service_ports,
+                        ])
+                        .select_from(kernels)
+                        .where(kernels.c.id == kernel_id)
+                    )
+                    result = await conn.execute(query)
+                    row = result.first()
                 if row['status'] == KernelStatus.RUNNING:
                     resp['status'] = 'RUNNING'
                     for item in row['service_ports']:

@@ -32,7 +32,6 @@ import click
 from pathlib import Path
 from setproctitle import setproctitle
 import sqlalchemy as sa
-from sqlalchemy.ext.asyncio import create_async_engine
 
 from ai.backend.common import redis
 from ai.backend.common.cli import LazyGroup
@@ -75,6 +74,7 @@ from .exceptions import InvalidArgument
 from .idle import create_idle_checkers
 from .models.base import pgsql_connect_opts
 from .models.storage import StorageSessionManager
+from .models.utils import create_async_engine
 from .plugin.webapp import WebappPluginContext
 from .registry import AgentRegistry
 from .scheduler.dispatcher import SchedulerDispatcher
@@ -325,8 +325,8 @@ async def database_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     dbname = root_ctx.local_config['db']['name']
     url = f"postgresql+asyncpg://{urlquote(username)}:{urlquote(password)}@{address}/{urlquote(dbname)}"
 
-    version_check_db = create_async_engine(url, future=True)
-    async with version_check_db.connect() as conn:
+    version_check_db = create_async_engine(url)
+    async with version_check_db.begin() as conn:
         result = await conn.execute(sa.text("show server_version"))
         major, minor, *_ = map(int, result.scalar().split("."))
         if (major, minor) < (11, 0):

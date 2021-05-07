@@ -2,6 +2,7 @@
 Common definitions/constants used throughout the manager.
 """
 
+import enum
 import re
 from typing import Final
 
@@ -30,5 +31,6 @@ REDIS_IMAGE_DB: Final = 3
 REDIS_STREAM_DB: Final = 4
 
 # PostgreSQL session-level advisory lock indentifiers
-LOCKID_SCHEDULE: Final = 91
-LOCKID_PREPARE: Final = 92
+class AdvisoryLock(enum.IntEnum):
+    LOCKID_SCHEDULE = 91
+    LOCKID_PREPARE = 92

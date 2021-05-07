@@ -112,7 +112,7 @@ from .models import (
     DEAD_KERNEL_STATUSES,
 )
 from .models.kernel import match_session_ids, get_all_kernels, get_main_kernels
-from .models.utils import reenter_txn, execute_with_retry
+from .models.utils import ExtendedAsyncSAEngine, reenter_txn, execute_with_retry
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import (
@@ -227,7 +227,7 @@ class AgentRegistry:
     def __init__(
         self,
         shared_config: SharedConfig,
-        db: SAEngine,
+        db: ExtendedAsyncSAEngine,
         redis_stat: Redis,
         redis_live: Redis,
         redis_image: Redis,
@@ -753,22 +753,20 @@ class AgentRegistry:
         # Check scaling group availability if scaling_group parameter is given.
         # If scaling_group is not provided, it will be selected in scheduling step.
         if scaling_group is not None:
-            async with self.db.begin() as conn:
-                await conn.execution_options(postgresql_readonly=True)
-                async with conn.begin():
-                    sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
-                    for sgroup in sgroups:
-                        if scaling_group == sgroup['name']:
-                            break
-                    else:
-                        raise ScalingGroupNotFound
+            async with self.db.begin_readonly() as conn:
+                sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
+                for sgroup in sgroups:
+                    if scaling_group == sgroup['name']:
+                        break
+                else:
+                    raise ScalingGroupNotFound
 
         # sanity check for vfolders
         allowed_vfolder_types = ['user', 'group']
         # allowed_vfolder_types = await root_ctx.shared_config.etcd.get('path-to-vfolder-type')
         determined_mounts = []
         matched_mounts = set()
-        async with self.db.begin() as conn:
+        async with self.db.begin_readonly() as conn:
             if mounts:
                 extra_vf_conds = (
                     vfolders.c.name.in_(mounts) |
@@ -782,45 +780,45 @@ class AgentRegistry:
                 allowed_vfolder_types=allowed_vfolder_types,
                 extra_vf_conds=extra_vf_conds)
 
-            for item in matched_vfolders:
-                if item['group'] is not None and item['group'] != str(group_id):
-                    # User's accessible group vfolders should not be mounted
-                    # if not belong to the execution kernel.
-                    continue
-                mount_path = await self.storage_manager.get_mount_path(item['host'], item['id'])
-                if item['name'] == '.local' and item['group'] is not None:
-                    try:
-                        async with self.storage_manager.request(
-                            item['host'], 'POST', 'folder/file/mkdir',
-                            params={
-                                'volume': self.storage_manager.split_host(item['host'])[1],
-                                'vfid': item['id'],
-                                'relpath': str(user_uuid.hex)
-                            },
-                        ):
-                            pass
-                    except aiohttp.ClientResponseError:
-                        # the server may respond with error if the directory already exists
+        for item in matched_vfolders:
+            if item['group'] is not None and item['group'] != str(group_id):
+                # User's accessible group vfolders should not be mounted
+                # if not belong to the execution kernel.
+                continue
+            mount_path = await self.storage_manager.get_mount_path(item['host'], item['id'])
+            if item['name'] == '.local' and item['group'] is not None:
+                try:
+                    async with self.storage_manager.request(
+                        item['host'], 'POST', 'folder/file/mkdir',
+                        params={
+                            'volume': self.storage_manager.split_host(item['host'])[1],
+                            'vfid': item['id'],
+                            'relpath': str(user_uuid.hex)
+                        },
+                    ):
                         pass
-                    matched_mounts.add(item['name'])
-                    determined_mounts.append((
-                        item['name'],
-                        item['host'],
-                        f"{mount_path}/{user_uuid.hex}",
-                        item['permission'].value,
-                        ''
-                    ))
-                else:
-                    matched_mounts.add(item['name'])
-                    determined_mounts.append((
-                        item['name'],
-                        item['host'],
-                        mount_path,
-                        item['permission'].value,
-                        item['unmanaged_path'] if item['unmanaged_path'] else '',
-                    ))
-            if mounts and set(mounts) > matched_mounts:
-                raise VFolderNotFound
+                except aiohttp.ClientResponseError:
+                    # the server may respond with error if the directory already exists
+                    pass
+                matched_mounts.add(item['name'])
+                determined_mounts.append((
+                    item['name'],
+                    item['host'],
+                    f"{mount_path}/{user_uuid.hex}",
+                    item['permission'].value,
+                    ''
+                ))
+            else:
+                matched_mounts.add(item['name'])
+                determined_mounts.append((
+                    item['name'],
+                    item['host'],
+                    mount_path,
+                    item['permission'].value,
+                    item['unmanaged_path'] if item['unmanaged_path'] else '',
+                ))
+        if mounts and set(mounts) > matched_mounts:
+            raise VFolderNotFound
         mounts = determined_mounts
 
         ids = []
@@ -1532,10 +1530,8 @@ class AgentRegistry:
                        However, PULLING session still cannot be destroyed.
         :param reason: Reason to destroy a session if client wants to specify it manually.
         """
-        async with self.db.connect() as conn:
-            await conn.execution_options(postgresql_readonly=True)
-            async with conn.begin():
-                session = await session_getter(db_connection=conn)
+        async with self.db.begin_readonly() as conn:
+            session = await session_getter(db_connection=conn)
         if forced:
             reason = 'force-terminated'
         hook_result = await self.hook_plugin_ctx.dispatch(
@@ -1549,26 +1545,24 @@ class AgentRegistry:
         async with self.handle_kernel_exception(
             'destroy_session', session['id'], session['access_key'], set_error=True,
         ):
-            async with self.db.connect() as conn:
-                await conn.execution_options(postgresql_readonly=True)
-                async with conn.begin():
-                    query = (
-                        sa.select([
-                            kernels.c.id,
-                            kernels.c.session_id,
-                            kernels.c.session_creation_id,
-                            kernels.c.status,
-                            kernels.c.access_key,
-                            kernels.c.cluster_role,
-                            kernels.c.agent,
-                            kernels.c.agent_addr,
-                            kernels.c.container_id,
-                        ])
-                        .select_from(kernels)
-                        .where(kernels.c.session_id == session['id'])
-                    )
-                    result = await execute_with_retry(conn, query)
-                    kernel_list = result.fetchall()
+            async with self.db.begin_readonly() as conn:
+                query = (
+                    sa.select([
+                        kernels.c.id,
+                        kernels.c.session_id,
+                        kernels.c.session_creation_id,
+                        kernels.c.status,
+                        kernels.c.access_key,
+                        kernels.c.cluster_role,
+                        kernels.c.agent,
+                        kernels.c.agent_addr,
+                        kernels.c.container_id,
+                    ])
+                    .select_from(kernels)
+                    .where(kernels.c.session_id == session['id'])
+                )
+                result = await execute_with_retry(conn, query)
+                kernel_list = result.fetchall()
 
             main_stat = {}
             per_agent_tasks = []
