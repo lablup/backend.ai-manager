@@ -243,13 +243,19 @@ class SchedulerDispatcher(aobject):
         sgroup_name: str,
     ) -> AbstractScheduler:
         query = (
-            sa.select([scaling_groups.c.scheduler])
+            sa.select([scaling_groups.c.scheduler, scaling_groups.c.scheduler_opts])
             .select_from(scaling_groups)
             .where(scaling_groups.c.name == sgroup_name)
         )
         result = await db_conn.execute(query)
-        scheduler_name = result.scalar()
-        return load_scheduler(scheduler_name, self.shared_config['plugins']['scheduler'])
+        row = result.first()
+        scheduler_name = row['scheduler']
+        local_scheduler_opts = row['scheduler_opts']
+        global_scheduler_opts = {}
+        if self.shared_config['plugins']['scheduler']:
+            global_scheduler_opts = self.shared_config['plugins']['scheduler'][scheduler_name]
+        scheduler_opts = {**global_scheduler_opts, **local_scheduler_opts}
+        return load_scheduler(scheduler_name, scheduler_opts)
 
     async def _schedule_in_sgroup(
         self,
