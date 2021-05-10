@@ -2456,6 +2456,7 @@ class AgentRegistry:
 
         async with self.db.begin() as conn:
             await recalc_concurrency_used(conn, kernel['access_key'])
+        async with self.db.begin() as conn:
             await recalc_agent_resource_occupancy(conn, kernel['agent'])
 
         # Perform statistics sync in a separate transaction block, since
