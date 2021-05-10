@@ -10,7 +10,6 @@ if TYPE_CHECKING:
     from aioredis import Redis
     from graphql.execution.executors.asyncio import AsyncioExecutor
     from sqlalchemy.ext.asyncio import (
-        AsyncEngine as SAEngine,
         AsyncConnection as SAConnection,
     )
 
@@ -27,6 +26,7 @@ if TYPE_CHECKING:
     from ..config import LocalConfig, SharedConfig
     from ..registry import AgentRegistry
     from ..background import BackgroundTaskManager
+    from ..models.utils import ExtendedAsyncSAEngine
     from .storage import StorageSessionManager
 
 from .base import DataLoaderManager, privileged_query, scoped_query
@@ -133,7 +133,7 @@ class GraphQueryContext:
     etcd: AsyncEtcd
     user: Mapping[str, Any]  # TODO: express using typed dict
     access_key: str
-    db: SAEngine
+    db: ExtendedAsyncSAEngine
     db_conn: SAConnection
     redis_stat: Redis
     redis_image: Redis

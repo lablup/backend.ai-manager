@@ -101,6 +101,7 @@ from ..models import (
     DEAD_KERNEL_STATUSES,
 )
 from ..models.kernel import match_session_ids
+from ..models.utils import execute_with_retry
 from .exceptions import (
     InvalidAPIParameters,
     GenericNotFound,
@@ -364,7 +365,7 @@ async def _query_userinfo(
     return owner_uuid, group_id, resource_policy
 
 
-async def _create(request: web.Request, params: Any, db) -> web.Response:
+async def _create(request: web.Request, params: Any) -> web.Response:
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
     scopes_param = {
@@ -405,7 +406,7 @@ async def _create(request: web.Request, params: Any, db) -> web.Response:
     try:
         requested_image_ref = \
             await ImageRef.resolve_alias(params['image'], root_ctx.shared_config.etcd)
-        async with db.begin() as conn:
+        async with root_ctx.db.begin() as conn:
             query = (sa.select([domains.c.allowed_docker_registries])
                        .select_from(domains)
                        .where(domains.c.name == params['domain']))
@@ -462,7 +463,7 @@ async def _create(request: web.Request, params: Any, db) -> web.Response:
     session_creation_tracker = app_ctx.session_creation_tracker
     session_creation_tracker[session_creation_id] = start_event
 
-    async with db.begin() as conn:
+    async with root_ctx.db.begin_readonly() as conn:
         owner_uuid, group_id, resource_policy = await _query_userinfo(request, params, conn)
 
         # Use keypair bootstrap_script if it is not delivered as a parameter
@@ -518,7 +519,7 @@ async def _create(request: web.Request, params: Any, db) -> web.Response:
                 resp['status'] = 'TIMEOUT'
             else:
                 await asyncio.sleep(0.5)
-                async with root_ctx.db.begin() as conn:
+                async with root_ctx.db.begin_readonly() as conn:
                     query = (
                         sa.select([
                             kernels.c.status,
@@ -708,7 +709,7 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
         bootstrap += '\n'
         bootstrap += cmd_builder
         params['bootstrap_script'] = base64.b64encode(bootstrap.encode()).decode()
-    return await _create(request, params, root_ctx.db)
+    return await _create(request, params)
 
 
 @server_status_required(ALL_ALLOWED)
@@ -740,8 +741,6 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
 async def create_from_params(request: web.Request, params: Any) -> web.Response:
     if params['session_name'] in ['from-template']:
         raise InvalidAPIParameters(f'Requested session ID {params["session_name"]} is reserved word')
-
-    root_ctx: RootContext = request.app['_root.context']
     api_version = request['api_version']
     if 6 <= api_version[0]:
         creation_config = creation_config_v5.check(params['config'])
@@ -756,8 +755,7 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
     else:
         raise InvalidAPIParameters('API version not supported')
     params['config'] = creation_config
-
-    return await _create(request, params, root_ctx.db)
+    return await _create(request, params)
 
 
 @server_status_required(ALL_ALLOWED)
@@ -1041,7 +1039,8 @@ async def handle_kernel_creation_lifecycle(
         return
     log.debug('handle_kernel_creation_lifecycle: ev:{} k:{}', event.name, event.kernel_id)
     if event.name == 'kernel_preparing':
-        await root_ctx.registry.set_kernel_status(event.kernel_id, KernelStatus.PREPARING, event.reason)
+        # State transition is done by the DoPrepareEvent handler inside the scheduler-distpacher object.
+        pass
     elif event.name == 'kernel_pulling':
         await root_ctx.registry.set_kernel_status(event.kernel_id, KernelStatus.PULLING, event.reason)
     elif event.name == 'kernel_creating':
@@ -1230,7 +1229,7 @@ async def handle_kernel_log(
                 query = (sa.update(kernels)
                            .values(container_log=log_buffer.getvalue())
                            .where(kernels.c.id == event.kernel_id))
-                await conn.execute(query)
+                await execute_with_retry(conn, query)
         finally:
             # Clear the log data from Redis when done.
             await redis.execute_with_retries(
@@ -1867,15 +1866,25 @@ async def init(app: web.Application) -> None:
 
     # passive events
     evd = root_ctx.event_dispatcher
-    evd.subscribe(KernelPreparingEvent, app, handle_kernel_creation_lifecycle)
-    evd.subscribe(KernelPullingEvent, app, handle_kernel_creation_lifecycle)
-    evd.subscribe(KernelCreatingEvent, app, handle_kernel_creation_lifecycle)
-    evd.subscribe(KernelStartedEvent, app, handle_kernel_creation_lifecycle)
-    evd.subscribe(SessionStartedEvent, app, handle_session_creation_lifecycle)
-    evd.subscribe(SessionCancelledEvent, app, handle_session_creation_lifecycle)
-    evd.consume(KernelTerminatingEvent, app, handle_kernel_termination_lifecycle)
-    evd.consume(KernelTerminatedEvent, app, handle_kernel_termination_lifecycle)
-    evd.consume(SessionTerminatedEvent, app, handle_session_termination_lifecycle)
+    evd.subscribe(KernelPreparingEvent, app, handle_kernel_creation_lifecycle, name="api.session.kprep")
+    evd.subscribe(KernelPullingEvent, app, handle_kernel_creation_lifecycle, name="api.session.kpull")
+    evd.subscribe(KernelCreatingEvent, app, handle_kernel_creation_lifecycle, name="api.session.kcreat")
+    evd.subscribe(KernelStartedEvent, app, handle_kernel_creation_lifecycle, name="api.session.kstart")
+    evd.subscribe(
+        SessionStartedEvent, app, handle_session_creation_lifecycle, name="api.session.sstart",
+    )
+    evd.subscribe(
+        SessionCancelledEvent, app, handle_session_creation_lifecycle, name="api.session.scancel",
+    )
+    evd.consume(
+        KernelTerminatingEvent, app, handle_kernel_termination_lifecycle, name="api.session.kterming",
+    )
+    evd.consume(
+        KernelTerminatedEvent, app, handle_kernel_termination_lifecycle, name="api.session.kterm",
+    )
+    evd.consume(
+        SessionTerminatedEvent, app, handle_session_termination_lifecycle, name="api.session.sterm",
+    )
     evd.consume(SessionSuccessEvent, app, handle_batch_result)
     evd.consume(SessionFailureEvent, app, handle_batch_result)
     evd.consume(AgentStartedEvent, app, handle_agent_lifecycle)
@@ -1883,9 +1892,9 @@ async def init(app: web.Application) -> None:
     evd.consume(AgentHeartbeatEvent, app, handle_agent_heartbeat)
 
     # action-trigerring events
-    evd.consume(DoSyncKernelStatsEvent, app, handle_kernel_stat_sync)
-    evd.consume(DoSyncKernelLogsEvent, app, handle_kernel_log)
-    evd.consume(DoTerminateSessionEvent, app, handle_destroy_session)
+    evd.consume(DoSyncKernelStatsEvent, app, handle_kernel_stat_sync, name="api.session.synckstat")
+    evd.consume(DoSyncKernelLogsEvent, app, handle_kernel_log, name="api.session.syncklog")
+    evd.consume(DoTerminateSessionEvent, app, handle_destroy_session, name="api.session.doterm")
 
     app_ctx.pending_waits = set()
 
@@ -1903,19 +1912,13 @@ async def shutdown(app: web.Application) -> None:
     app_ctx.stats_task.cancel()
     await app_ctx.stats_task
 
-    checked_tasks = ('kernel_agent_event_collector', 'kernel_ddtimer')
-    for tname in checked_tasks:
-        t = app.get(tname, None)
-        if t and not t.done():
-            t.cancel()
-            await t
-
     for task in {*app_ctx.pending_waits}:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:

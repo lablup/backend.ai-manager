@@ -59,6 +59,7 @@ from .base import (
 from .group import groups
 from .user import users
 from .keypair import keypairs
+from .utils import execute_nested_with_retry
 if TYPE_CHECKING:
     from .gql import GraphQueryContext
 
@@ -1324,19 +1325,20 @@ class LegacyComputeSessionList(graphene.ObjectType):
 
 
 async def recalc_concurrency_used(db_conn: SAConnection, access_key: AccessKey) -> None:
-    query = (
-        sa.update(keypairs)
-        .values(
-            concurrency_used=(
-                sa.select([sa.func.count(kernels.c.id)])
-                .select_from(kernels)
-                .where(
-                    (kernels.c.access_key == access_key) &
-                    (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES))
-                )
-                .scalar_subquery()
-            ),
+    async with db_conn.begin_nested():
+        query = (
+            sa.update(keypairs)
+            .values(
+                concurrency_used=(
+                    sa.select([sa.func.count(kernels.c.id)])
+                    .select_from(kernels)
+                    .where(
+                        (kernels.c.access_key == access_key) &
+                        (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES))
+                    )
+                    .scalar_subquery()
+                ),
+            )
+            .where(keypairs.c.access_key == access_key)
         )
-        .where(keypairs.c.access_key == access_key)
-    )
-    await db_conn.execute(query)
+        await execute_nested_with_retry(db_conn, query)
