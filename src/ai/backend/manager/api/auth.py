@@ -36,6 +36,7 @@ from ..models import (
 from ..models.user import UserRole, UserStatus, INACTIVE_USER_STATUSES, check_credential
 from ..models.keypair import generate_keypair as _gen_keypair, generate_ssh_keypair
 from ..models.group import association_groups_users, groups
+from ..models.utils import execute_with_retry
 from .exceptions import (
     AuthorizationFailed,
     GenericBadRequest,
@@ -398,12 +399,12 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
     params = _extract_auth_params(request)
     if params:
         sign_method, access_key, signature = params
-        async with root_ctx.db.begin() as conn:
+        async with root_ctx.db.begin_readonly() as conn:
             j = (
                 keypairs
                 .join(users, keypairs.c.user == users.c.uuid)
                 .join(keypair_resource_policies,
-                      keypairs.c.resource_policy == keypair_resource_policies.c.name)
+                        keypairs.c.resource_policy == keypair_resource_policies.c.name)
             )
             query = (
                 sa.select([users, keypairs, keypair_resource_policies], use_labels=True)
@@ -413,19 +414,19 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
                     (keypairs.c.is_active.is_(True))
                 )
             )
-            result = await conn.execute(query)
+            result = await execute_with_retry(conn, query)
             row = result.first()
-            if row is None:
-                raise AuthorizationFailed('Access key not found')
-            my_signature = \
-                await sign_request(sign_method, request, row['keypairs_secret_key'])
-            if not secrets.compare_digest(my_signature, signature):
-                raise AuthorizationFailed('Signature mismatch')
-            redis = root_ctx.redis_stat.pipeline()
-            num_queries_key = f'kp:{access_key}:num_queries'
-            redis.incr(num_queries_key)
-            redis.expire(num_queries_key, 86400 * 30)  # retention: 1 month
-            await redis.execute()
+        if row is None:
+            raise AuthorizationFailed('Access key not found')
+        my_signature = \
+            await sign_request(sign_method, request, row['keypairs_secret_key'])
+        if not secrets.compare_digest(my_signature, signature):
+            raise AuthorizationFailed('Signature mismatch')
+        redis = root_ctx.redis_stat.pipeline()
+        num_queries_key = f'kp:{access_key}:num_queries'
+        redis.incr(num_queries_key)
+        redis.expire(num_queries_key, 86400 * 30)  # retention: 1 month
+        await redis.execute()
         request['is_authorized'] = True
         request['keypair'] = {
             col.name: row[f'keypairs_{col.name}']

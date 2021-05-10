@@ -1,25 +1,26 @@
 from __future__ import annotations
 
-import asyncio
 import datetime as dt
 from datetime import datetime
-import functools
 import logging
 import uuid
+from ai.backend.common.events import EventHandler
 
 from aiohttp import web
 import aiohttp_cors
-import aioredlock
-import aiotools
+import aioredis
 import attr
 import sqlalchemy as sa
 import trafaret as t
 from typing import Any, TYPE_CHECKING, Tuple, MutableMapping
 
 from ai.backend.common import validators as tx
+from ai.backend.common.events import AbstractEvent, EmptyEventArgs
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.types import LogSeverity
+from ai.backend.common.types import AgentId, LogSeverity
 
+from ..defs import REDIS_LIVE_DB
+from ..distributed import GlobalTimer
 from ..models import (
     error_logs, UserRole, groups,
     association_groups_users as agus
@@ -33,6 +34,10 @@ if TYPE_CHECKING:
     from .context import RootContext
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
+
+
+class DoLogCleanupEvent(EmptyEventArgs, AbstractEvent):
+    name = "do_log_cleanup"
 
 
 @server_status_required(READ_ALLOWED)
@@ -98,35 +103,41 @@ async def list_logs(request: web.Request, params: Any) -> web.Response:
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*')
     async with root_ctx.db.begin() as conn:
         is_admin = True
-        query = (sa.select('*')
-                   .select_from(error_logs)
-                   .order_by(sa.desc(error_logs.c.created_at))
-                   .limit(params['page_size']))
-        count_query = (sa.select([sa.func.count(error_logs.c.message)])
-                         .select_from(error_logs))
+        select_query = (
+            sa.select([error_logs])
+            .select_from(error_logs)
+            .order_by(sa.desc(error_logs.c.created_at))
+            .limit(params['page_size'])
+        )
+        count_query = (
+            sa.select([sa.func.count(error_logs.c.message)])
+            .select_from(error_logs)
+        )
         if params['page_no'] > 1:
-            query = query.offset((params['page_no'] - 1) * params['page_size'])
+            select_query = select_query.offset((params['page_no'] - 1) * params['page_size'])
         if request['is_superadmin']:
             pass
         elif user_role == UserRole.ADMIN or user_role == 'admin':
             j = (groups.join(agus, groups.c.id == agus.c.group_id))
-            usr_query = (sa.select([agus.c.user_id])
-                           .select_from(j)
-                           .where([groups.c.domain_name == domain_name]))
+            usr_query = (
+                sa.select([agus.c.user_id])
+                .select_from(j)
+                .where(groups.c.domain_name == domain_name)
+            )
             result = await conn.execute(usr_query)
             usrs = result.fetchall()
             user_ids = [g.id for g in usrs]
             where = error_logs.c.user.in_(user_ids)
-            query = query.where(where)
-            count_query = query.where(where)
+            select_query = select_query.where(where)
+            count_query = count_query.where(where)
         else:
             is_admin = False
             where = ((error_logs.c.user == user_uuid) &
                      (~error_logs.c.is_cleared))
-            query = query.where(where)
-            count_query = query.where(where)
+            select_query = select_query.where(where)
+            count_query = count_query.where(where)
 
-        result = await conn.execute(query)
+        result = await conn.execute(select_query)
         for row in result:
             result_item = {
                 'log_id': str(row['id']),
@@ -149,10 +160,12 @@ async def list_logs(request: web.Request, params: Any) -> web.Response:
             resp['logs'].append(result_item)
         resp['count'] = await conn.scalar(count_query)
         if params['mark_read']:
-            update = (sa.update(error_logs)
-                        .values(is_read=True)
-                        .where(error_logs.c.id.in_([x['log_id'] for x in resp['logs']])))
-            await conn.execute(update)
+            read_update_query = (
+                sa.update(error_logs)
+                .values(is_read=True)
+                .where(error_logs.c.id.in_([x['log_id'] for x in resp['logs']]))
+            )
+            await conn.execute(read_update_query)
         return web.json_response(resp, status=200)
 
 
@@ -167,85 +180,98 @@ async def mark_cleared(request: web.Request) -> web.Response:
 
     log.info('CLEAR')
     async with root_ctx.db.begin() as conn:
-        query = (sa.update(error_logs)
-                   .values(is_cleared=True))
+        update_query = (
+            sa.update(error_logs)
+            .values(is_cleared=True)
+        )
         if request['is_superadmin']:
-            query = query.where(error_logs.c.id == log_id)
+            update_query = update_query.where(error_logs.c.id == log_id)
         elif user_role == UserRole.ADMIN or user_role == 'admin':
             j = (groups.join(agus, groups.c.id == agus.c.group_id))
-            usr_query = (sa.select([agus.c.user_id])
-                           .select_from(j)
-                           .where([groups.c.domain_name == domain_name]))
+            usr_query = (
+                sa.select([agus.c.user_id])
+                .select_from(j)
+                .where(groups.c.domain_name == domain_name)
+            )
             result = await conn.execute(usr_query)
             usrs = result.fetchall()
             user_ids = [g.id for g in usrs]
-            query = query.where((error_logs.c.user.in_(user_ids)) &
-                                (error_logs.c.id == log_id))
+            update_query = update_query.where(
+                (error_logs.c.user.in_(user_ids)) &
+                (error_logs.c.id == log_id)
+            )
         else:
-            query = (query.where((error_logs.c.user == user_uuid) &
-                                 (error_logs.c.id == log_id)))
+            update_query = update_query.where(
+                (error_logs.c.user == user_uuid) &
+                (error_logs.c.id == log_id)
+            )
 
-        result = await conn.execute(query)
+        result = await conn.execute(update_query)
         assert result.rowcount == 1
 
         return web.json_response({'success': True}, status=200)
 
 
-async def log_cleanup_task(app: web.Application, interval):
+async def log_cleanup_task(app: web.Application, src: AgentId, event: DoLogCleanupEvent) -> None:
     root_ctx: RootContext = app['_root.context']
-    app_ctx: PrivateContext = app['logs.context']
     etcd = root_ctx.shared_config.etcd
     raw_lifetime = await etcd.get('config/logs/error/retention')
     if raw_lifetime is None:
         raw_lifetime = '90d'
-    checker = tx.TimeDuration()
     try:
-        lifetime = checker.check(raw_lifetime)
+        lifetime = tx.TimeDuration().check(raw_lifetime)
     except ValueError:
         lifetime = dt.timedelta(days=90)
-        log.info('Retention value specified in etcd not recognized by'
-                 'trafaret validator, falling back to 90 days')
+        log.warning(
+            "Failed to parse the error log retention period ({}) read from etcd; "
+            "falling back to 90 days",
+            raw_lifetime,
+        )
     boundary = datetime.now() - lifetime
-    try:
-        lock = await app_ctx.log_cleanup_lock.lock('gateway.logs')
-        async with lock:
-            async with root_ctx.db.begin() as conn:
-                query = (sa.select([error_logs.c.id])
-                            .select_from(error_logs)
-                            .where(error_logs.c.created_at < boundary))
-                result = await conn.execute(query)
-                log_ids = []
-                for row in result:
-                    log_ids.append(row['id'])
-                if len(log_ids) > 0:
-                    log.info('Cleaning up {} log{}', len(log_ids), 's' if len(log_ids) > 1 else '')
-                query = error_logs.delete().where(error_logs.c.id.in_(log_ids))
-                result = await conn.execute(query)
-                assert result.rowcount == len(log_ids)
-
-    except aioredlock.LockError:
-        log.debug('schedule(): temporary locking failure; will be retried.')
+    async with root_ctx.db.begin() as conn:
+        query = (
+            sa.delete(error_logs)
+            .where(error_logs.c.created_at < boundary)
+        )
+        result = await conn.execute(query)
+        if result.rowcount > 0:
+            log.info('Cleaned up {} log(s) filed before {}', result.rowcount, boundary)
 
 
 @attr.s(slots=True, auto_attribs=True, init=False)
 class PrivateContext:
-    log_cleanup_lock: aioredlock.Aioredlock
-    log_cleanup_task: asyncio.Task
+    log_cleanup_timer: GlobalTimer
+    log_cleanup_timer_redis: aioredis.Redis
+    log_cleanup_timer_evh: EventHandler[web.Application, DoLogCleanupEvent]
 
 
 async def init(app: web.Application) -> None:
     root_ctx: RootContext = app['_root.context']
     app_ctx: PrivateContext = app['logs.context']
-    redis_url = root_ctx.shared_config.get_redis_url()
-    app_ctx.log_cleanup_lock = aioredlock.Aioredlock([str(redis_url)])
-    app_ctx.log_cleanup_task = aiotools.create_timer(
-        functools.partial(log_cleanup_task, app), 5.0)
+    app_ctx.log_cleanup_timer_evh = root_ctx.event_dispatcher.consume(
+        DoLogCleanupEvent, app, log_cleanup_task,
+    )
+    app_ctx.log_cleanup_timer_redis = await aioredis.create_redis(
+        str(root_ctx.shared_config.get_redis_url(db=REDIS_LIVE_DB))
+    )
+    app_ctx.log_cleanup_timer = GlobalTimer(
+        app_ctx.log_cleanup_timer_redis,
+        "manager_log_cleanup",
+        root_ctx.event_producer,
+        lambda: DoLogCleanupEvent(),
+        20.0,
+        initial_delay=17.0,
+    )
+    await app_ctx.log_cleanup_timer.join()
 
 
 async def shutdown(app: web.Application) -> None:
+    root_ctx: RootContext = app['_root.context']
     app_ctx: PrivateContext = app['logs.context']
-    app_ctx.log_cleanup_task.cancel()
-    await app_ctx.log_cleanup_task
+    await app_ctx.log_cleanup_timer.leave()
+    app_ctx.log_cleanup_timer_redis.close()
+    await app_ctx.log_cleanup_timer_redis.wait_closed()
+    root_ctx.event_dispatcher.unconsume(app_ctx.log_cleanup_timer_evh)
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:

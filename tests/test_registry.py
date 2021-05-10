@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from decimal import Decimal
 from typing import (
     Any,
     Mapping,
@@ -73,11 +76,16 @@ async def test_handle_heartbeat(mocker) -> None:
     )
     await registry.init()
 
+    _1 = Decimal('1')
+    _4 = Decimal('4')
+    _1g = Decimal('1073741824')
+    _2g = Decimal('2147483648')
+
     # Join
     mock_dbresult.first = MagicMock(return_value=None)
     await registry.handle_heartbeat('i-001', {
         'scaling_group': 'sg-testing',
-        'resource_slots': {'cpu': ('count', '1'), 'mem': ('bytes', '1g')},
+        'resource_slots': {'cpu': ('count', _1), 'mem': ('bytes', _1g)},
         'region': 'ap-northeast-2',
         'addr': '10.0.0.5',
         'version': '19.12.0',
@@ -95,11 +103,13 @@ async def test_handle_heartbeat(mocker) -> None:
         'status': AgentStatus.ALIVE,
         'addr': '10.0.0.5',
         'scaling_group': 'sg-testing',
-        'available_slots': ResourceSlot({'cpu': '1', 'mem': '1g'}),
+        'available_slots': ResourceSlot({'cpu': _1, 'mem': _1g}),
+        'version': '19.12.0',
+        'compute_plugins': [],
     })
     await registry.handle_heartbeat('i-001', {
         'scaling_group': 'sg-testing',
-        'resource_slots': {'cpu': ('count', '1'), 'mem': ('bytes', '2g')},
+        'resource_slots': {'cpu': ('count', _1), 'mem': ('bytes', _2g)},
         'region': 'ap-northeast-2',
         'addr': '10.0.0.6',
         'version': '19.12.0',
@@ -111,7 +121,7 @@ async def test_handle_heartbeat(mocker) -> None:
     assert isinstance(q, Update)
     q_params = q.compile().params
     assert q_params['addr'] == '10.0.0.6'
-    assert q_params['available_slots'] == ResourceSlot({'cpu': '1', 'mem': '2g'})
+    assert q_params['available_slots'] == ResourceSlot({'cpu': _1, 'mem': _2g})
     assert 'scaling_group' not in q_params
 
     # Rejoin
@@ -121,11 +131,13 @@ async def test_handle_heartbeat(mocker) -> None:
         'status': AgentStatus.LOST,
         'addr': '10.0.0.5',
         'scaling_group': 'sg-testing',
-        'available_slots': ResourceSlot({'cpu': '1', 'mem': '1g'}),
+        'available_slots': ResourceSlot({'cpu': _1, 'mem': _1g}),
+        'version': '19.12.0',
+        'compute_plugins': [],
     })
     await registry.handle_heartbeat('i-001', {
         'scaling_group': 'sg-testing2',
-        'resource_slots': {'cpu': ('count', '4'), 'mem': ('bytes', '2g')},
+        'resource_slots': {'cpu': ('count', _4), 'mem': ('bytes', _2g)},
         'region': 'ap-northeast-2',
         'addr': '10.0.0.6',
         'version': '19.12.0',
@@ -139,7 +151,7 @@ async def test_handle_heartbeat(mocker) -> None:
     assert q_params['status'] == AgentStatus.ALIVE
     assert q_params['addr'] == '10.0.0.6'
     assert "lost_at=NULL" in str(q)  # stringified and removed from bind params
-    assert q_params['available_slots'] == ResourceSlot({'cpu': '4', 'mem': '2g'})
+    assert q_params['available_slots'] == ResourceSlot({'cpu': _4, 'mem': _2g})
     assert q_params['scaling_group'] == 'sg-testing2'
     assert 'compute_plugins' in q_params
     assert 'version' in q_params
