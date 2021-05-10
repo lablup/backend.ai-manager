@@ -1870,11 +1870,21 @@ async def init(app: web.Application) -> None:
     evd.subscribe(KernelPullingEvent, app, handle_kernel_creation_lifecycle, name="api.session.kpull")
     evd.subscribe(KernelCreatingEvent, app, handle_kernel_creation_lifecycle, name="api.session.kcreat")
     evd.subscribe(KernelStartedEvent, app, handle_kernel_creation_lifecycle, name="api.session.kstart")
-    evd.subscribe(SessionStartedEvent, app, handle_session_creation_lifecycle, name="api.session.sstart")
-    evd.subscribe(SessionCancelledEvent, app, handle_session_creation_lifecycle, name="api.session.scancel")
-    evd.consume(KernelTerminatingEvent, app, handle_kernel_termination_lifecycle, name="api.session.kterming")
-    evd.consume(KernelTerminatedEvent, app, handle_kernel_termination_lifecycle, name="api.session.kterm")
-    evd.consume(SessionTerminatedEvent, app, handle_session_termination_lifecycle, name="api.session.sterm")
+    evd.subscribe(
+        SessionStartedEvent, app, handle_session_creation_lifecycle, name="api.session.sstart",
+    )
+    evd.subscribe(
+        SessionCancelledEvent, app, handle_session_creation_lifecycle, name="api.session.scancel",
+    )
+    evd.consume(
+        KernelTerminatingEvent, app, handle_kernel_termination_lifecycle, name="api.session.kterming",
+    )
+    evd.consume(
+        KernelTerminatedEvent, app, handle_kernel_termination_lifecycle, name="api.session.kterm",
+    )
+    evd.consume(
+        SessionTerminatedEvent, app, handle_session_termination_lifecycle, name="api.session.sterm",
+    )
     evd.consume(SessionSuccessEvent, app, handle_batch_result)
     evd.consume(SessionFailureEvent, app, handle_batch_result)
     evd.consume(AgentStartedEvent, app, handle_agent_lifecycle)

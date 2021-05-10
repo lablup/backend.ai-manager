@@ -58,7 +58,11 @@ def create_async_engine(*args, **kwargs) -> ExtendedAsyncSAEngine:
 
 
 @actxmgr
-async def reenter_txn(pool: ExtendedAsyncSAEngine, conn: SAConnection, execution_opts: Mapping[str, Any] = None) -> AsyncIterator[SAConnection]:
+async def reenter_txn(
+    pool: ExtendedAsyncSAEngine,
+    conn: SAConnection,
+    execution_opts: Mapping[str, Any] | None = None,
+) -> AsyncIterator[SAConnection]:
     if conn is None:
         async with pool.connect() as conn:
             if execution_opts:

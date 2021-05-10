@@ -117,7 +117,6 @@ from .models.utils import ExtendedAsyncSAEngine, reenter_txn, execute_with_retry
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import (
         AsyncConnection as SAConnection,
-        AsyncEngine as SAEngine,
     )
     from sqlalchemy.engine.row import Row
 
@@ -1314,7 +1313,10 @@ class AgentRegistry:
                             ]
 
             per_agent_tasks.append(
-                (agent_alloc_ctx, _create_kernels_in_one_agent(agent_alloc_ctx, scheduled_session, items))
+                (
+                    agent_alloc_ctx,
+                    _create_kernels_in_one_agent(agent_alloc_ctx, scheduled_session, items),
+                )
             )
 
         if per_agent_tasks:
