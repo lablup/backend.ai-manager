@@ -31,6 +31,7 @@ from .base import (
     EnumType, Item, PaginatedList,
     ResourceSlotColumn,
 )
+from .utils import execute_with_retry
 if TYPE_CHECKING:
     from ai.backend.manager.models.gql import GraphQueryContext
 
@@ -296,7 +297,7 @@ async def recalc_agent_resource_occupancy(db_conn: SAConnection, agent_id: Agent
         )
     )
     occupied_slots = ResourceSlot()
-    result = await db_conn.execute(query)
+    result = await execute_with_retry(db_conn, query)
     for row in result:
         occupied_slots += row['occupied_slots']
     query = (
@@ -306,4 +307,4 @@ async def recalc_agent_resource_occupancy(db_conn: SAConnection, agent_id: Agent
         })
         .where(agents.c.id == agent_id)
     )
-    await db_conn.execute(query)
+    await execute_with_retry(db_conn, query)
