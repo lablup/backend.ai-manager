@@ -59,7 +59,6 @@ from .base import (
 from .group import groups
 from .user import users
 from .keypair import keypairs
-from .utils import execute_nested_with_retry
 if TYPE_CHECKING:
     from .gql import GraphQueryContext
 
@@ -1341,4 +1340,4 @@ async def recalc_concurrency_used(db_conn: SAConnection, access_key: AccessKey) 
             )
             .where(keypairs.c.access_key == access_key)
         )
-        await execute_nested_with_retry(db_conn, query)
+        await db_conn.execute(query)

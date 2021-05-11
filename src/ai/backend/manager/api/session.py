@@ -60,6 +60,7 @@ from ai.backend.common.events import (
     DoSyncKernelLogsEvent,
     DoSyncKernelStatsEvent,
     DoTerminateSessionEvent,
+    KernelCancelledEvent,
     KernelCreatingEvent,
     KernelPreparingEvent,
     KernelPullingEvent,
@@ -1022,7 +1023,8 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
 async def handle_kernel_creation_lifecycle(
     app: web.Application,
     source: AgentId,
-    event: KernelPreparingEvent | KernelPullingEvent | KernelCreatingEvent | KernelStartedEvent,
+    event: (KernelPreparingEvent | KernelPullingEvent | KernelCreatingEvent |
+            KernelStartedEvent | KernelCancelledEvent),
 ) -> None:
     """
     Update the database and perform post_create_kernel() upon
@@ -1034,7 +1036,8 @@ async def handle_kernel_creation_lifecycle(
     generated when initiating the create_kernels() agent RPC call.
     """
     root_ctx: RootContext = app['_root.context']
-    ck_id = (event.creation_id, event.kernel_id)
+    # ck_id = (event.creation_id, event.kernel_id)
+    ck_id = event.kernel_id
     if ck_id not in root_ctx.registry.kernel_creation_tracker:
         return
     log.debug('handle_kernel_creation_lifecycle: ev:{} k:{}', event.name, event.kernel_id)
@@ -1047,7 +1050,11 @@ async def handle_kernel_creation_lifecycle(
         await root_ctx.registry.set_kernel_status(event.kernel_id, KernelStatus.PREPARING, event.reason)
     elif event.name == 'kernel_started':
         # post_create_kernel() coroutines are waiting for the creation tracker events to be set.
-        root_ctx.registry.kernel_creation_tracker[ck_id].set()
+        if tracker := root_ctx.registry.kernel_creation_tracker.get(ck_id):
+            tracker.set_result(None)
+    elif event.name == 'kernel_cancelled':
+        if tracker := root_ctx.registry.kernel_creation_tracker.get(ck_id):
+            tracker.cancel()
 
 
 async def handle_kernel_termination_lifecycle(
@@ -1078,9 +1085,11 @@ async def handle_session_creation_lifecycle(
         return
     log.debug('handle_session_creation_lifecycle: ev:{} s:{}', event.name, event.session_id)
     if event.name == 'session_started':
-        app_ctx.session_creation_tracker[event.creation_id].set()
+        if tracker := app_ctx.session_creation_tracker.get(event.creation_id):
+            tracker.set()
     elif event.name == 'session_cancelled':
-        app_ctx.session_creation_tracker[event.creation_id].set()
+        if tracker := app_ctx.session_creation_tracker.get(event.creation_id):
+            tracker.set()
 
 
 async def handle_session_termination_lifecycle(
@@ -1225,11 +1234,18 @@ async def handle_kernel_log(
             chunk = await redis.execute_with_retries(lambda: redis_conn.lpop(log_key))
             log_buffer.write(chunk)
         try:
-            async with root_ctx.db.begin() as conn:
-                query = (sa.update(kernels)
-                           .values(container_log=log_buffer.getvalue())
-                           .where(kernels.c.id == event.kernel_id))
-                await execute_with_retry(conn, query)
+            log_data = log_buffer.getvalue()
+
+            async def _update_log() -> None:
+                async with root_ctx.db.begin() as conn:
+                    query = (
+                        sa.update(kernels)
+                        .values(container_log=log_data)
+                        .where(kernels.c.id == event.kernel_id)
+                    )
+                    await conn.execute(query)
+
+            await execute_with_retry(_update_log)
         finally:
             # Clear the log data from Redis when done.
             await redis.execute_with_retries(
@@ -1870,6 +1886,7 @@ async def init(app: web.Application) -> None:
     evd.subscribe(KernelPullingEvent, app, handle_kernel_creation_lifecycle, name="api.session.kpull")
     evd.subscribe(KernelCreatingEvent, app, handle_kernel_creation_lifecycle, name="api.session.kcreat")
     evd.subscribe(KernelStartedEvent, app, handle_kernel_creation_lifecycle, name="api.session.kstart")
+    evd.subscribe(KernelCancelledEvent, app, handle_kernel_creation_lifecycle, name="api.session.kstart")
     evd.subscribe(
         SessionStartedEvent, app, handle_session_creation_lifecycle, name="api.session.sstart",
     )
