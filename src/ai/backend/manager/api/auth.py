@@ -399,23 +399,27 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
     params = _extract_auth_params(request)
     if params:
         sign_method, access_key, signature = params
-        async with root_ctx.db.begin_readonly() as conn:
-            j = (
-                keypairs
-                .join(users, keypairs.c.user == users.c.uuid)
-                .join(keypair_resource_policies,
-                        keypairs.c.resource_policy == keypair_resource_policies.c.name)
-            )
-            query = (
-                sa.select([users, keypairs, keypair_resource_policies], use_labels=True)
-                .select_from(j)
-                .where(
-                    (keypairs.c.access_key == access_key) &
-                    (keypairs.c.is_active.is_(True))
+
+        async def _query_cred():
+            async with root_ctx.db.begin_readonly() as conn:
+                j = (
+                    keypairs
+                    .join(users, keypairs.c.user == users.c.uuid)
+                    .join(keypair_resource_policies,
+                            keypairs.c.resource_policy == keypair_resource_policies.c.name)
                 )
-            )
-            result = await execute_with_retry(conn, query)
-            row = result.first()
+                query = (
+                    sa.select([users, keypairs, keypair_resource_policies], use_labels=True)
+                    .select_from(j)
+                    .where(
+                        (keypairs.c.access_key == access_key) &
+                        (keypairs.c.is_active.is_(True))
+                    )
+                )
+                result = await conn.execute(query)
+                return result.first()
+
+        row = await execute_with_retry(_query_cred)
         if row is None:
             raise AuthorizationFailed('Access key not found')
         my_signature = \

@@ -97,6 +97,7 @@ class EnumType(TypeDecorator, SchemaType):
     """
 
     impl = ENUM
+    cache_ok = True
 
     def __init__(self, enum_cls, **opts):
         assert issubclass(enum_cls, enum.Enum)
@@ -130,6 +131,7 @@ class EnumValueType(TypeDecorator, SchemaType):
     """
 
     impl = ENUM
+    cache_ok = True
 
     def __init__(self, enum_cls, **opts):
         assert issubclass(enum_cls, enum.Enum)
@@ -160,6 +162,7 @@ class ResourceSlotColumn(TypeDecorator):
     """
 
     impl = JSONB
+    cache_ok = True
 
     def process_bind_param(self, value: Union[Mapping, ResourceSlot], dialect):
         if isinstance(value, Mapping) and not isinstance(value, ResourceSlot):
@@ -193,6 +196,7 @@ class GUID(TypeDecorator, Generic[UUID_SubType]):
     """
     impl = CHAR
     uuid_subtype_func: ClassVar[Callable[[Any], UUID_SubType]] = lambda v: v
+    cache_ok = True
 
     def load_dialect_impl(self, dialect):
         if dialect.name == 'postgresql':
