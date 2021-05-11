@@ -5,9 +5,12 @@ from contextlib import asynccontextmanager as actxmgr
 from typing import (
     Any,
     AsyncIterator,
+    Awaitable,
+    Callable,
     Final,
     Mapping,
     Tuple,
+    TypeVar,
 )
 
 import sqlalchemy as sa
@@ -74,43 +77,21 @@ async def reenter_txn(
             yield conn
 
 
-async def execute_with_retry(conn: SAConnection, query):
+TQueryResult = TypeVar('TQueryResult')
+
+
+async def execute_with_retry(txn_func: Callable[[], Awaitable[TQueryResult]]) -> TQueryResult:
     max_retries: Final = 10
     num_retries = 0
     while True:
         if num_retries == max_retries:
             raise RuntimeError(f"DB serialization failed after {max_retries} retries")
         try:
-            result = await conn.execute(query)
-            # if num_retries > 0:
-            #    await conn.commit()
-            return result
+            return await txn_func()
         except DBAPIError as e:
             num_retries += 1
             if getattr(e.orig, 'pgcode', None) == '40001':
-                await conn.rollback()
                 await asyncio.sleep((num_retries - 1) * 0.02)
-                await conn.begin()
-                continue
-            raise
-
-
-async def execute_nested_with_retry(conn: SAConnection, query):
-    max_retries: Final = 10
-    num_retries = 0
-    while True:
-        if num_retries == max_retries:
-            raise RuntimeError(f"DB serialization failed after {max_retries} retries")
-        try:
-            result = await conn.execute(query)
-            # if num_retries > 0:
-            #    await conn.commit()
-            return result
-        except DBAPIError as e:
-            num_retries += 1
-            if getattr(e.orig, 'pgcode', None) == '40001':
-                await conn.rollback()
-                await conn.begin_nested()
                 continue
             raise
 

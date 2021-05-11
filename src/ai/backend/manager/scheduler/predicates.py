@@ -19,7 +19,7 @@ from ..models import (
     query_allowed_sgroups,
     DefaultForUnspecified,
 )
-from ..models.utils import execute_nested_with_retry
+from ..models.utils import execute_with_retry
 from .types import (
     SchedulingContext,
     PendingSession,
@@ -57,41 +57,44 @@ async def check_concurrency(
     sched_ctx: SchedulingContext,
     sess_ctx: PendingSession,
 ) -> PredicateResult:
-    async with db_conn.begin_nested():
-        select_query = (
-            sa.select([keypair_resource_policies])
-            .select_from(keypair_resource_policies)
-            .where(keypair_resource_policies.c.name == sess_ctx.resource_policy)
-        )
-        result = await db_conn.execute(select_query)
-        resource_policy = result.first()
-        select_query = (
-            sa.select([keypairs.c.concurrency_used])
-            .select_from(keypairs)
-            .where(keypairs.c.access_key == sess_ctx.access_key)
-            .with_for_update()
-        )
-        concurrency_used = (await execute_nested_with_retry(db_conn, select_query)).scalar()
-        log.debug(
-            'access_key: {0} ({1} / {2})',
-            sess_ctx.access_key, concurrency_used,
-            resource_policy['max_concurrent_sessions'],
-        )
-        if concurrency_used >= resource_policy['max_concurrent_sessions']:
-            return PredicateResult(
-                False,
-                "You cannot run more than "
-                f"{resource_policy['max_concurrent_sessions']} concurrent sessions"
+
+    async def _check():
+        async with db_conn.begin_nested():
+            select_query = (
+                sa.select([keypair_resource_policies])
+                .select_from(keypair_resource_policies)
+                .where(keypair_resource_policies.c.name == sess_ctx.resource_policy)
             )
+            result = await db_conn.execute(select_query)
+            resource_policy = result.first()
+            select_query = (
+                sa.select([keypairs.c.concurrency_used])
+                .select_from(keypairs)
+                .where(keypairs.c.access_key == sess_ctx.access_key)
+                .with_for_update()
+            )
+            concurrency_used = (await db_conn.execute(select_query)).scalar()
+            log.debug(
+                'access_key: {0} ({1} / {2})',
+                sess_ctx.access_key, concurrency_used,
+                resource_policy['max_concurrent_sessions'],
+            )
+            if concurrency_used >= resource_policy['max_concurrent_sessions']:
+                return PredicateResult(
+                    False,
+                    "You cannot run more than "
+                    f"{resource_policy['max_concurrent_sessions']} concurrent sessions"
+                )
 
-        # Increment concurrency usage of keypair.
-        update_query = (
-            sa.update(keypairs)
-            .values(concurrency_used=keypairs.c.concurrency_used + 1)
-            .where(keypairs.c.access_key == sess_ctx.access_key)
-        )
-        await execute_nested_with_retry(db_conn, update_query)
+            # Increment concurrency usage of keypair.
+            update_query = (
+                sa.update(keypairs)
+                .values(concurrency_used=keypairs.c.concurrency_used + 1)
+                .where(keypairs.c.access_key == sess_ctx.access_key)
+            )
+            await db_conn.execute(update_query)
 
+    await execute_with_retry(_check)
     return PredicateResult(True)
 
 
