@@ -2542,7 +2542,7 @@ class AgentRegistry:
                     )
                 ):
                     # Skip if non-existent, already terminated, or restarting.
-                    return
+                    return None
 
                 # Change the status to TERMINATED.
                 # (we don't delete the row for later logging and billing)
@@ -2565,6 +2565,7 @@ class AgentRegistry:
             return
 
         async def _recalc() -> None:
+            assert kernel is not None
             async with self.db.begin() as conn:
                 await recalc_concurrency_used(conn, kernel['access_key'])
                 await recalc_agent_resource_occupancy(conn, kernel['agent'])
