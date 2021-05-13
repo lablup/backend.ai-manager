@@ -16,6 +16,37 @@ Changes
 
 .. towncrier release notes start
 
+21.03.4 (2021-05-14)
+--------------------
+
+### Features
+* Add an API endpoint to share/unshare a group virtual folder directly to specific users. This is to allow specified users (usually teachers with user account) can upload data/materials to a virtual folder while it is shared as read-only for other group users. ([#419](https://github.com/lablup/backend.ai-manager/issues/419))
+
+### Fixes
+* Change the `KeyPair.num_queries` GQL field to use Redis instead of the `keypairs.num_queries` DB column to avoid excessive DB writes ([#421](https://github.com/lablup/backend.ai-manager/issues/421)) ([#425](https://github.com/lablup/backend.ai-manager/issues/425))
+* Improve stability and synchronization of container-databse states
+  - Now all DB transactions use the "SERIALIZABLE" isolation level with explicit retries.
+  - Now DB transactions that includes only SELECT queries are marked as "read-only" so that
+    the PostgreSQL engine could optimize concurrent access with the new isolation level.
+    All future codes should use `beegin_readonly()` method from our own subclassed SQLAlchemy
+    engine instance replacing all existing `db` context variables.
+  - Remove excessive database updates due to keypair API query counts and kernel API query counts.
+    The keypair API query count is re-written to use Redis with one month retention. (#421)
+    Now just calling an API does not trigger updates in the PostgreSQL database.
+  - Fix unnecessary database updates for agent heartbeats.
+  - Split many update-only DB transactions into smaller units, such as resource recalculation.
+  - Use PostgreSQL advisory locks to make the scheduling decision process as a critical section.
+  - Fix some of variable binding issues with nested functions inside loops.
+  - Apply event message coalescing to prevent event bursts (e.g., `DoScheduleEvent` fired after
+    enqueueing new session requests) which hurts the database performance and potentially
+    break the transaction isolation guarantees.
+* Further refine the stability update with improved database transaction retries and the latest SQLAlchemy 1.4.x updates within the last month ([#429](https://github.com/lablup/backend.ai-manager/issues/429))
+* Fix a regression that destroying a cluster session generates duplicate session termination events ([#430](https://github.com/lablup/backend.ai-manager/issues/430))
+
+### Miscellaneous
+* Temporarily pin `pytest-asyncio` to 0.14.0 due to regression of handling event loops for fixtures ([#423](https://github.com/lablup/backend.ai-manager/issues/423))
+
+
 21.03.3 (2021-04-13)
 --------------------
 
