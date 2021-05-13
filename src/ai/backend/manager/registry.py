@@ -1744,6 +1744,10 @@ class AgentRegistry:
                                     .values({
                                         'status': KernelStatus.TERMINATING,
                                         'status_info': reason,
+                                        'status_data': {
+                                            "kernel": {"exit_code": None},
+                                            "session": {"status": "terminating"},
+                                        }
                                     })
                                     .where(kernels.c.id == kernel['id'])
                                 )
@@ -2557,7 +2561,7 @@ class AgentRegistry:
                         'status_data': sql_json_merge(
                             kernels.c.status_data,
                             ("kernel",),
-                            {"reason": reason, "exit_code": exit_code},
+                            {"exit_code": exit_code},
                         ),
                         'terminated_at': now,
                     })
