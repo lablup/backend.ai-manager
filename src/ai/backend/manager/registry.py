@@ -82,6 +82,7 @@ from ai.backend.common.types import (
     SlotTypes,
     check_typed_dict,
 )
+from ai.backend.common.utils import nmget
 
 from .api.exceptions import (
     BackendError, InvalidAPIParameters,
@@ -112,7 +113,7 @@ from .models import (
     DEAD_KERNEL_STATUSES,
 )
 from .models.kernel import match_session_ids, get_all_kernels, get_main_kernels
-from .models.utils import ExtendedAsyncSAEngine, reenter_txn, execute_with_retry
+from .models.utils import ExtendedAsyncSAEngine, reenter_txn, execute_with_retry, sql_json_merge
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import (
@@ -2553,6 +2554,11 @@ class AgentRegistry:
                         'status': KernelStatus.TERMINATED,
                         'status_info': reason,
                         'status_changed': now,
+                        'status_data': sql_json_merge(
+                            kernels.c.status_data,
+                            ("kernel",),
+                            {"reason": reason, "exit_code": exit_code},
+                        ),
                         'terminated_at': now,
                     })
                     .where(kernels.c.id == kernel_id)
@@ -2582,29 +2588,62 @@ class AgentRegistry:
         kernel_id: KernelId,
         reason: str,
     ) -> None:
-        async with self.db.begin_readonly() as conn:
-            query = (
-                sa.select([
-                    kernels.c.session_id,
-                ])
-                .select_from(kernels)
-                .where(kernels.c.id == kernel_id)
-                .limit(1)
-            )
-            session_id = await conn.scalar(query)
-            query = (
-                sa.select([
-                    kernels.c.status,
-                ])
-                .select_from(kernels)
-                .where(kernels.c.session_id == session_id)
-            )
-            result = await conn.execute(query)
-            all_terminated = all(map(
-                lambda row: row['status'] == KernelStatus.TERMINATED,
-                result.fetchall(),
-            ))
-        if all_terminated:
+
+        async def _check_and_mark() -> Tuple[bool, SessionId | None]:
+            async with self.db.begin() as conn:
+                session_id_query = (
+                    sa.select([
+                        kernels.c.session_id,
+                    ])
+                    .select_from(kernels)
+                    .where(kernels.c.id == kernel_id)
+                )
+                kernels_query = (
+                    sa.select([
+                        kernels.c.session_id,
+                        kernels.c.status_data,
+                        kernels.c.status,
+                    ])
+                    .select_from(kernels)
+                    .where(
+                        (kernels.c.session_id == session_id_query.scalar_subquery())
+                    )
+                    .with_for_update()
+                )
+                result = await conn.execute(kernels_query)
+                rows = result.fetchall()
+                if not rows:
+                    return False, None
+                session_id = rows[0]['session_id']
+                if nmget(rows[0]['status_data'], "session.status") == "terminated":
+                    # if already marked "session-terminated", skip the rest process
+                    return False, session_id
+                all_terminated = all(map(
+                    lambda row: row['status'] == KernelStatus.TERMINATED,
+                    rows,
+                ))
+                if all_terminated:
+                    await conn.execute(
+                        sa.update(kernels)
+                        .values(
+                            status_data=sql_json_merge(
+                                kernels.c.status_data,
+                                ("session",),
+                                {
+                                    "status": "terminated",
+                                },
+                            ),
+                        )
+                        .where(
+                            (kernels.c.session_id == session_id)
+                        )
+                    )
+                return all_terminated, session_id
+
+        do_fire_event, session_id = await execute_with_retry(_check_and_mark)
+        if session_id is None:
+            return
+        if do_fire_event:
             await self.event_producer.produce_event(
                 SessionTerminatedEvent(session_id, reason)
             )
