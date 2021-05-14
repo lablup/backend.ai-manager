@@ -486,7 +486,7 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
             # unsigned requests may be still accepted for public APIs
             pass
 
-    if row is None:
+    if row is not None:
         auth_result = {
             'is_authorized': True,
             'keypair': {
