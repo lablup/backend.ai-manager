@@ -209,7 +209,46 @@ kernels = sa.Table(
               nullable=False, index=True),
     sa.Column('status_changed', sa.DateTime(timezone=True), nullable=True, index=True),
     sa.Column('status_info', sa.Unicode(), nullable=True, default=sa.null()),
+    # status_info contains a kebab-cased string that expresses a summary of the last status change.
+    # Examples: "user-requested", "self-terminated", "predicate-checks-failed", "no-available-instances"
+
     sa.Column('status_data', pgsql.JSONB(), nullable=True, default=sa.null()),
+    # status_data contains a JSON object that contains detailed data for the last status change.
+    # During scheduling (as PENDING + ("no-available-instances" | "predicate-checks-failed")):
+    # {
+    #   "scheduler": {
+    #     // shceudler attempt information
+    #     // NOTE: the whole field may be NULL before the first attempt!
+    #     "retries": 5,
+    #         // the number of scheudling attempts (used to avoid HoL blocking as well)
+    #     "last_try": "2021-05-01T12:34:56.123456+09:00",
+    #         // an ISO 8601 formatted timestamp of the last attempt
+    #     "failed_predicates": [
+    #       { "name": "concurrency", "msg": "You cannot run more than 30 concurrent sessions." },
+    #           // see the manager.scheduler.predicates module for possible messages
+    #       ...
+    #     ],
+    #     "passed_predicates": [ {"name": "reserved_time"}, ... ],  // names only
+    #   }
+    # }
+    #
+    # While running: the field is NULL.
+    #
+    # After termination:
+    # {
+    #   "kernel": {
+    #     // termination info for the individual kernel
+    #     "exit_code": 123,
+    #         // maybe null during termination
+    #   },
+    #   "session": {
+    #     // termination info for the session
+    #     "status": "terminating" | "terminated"
+    #         // "terminated" means all kernels that belong to the same session has terminated.
+    #         // used to prevent duplication of SessionTerminatedEvent
+    #   }
+    # }
+
     sa.Column('startup_command', sa.Text, nullable=True),
     sa.Column('result', EnumType(SessionResult),
               default=SessionResult.UNDEFINED,
@@ -1324,19 +1363,20 @@ class LegacyComputeSessionList(graphene.ObjectType):
 
 
 async def recalc_concurrency_used(db_conn: SAConnection, access_key: AccessKey) -> None:
-    query = (
-        sa.update(keypairs)
-        .values(
-            concurrency_used=(
-                sa.select([sa.func.count(kernels.c.id)])
-                .select_from(kernels)
-                .where(
-                    (kernels.c.access_key == access_key) &
-                    (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES))
-                )
-                .scalar_subquery()
-            ),
+    async with db_conn.begin_nested():
+        query = (
+            sa.update(keypairs)
+            .values(
+                concurrency_used=(
+                    sa.select([sa.func.count(kernels.c.id)])
+                    .select_from(kernels)
+                    .where(
+                        (kernels.c.access_key == access_key) &
+                        (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES))
+                    )
+                    .scalar_subquery()
+                ),
+            )
+            .where(keypairs.c.access_key == access_key)
         )
-        .where(keypairs.c.access_key == access_key)
-    )
-    await db_conn.execute(query)
+        await db_conn.execute(query)

@@ -186,10 +186,16 @@ class KeyPair(graphene.ObjectType):
             concurrency_limit=0,  # moved to resource policy
             concurrency_used=row['concurrency_used'],
             rate_limit=row['rate_limit'],
-            num_queries=row['num_queries'],
             user=row['user'],
             ssh_public_key=row['ssh_public_key'],
         )
+
+    async def resolve_num_queries(self, info: graphene.ResolveInfo) -> int:
+        ctx: GraphQueryContext = info.context
+        n = await ctx.redis_stat.get(f"kp:{self.access_key}:num_queries")
+        if n is not None:
+            return n
+        return 0
 
     async def resolve_vfolders(self, info: graphene.ResolveInfo) -> Sequence[VirtualFolder]:
         ctx: GraphQueryContext = info.context
@@ -553,7 +559,7 @@ async def query_owned_dotfiles(
         .select_from(keypairs)
         .where(keypairs.c.access_key == access_key)
     )
-    packed_dotfile = await conn.scalar(query)
+    packed_dotfile = (await conn.execute(query)).scalar()
     rows = msgpack.unpackb(packed_dotfile)
     return rows, MAXIMUM_DOTFILE_SIZE - len(packed_dotfile)
 
@@ -567,7 +573,7 @@ async def query_bootstrap_script(
         .select_from(keypairs)
         .where(keypairs.c.access_key == access_key)
     )
-    script = await conn.scalar(query)
+    script = (await conn.execute(query)).scalar()
     return script, MAXIMUM_DOTFILE_SIZE - len(script)
 
 

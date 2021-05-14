@@ -21,6 +21,8 @@ import trafaret as t
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common import validators as tx
 
+from ai.backend.manager.models.utils import execute_with_retry
+
 from ..models.base import DataLoaderManager
 from ..models.gql import (
     Mutations, Queries,
@@ -64,38 +66,46 @@ async def handle_gql(request: web.Request, params: Any) -> web.Response:
     app_ctx: PrivateContext = request.app['admin.context']
     manager_status = await root_ctx.shared_config.get_manager_status()
     known_slot_types = await root_ctx.shared_config.get_resource_slots()
-    async with root_ctx.db.begin() as db_conn:
-        gql_ctx = GraphQueryContext(
-            dataloader_manager=DataLoaderManager(),
-            local_config=root_ctx.local_config,
-            shared_config=root_ctx.shared_config,
-            etcd=root_ctx.shared_config.etcd,
-            user=request['user'],
-            access_key=request['keypair']['access_key'],
-            db=root_ctx.db,
-            db_conn=db_conn,
-            redis_stat=root_ctx.redis_stat,
-            redis_image=root_ctx.redis_image,
-            manager_status=manager_status,
-            known_slot_types=known_slot_types,
-            background_task_manager=root_ctx.background_task_manager,
-            storage_manager=root_ctx.storage_manager,
-            registry=root_ctx.registry,
-        )
-        result = app_ctx.gql_schema.execute(
-            params['query'],
-            app_ctx.gql_executor,
-            variable_values=params['variables'],
-            operation_name=params['operation_name'],
-            context_value=gql_ctx,
-            middleware=[
-                GQLLoggingMiddleware(),
-                GQLMutationUnfrozenRequiredMiddleware(),
-                GQLMutationPrivilegeCheckMiddleware(),
-            ],
-            return_promise=True)
-        if inspect.isawaitable(result):
-            result = await result
+
+    async def _process() -> Any:
+        async with root_ctx.db.connect() as db_conn:
+            # TODO: apply the following execution options for non-mutation queries
+            # await db_conn.execution_options(postgresql_readonly=True)
+            async with db_conn.begin():
+                gql_ctx = GraphQueryContext(
+                    dataloader_manager=DataLoaderManager(),
+                    local_config=root_ctx.local_config,
+                    shared_config=root_ctx.shared_config,
+                    etcd=root_ctx.shared_config.etcd,
+                    user=request['user'],
+                    access_key=request['keypair']['access_key'],
+                    db=root_ctx.db,
+                    db_conn=db_conn,
+                    redis_stat=root_ctx.redis_stat,
+                    redis_image=root_ctx.redis_image,
+                    manager_status=manager_status,
+                    known_slot_types=known_slot_types,
+                    background_task_manager=root_ctx.background_task_manager,
+                    storage_manager=root_ctx.storage_manager,
+                    registry=root_ctx.registry,
+                )
+                result = app_ctx.gql_schema.execute(
+                    params['query'],
+                    app_ctx.gql_executor,
+                    variable_values=params['variables'],
+                    operation_name=params['operation_name'],
+                    context_value=gql_ctx,
+                    middleware=[
+                        GQLLoggingMiddleware(),
+                        GQLMutationUnfrozenRequiredMiddleware(),
+                        GQLMutationPrivilegeCheckMiddleware(),
+                    ],
+                    return_promise=True)
+                if inspect.isawaitable(result):
+                    result = await result
+                return result
+
+    result = await execute_with_retry(_process)
     if result.errors:
         errors = []
         for e in result.errors:

@@ -36,6 +36,7 @@ from ..models import (
 from ..models.user import UserRole, UserStatus, INACTIVE_USER_STATUSES, check_credential
 from ..models.keypair import generate_keypair as _gen_keypair, generate_ssh_keypair
 from ..models.group import association_groups_users, groups
+from ..models.utils import execute_with_retry
 from .exceptions import (
     AuthorizationFailed,
     GenericBadRequest,
@@ -411,36 +412,35 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
         # The "None" access_key means that the hook has allowed anonymous access.
         access_key = hook_result.result
         if access_key is not None:
-            async with root_ctx.db.begin() as conn:
-                j = (
-                    keypairs
-                    .join(users, keypairs.c.user == users.c.uuid)
-                    .join(
-                        keypair_resource_policies,
-                        keypairs.c.resource_policy == keypair_resource_policies.c.name,
+            async def _query_cred():
+                async with root_ctx.db.begin_readonly() as conn:
+                    j = (
+                        keypairs
+                        .join(users, keypairs.c.user == users.c.uuid)
+                        .join(
+                            keypair_resource_policies,
+                            keypairs.c.resource_policy == keypair_resource_policies.c.name,
+                        )
                     )
-                )
-                query = (
-                    sa.select([users, keypairs, keypair_resource_policies], use_labels=True)
-                    .select_from(j)
-                    .where(
-                        (keypairs.c.access_key == access_key) &
-                        (keypairs.c.is_active.is_(True))
+                    query = (
+                        sa.select([users, keypairs, keypair_resource_policies], use_labels=True)
+                        .select_from(j)
+                        .where(
+                            (keypairs.c.access_key == access_key) &
+                            (keypairs.c.is_active.is_(True))
+                        )
                     )
-                )
-                result = await conn.execute(query)
-                row = result.first()
-                if row is None:
-                    raise AuthorizationFailed('Access key not found')
-                query = (
-                    keypairs.update()
-                    .values(
-                        last_used=datetime.now(tzutc()),
-                        num_queries=keypairs.c.num_queries + 1,
-                    )
-                    .where(keypairs.c.access_key == access_key)
-                )
-                await conn.execute(query)
+                    result = await conn.execute(query)
+                return result.first()
+
+            row = await execute_with_retry(_query_cred)
+            if row is None:
+                raise AuthorizationFailed('Access key not found')
+            redis = root_ctx.redis_stat.pipeline()
+            num_queries_key = f'kp:{access_key}:num_queries'
+            redis.incr(num_queries_key)
+            redis.expire(num_queries_key, 86400 * 30)  # retention: 1 month
+            await redis.execute()
         else:
             # unsigned requests may be still accepted for public APIs
             pass
@@ -450,44 +450,43 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
         params = _extract_auth_params(request)
         if params:
             sign_method, access_key, signature = params
-            async with root_ctx.db.begin() as conn:
-                j = (
-                    keypairs
-                    .join(users, keypairs.c.user == users.c.uuid)
-                    .join(
-                        keypair_resource_policies,
-                        keypairs.c.resource_policy == keypair_resource_policies.c.name,
+
+            async def _query_cred():
+                async with root_ctx.db.begin_readonly() as conn:
+                    j = (
+                        keypairs
+                        .join(users, keypairs.c.user == users.c.uuid)
+                        .join(keypair_resource_policies,
+                              keypairs.c.resource_policy == keypair_resource_policies.c.name)
                     )
-                )
-                query = (
-                    sa.select([users, keypairs, keypair_resource_policies], use_labels=True)
-                    .select_from(j)
-                    .where(
-                        (keypairs.c.access_key == access_key) &
-                        (keypairs.c.is_active.is_(True))
-                    )
-                )
-                result = await conn.execute(query)
-                row = result.first()
-                if row is None:
-                    raise AuthorizationFailed('Access key not found')
-                my_signature = \
-                    await sign_request(sign_method, request, row['keypairs_secret_key'])
-                if secrets.compare_digest(my_signature, signature):
                     query = (
-                        keypairs.update()
-                        .values(
-                            last_used=datetime.now(tzutc()),
-                            num_queries=keypairs.c.num_queries + 1,
+                        sa.select([users, keypairs, keypair_resource_policies], use_labels=True)
+                        .select_from(j)
+                        .where(
+                            (keypairs.c.access_key == access_key) &
+                            (keypairs.c.is_active.is_(True))
                         )
-                        .where(keypairs.c.access_key == access_key)
                     )
-                    await conn.execute(query)
+                    result = await conn.execute(query)
+                    return result.first()
+
+            row = await execute_with_retry(_query_cred)
+            if row is None:
+                raise AuthorizationFailed('Access key not found')
+            my_signature = \
+                await sign_request(sign_method, request, row['keypairs_secret_key'])
+            if not secrets.compare_digest(my_signature, signature):
+                raise AuthorizationFailed('Signature mismatch')
+            redis = root_ctx.redis_stat.pipeline()
+            num_queries_key = f'kp:{access_key}:num_queries'
+            redis.incr(num_queries_key)
+            redis.expire(num_queries_key, 86400 * 30)  # retention: 1 month
+            await redis.execute()
         else:
             # unsigned requests may be still accepted for public APIs
             pass
 
-    if row is not None:
+    if row is None:
         auth_result = {
             'is_authorized': True,
             'keypair': {
@@ -827,6 +826,44 @@ async def signout(request: web.Request, params: Any) -> web.Response:
 @auth_required
 @check_api_params(
     t.Dict({
+        t.Key('email'): t.String,
+        t.Key('full_name'): t.String,
+    }))
+async def update_full_name(request: web.Request, params: Any) -> web.Response:
+    root_ctx: RootContext = request.app['_root.context']
+    domain_name = request['user']['domain_name']
+    email = request['user']['email']
+    log_fmt = 'AUTH.UPDATE_FULL_NAME(d:{}, email:{})'
+    log_args = (domain_name, email)
+    log.info(log_fmt, *log_args)
+    async with root_ctx.db.begin() as conn:
+        query = (
+            sa.select([users])
+            .select_from(users)
+            .where(
+                (users.c.email == email) &
+                (users.c.domain_name == domain_name)
+            )
+        )
+        result = await conn.execute(query)
+        user = result.first()
+        if user is None:
+            log.info(log_fmt + ': Unknown user', *log_args)
+            return web.json_response({'error_msg': 'Unknown user'}, status=400)
+
+        # If user is not null, then it updates user full_name.
+        data = {
+            'full_name': params['full_name'],
+        }
+        update_query = (users.update().values(data).where(users.c.email == email))
+        await conn.execute(update_query)
+    return web.json_response({}, status=200)
+
+
+@atomic
+@auth_required
+@check_api_params(
+    t.Dict({
         t.Key('old_password'): t.String,
         t.Key('new_password'): t.String,
         t.Key('new_password2'): t.String,
@@ -931,6 +968,7 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     cors.add(app.router.add_route('POST', '/signup', signup))
     cors.add(app.router.add_route('POST', '/signout', signout))
     cors.add(app.router.add_route('POST', '/update-password', update_password))
+    cors.add(app.router.add_route('POST', '/update-full-name', update_full_name))
     cors.add(app.router.add_route('GET', '/ssh-keypair', get_ssh_keypair))
     cors.add(app.router.add_route('PATCH', '/ssh-keypair', refresh_ssh_keypair))
     return app, [auth_middleware]
