@@ -138,7 +138,7 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
             result = await conn.execute(query)
             rows = result.fetchall()
             for row in rows:
-                if not (await self.check_session(row, conn)):
+                if (await self.check_session(row, conn)):
                     log.info(f"The {self.name} idle checker triggered termination of s:{row['id']}")
                     await self._event_producer.produce_event(
                         DoTerminateSessionEvent(row['id'], "idle-timeout")
@@ -248,6 +248,7 @@ class TimeoutIdleChecker(BaseIdleChecker):
         source: AgentId,
         event: DoIdleCheckEvent,
     ) -> None:
+        br()
         cache_token = self._policy_cache.set(dict())
         try:
             return await super()._do_idle_check(context, source, event)
@@ -255,6 +256,7 @@ class TimeoutIdleChecker(BaseIdleChecker):
             self._policy_cache.reset(cache_token)
 
     async def check_session(self, session: Row, dbconn: SAConnection) -> bool:
+        br()
         session_id = session['id']
         active_streams = await self._redis.zcount(f"session.{session_id}.active_app_connections")
         if active_streams is not None and active_streams > 0:
@@ -305,6 +307,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
     Checks the idleness of a session by the current utilization of all
     compute devices and agents assigned to it.
     """
+    
 
     name: ClassVar[str] = "utilization"
     default_cpu_util_threshold: ClassVar[float] = 30.0
@@ -313,10 +316,27 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
     async def populate_config(self, config: Mapping[str, Any]) -> None:
         pass
-
+    
+    async def _do_idle_check(
+        self,
+        context: None,
+        source: AgentId,
+        event: DoIdleCheckEvent,
+    ) -> None:
+        cache_token = self._policy_cache.set(dict())
+        try:
+            return await super()._do_idle_check(context, source, event)
+        finally:
+            self._policy_cache.reset(cache_token)
+    
     async def check_session(self, session: Row, dbconn: SAConnection) -> bool:
-        # last_stat = session['last_stat']
-        # TODO: implement
+        last_stat = session['last_stat']
+        session_id = session['id']
+        active_streams = await self._redis.zcount(f"session.{session_id}.active_app_connections")
+        print("\n\n\n\n\n\a===============================")
+        print(session_id, last_stat, type(active_streams))
+        br()
+        print("===============================\n\n\n\n\a")
         return True
 
     async def update_app_streaming_status(
@@ -343,9 +363,11 @@ async def create_idle_checkers(
     Create an instance of session idleness checker
     from the given configuration and using the given event dispatcher.
     """
+    
     checkers = await shared_config.etcd.get('config/idle/enabled')
     if not checkers:
         return []
+    
     instances = []
     for checker_name in checkers.split(","):
         checker_cls = checker_registry.get(checker_name, None)
