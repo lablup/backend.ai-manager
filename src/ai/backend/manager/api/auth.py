@@ -316,7 +316,7 @@ def _extract_auth_params(request):
         raise InvalidAuthParameters('Missing or malformed authorization parameters')
 
 
-def check_date(request) -> bool:
+def check_date(request: web.Request) -> bool:
     raw_date = request.headers.get('Date')
     if not raw_date:
         raw_date = request.headers.get('X-BackendAI-Date',
@@ -342,7 +342,7 @@ def check_date(request) -> bool:
     return True
 
 
-async def sign_request(sign_method, request, secret_key) -> str:
+async def sign_request(sign_method: str, request: web.Request, secret_key: str) -> str:
     try:
         mac_type, hash_type = map(lambda s: s.lower(), sign_method.split('-'))
         assert mac_type == 'hmac', 'Unsupported request signing method (MAC type)'
@@ -396,62 +396,119 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
         return (await handler(request))
     if not check_date(request):
         raise InvalidAuthParameters('Date/time sync error')
-    params = _extract_auth_params(request)
-    if params:
-        sign_method, access_key, signature = params
 
-        async def _query_cred():
-            async with root_ctx.db.begin_readonly() as conn:
-                j = (
-                    keypairs
-                    .join(users, keypairs.c.user == users.c.uuid)
-                    .join(keypair_resource_policies,
-                            keypairs.c.resource_policy == keypair_resource_policies.c.name)
-                )
-                query = (
-                    sa.select([users, keypairs, keypair_resource_policies], use_labels=True)
-                    .select_from(j)
-                    .where(
-                        (keypairs.c.access_key == access_key) &
-                        (keypairs.c.is_active.is_(True))
+    # PRE_AUTH_MIDDLEWARE allows authentication via 3rd-party request headers/cookies.
+    # Any responsible hook must return a valid keypair.
+    hook_result = await root_ctx.hook_plugin_ctx.dispatch(
+        'PRE_AUTH_MIDDLEWARE',
+        (request,),
+        return_when=FIRST_COMPLETED,
+    )
+    row = None
+    if hook_result.status != PASSED:
+        raise RejectedByHook.from_hook_result(hook_result)
+    elif hook_result.result:
+        # Passed one of the hook.
+        # The "None" access_key means that the hook has allowed anonymous access.
+        access_key = hook_result.result
+        if access_key is not None:
+            async def _query_cred():
+                async with root_ctx.db.begin_readonly() as conn:
+                    j = (
+                        keypairs
+                        .join(users, keypairs.c.user == users.c.uuid)
+                        .join(
+                            keypair_resource_policies,
+                            keypairs.c.resource_policy == keypair_resource_policies.c.name,
+                        )
                     )
-                )
-                result = await conn.execute(query)
+                    query = (
+                        sa.select([users, keypairs, keypair_resource_policies], use_labels=True)
+                        .select_from(j)
+                        .where(
+                            (keypairs.c.access_key == access_key) &
+                            (keypairs.c.is_active.is_(True))
+                        )
+                    )
+                    result = await conn.execute(query)
                 return result.first()
 
-        row = await execute_with_retry(_query_cred)
-        if row is None:
-            raise AuthorizationFailed('Access key not found')
-        my_signature = \
-            await sign_request(sign_method, request, row['keypairs_secret_key'])
-        if not secrets.compare_digest(my_signature, signature):
-            raise AuthorizationFailed('Signature mismatch')
-        redis = root_ctx.redis_stat.pipeline()
-        num_queries_key = f'kp:{access_key}:num_queries'
-        redis.incr(num_queries_key)
-        redis.expire(num_queries_key, 86400 * 30)  # retention: 1 month
-        await redis.execute()
-        request['is_authorized'] = True
-        request['keypair'] = {
-            col.name: row[f'keypairs_{col.name}']
-            for col in keypairs.c
-            if col.name != 'secret_key'
+            row = await execute_with_retry(_query_cred)
+            if row is None:
+                raise AuthorizationFailed('Access key not found')
+            redis = root_ctx.redis_stat.pipeline()
+            num_queries_key = f'kp:{access_key}:num_queries'
+            redis.incr(num_queries_key)
+            redis.expire(num_queries_key, 86400 * 30)  # retention: 1 month
+            await redis.execute()
+        else:
+            # unsigned requests may be still accepted for public APIs
+            pass
+    else:
+        # There were no hooks configured.
+        # Perform our own authentication.
+        params = _extract_auth_params(request)
+        if params:
+            sign_method, access_key, signature = params
+
+            async def _query_cred():
+                async with root_ctx.db.begin_readonly() as conn:
+                    j = (
+                        keypairs
+                        .join(users, keypairs.c.user == users.c.uuid)
+                        .join(keypair_resource_policies,
+                              keypairs.c.resource_policy == keypair_resource_policies.c.name)
+                    )
+                    query = (
+                        sa.select([users, keypairs, keypair_resource_policies], use_labels=True)
+                        .select_from(j)
+                        .where(
+                            (keypairs.c.access_key == access_key) &
+                            (keypairs.c.is_active.is_(True))
+                        )
+                    )
+                    result = await conn.execute(query)
+                    return result.first()
+
+            row = await execute_with_retry(_query_cred)
+            if row is None:
+                raise AuthorizationFailed('Access key not found')
+            my_signature = \
+                await sign_request(sign_method, request, row['keypairs_secret_key'])
+            if not secrets.compare_digest(my_signature, signature):
+                raise AuthorizationFailed('Signature mismatch')
+            redis = root_ctx.redis_stat.pipeline()
+            num_queries_key = f'kp:{access_key}:num_queries'
+            redis.incr(num_queries_key)
+            redis.expire(num_queries_key, 86400 * 30)  # retention: 1 month
+            await redis.execute()
+        else:
+            # unsigned requests may be still accepted for public APIs
+            pass
+
+    if row is not None:
+        auth_result = {
+            'is_authorized': True,
+            'keypair': {
+                col.name: row[f'keypairs_{col.name}']
+                for col in keypairs.c
+                if col.name != 'secret_key'
+            },
+            'user': {
+                col.name: row[f'users_{col.name}']
+                for col in users.c
+                if col.name not in ('password', 'description', 'created_at')
+            },
+            'is_admin': row['keypairs_is_admin'],
         }
-        request['keypair']['resource_policy'] = {
+        auth_result['keypair']['resource_policy'] = {
             col.name: row[f'keypair_resource_policies_{col.name}']
             for col in keypair_resource_policies.c
         }
-        request['user'] = {
-            col.name: row[f'users_{col.name}']
-            for col in users.c
-            if col.name not in ('password', 'description', 'created_at')
-        }
-        request['user']['id'] = row['keypairs_user_id']  # legacy
-        # if request['role'] in ['admin', 'superadmin']:
-        if row['keypairs_is_admin']:
-            request['is_admin'] = True
-        if request['user']['role'] == 'superadmin':
-            request['is_superadmin'] = True
+        auth_result['user']['id'] = row['keypairs_user_id']  # legacy
+        auth_result['is_superadmin'] = (auth_result['user']['role'] == 'superadmin')
+        # Populate the result to the per-request state dict.
+        request.update(auth_result)
 
     # No matter if authenticated or not, pass-through to the handler.
     # (if it's required, auth_required decorator will handle the situation.)
@@ -570,7 +627,7 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
     # their own authentication steps, like LDAP authentication, etc.
     hook_result = await root_ctx.hook_plugin_ctx.dispatch(
         'AUTHORIZE',
-        (params, root_ctx.db),
+        (request, params,),
         return_when=FIRST_COMPLETED,
     )
     if hook_result.status != PASSED:
