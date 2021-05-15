@@ -213,6 +213,7 @@ async def query_accessible_session_templates(
                 session_templates.c.group_id,
                 groups.c.name
             ], use_labels=True)
+            .select_from(j)
             .where(
                 session_templates.c.group_id.in_(group_ids) &
                 session_templates.c.is_active &
