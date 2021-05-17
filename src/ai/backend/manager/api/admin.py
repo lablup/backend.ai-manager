@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import re
 from typing import (
     Any,
     Iterable,
@@ -39,6 +40,8 @@ if TYPE_CHECKING:
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 
+_rx_mutation_hdr = re.compile(r"^mutation(\s+\w+)?\s*(\(|{|@)", re.M)
+
 
 class GQLLoggingMiddleware:
 
@@ -69,8 +72,10 @@ async def handle_gql(request: web.Request, params: Any) -> web.Response:
 
     async def _process() -> Any:
         async with root_ctx.db.connect() as db_conn:
-            # TODO: apply the following execution options for non-mutation queries
-            # await db_conn.execution_options(postgresql_readonly=True)
+            # A simple heuristic to detect read-only queries
+            # ref) https://spec.graphql.org/draft/#sec-Document-Syntax
+            if _rx_mutation_hdr.search(params['query']) is None:
+                await db_conn.execution_options(postgresql_readonly=True)
             async with db_conn.begin():
                 gql_ctx = GraphQueryContext(
                     dataloader_manager=DataLoaderManager(),
