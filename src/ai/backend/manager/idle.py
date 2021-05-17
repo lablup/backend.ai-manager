@@ -127,6 +127,7 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
         event: DoIdleCheckEvent,
     ) -> None:
         log.debug('do_idle_check(): triggered')
+        
         async with self._db.begin() as conn:
             query = (
                 sa.select([kernels])
@@ -135,10 +136,18 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
                     (kernels.c.status.in_(LIVE_STATUS))
                 )
             )
+
             result = await conn.execute(query)
             rows = result.fetchall()
+            print("rows: ", rows)
+            print()
             for row in rows:
-                if (await self.check_session(row, conn)):
+                print(self.name, row, row['id'])
+                print()
+                await self.check_session(row, conn)
+                br()
+
+                if  not (await self.check_session(row, conn)):
                     log.info(f"The {self.name} idle checker triggered termination of s:{row['id']}")
                     await self._event_producer.produce_event(
                         DoTerminateSessionEvent(row['id'], "idle-timeout")
@@ -161,6 +170,7 @@ class TimeoutIdleChecker(BaseIdleChecker):
     """
 
     name: ClassVar[str] = "timeout"
+    
 
     _config_iv = t.Dict({
         t.Key('threshold', default="10m"): tx.TimeDuration(),
@@ -248,7 +258,6 @@ class TimeoutIdleChecker(BaseIdleChecker):
         source: AgentId,
         event: DoIdleCheckEvent,
     ) -> None:
-        br()
         cache_token = self._policy_cache.set(dict())
         try:
             return await super()._do_idle_check(context, source, event)
@@ -256,9 +265,10 @@ class TimeoutIdleChecker(BaseIdleChecker):
             self._policy_cache.reset(cache_token)
 
     async def check_session(self, session: Row, dbconn: SAConnection) -> bool:
-        br()
+        
         session_id = session['id']
         active_streams = await self._redis.zcount(f"session.{session_id}.active_app_connections")
+        
         if active_streams is not None and active_streams > 0:
             return True
         t = await self._redis.time()
@@ -270,6 +280,12 @@ class TimeoutIdleChecker(BaseIdleChecker):
         idle_timeout = self.idle_timeout.total_seconds()
         policy_cache = self._policy_cache.get()
         policy = policy_cache.get(session['access_key'], None)
+        print("\a\a\a\a\n\n\n\n\n\n==========================")
+        print(session_id, active_streams, t, raw_last_access, idle_timeout, policy_cache, policy)
+
+        print("==========================\n\n\n\n")
+        
+        
         if policy is None:
             query = (
                 sa.select([keypair_resource_policies])
@@ -285,7 +301,11 @@ class TimeoutIdleChecker(BaseIdleChecker):
                 )
             )
             result = await dbconn.execute(query)
+            print("result\n")
+            print(result)
             policy = result.first()
+            print(policy)
+            print(session["access_key"], policy["idle_timeout"])
             assert policy is not None
             policy_cache[session['access_key']] = policy
         # setting idle_timeout:
@@ -310,13 +330,48 @@ class UtilizationIdleChecker(BaseIdleChecker):
     
 
     name: ClassVar[str] = "utilization"
+    cpu_util = 0.0
     default_cpu_util_threshold: ClassVar[float] = 30.0
     default_accelerator_util_threshold: ClassVar[float] = 10.0
     default_initial_grace_period: ClassVar[float] = 300.0  # allow first 5 minutes to be idle
 
-    async def populate_config(self, config: Mapping[str, Any]) -> None:
-        pass
+    async def populate_config(self, raw_config: Mapping[str, Any]) -> None:
+        config = self._config_iv.check(raw_config)
+        self.default_cpu_util_threshold = config['threshold']
+        log.info(
+            'ExecutionIdleChecker: default execution threshold = {0:,} %',
+            self.default_cpu_util_threshold,
+        )
+
     
+    async def __ainit__(self) -> None:
+        await super().__ainit__()
+        self.default_cpu_util_threshold = ContextVar('_default_cpu_util_threshold')
+        d = self._event_dispatcher
+        self._evhandlers = [
+            d.consume(SessionStartedEvent, None, self._session_started_cb),       # type: ignore
+            d.consume(ExecutionStartedEvent, None, self._execution_started_cb),   # type: ignore
+            d.consume(ExecutionFinishedEvent, None, self._execution_exited_cb),   # type: ignore
+            d.consume(ExecutionTimeoutEvent, None, self._execution_exited_cb),    # type: ignore
+            d.consume(ExecutionCancelledEvent, None, self._execution_exited_cb),  # type: ignore
+        ]
+
+    async def aclose(self) -> None:
+        for _evh in self._evhandlers:
+            self._event_dispatcher.unconsume(_evh)
+        await super().aclose()
+
+    async def update_app_streaming_status(
+        self,
+        session_id: SessionId,
+        status: AppStreamingStatus,
+    ) -> None:
+        if status == AppStreamingStatus.HAS_ACTIVE_CONNECTIONS:
+            await self._disable_timeout(session_id)
+        elif status == AppStreamingStatus.NO_ACTIVE_CONNECTIONS:
+            await self._update_timeout(session_id)
+
+
     async def _do_idle_check(
         self,
         context: None,
@@ -333,11 +388,58 @@ class UtilizationIdleChecker(BaseIdleChecker):
         last_stat = session['last_stat']
         session_id = session['id']
         active_streams = await self._redis.zcount(f"session.{session_id}.active_app_connections")
-        print("\n\n\n\n\n\a===============================")
-        print(session_id, last_stat, type(active_streams))
-        br()
-        print("===============================\n\n\n\n\a")
-        return True
+        
+        if active_streams is not None and active_streams > 0:
+            return True
+        t = await self._redis.time()
+        raw_last_access = await self._redis.get(f"session.{session_id}.last_access")
+        if raw_last_access is None or raw_last_access == "0":
+            return True
+        last_access = float(raw_last_access)
+        # serves as the default fallback if keypair resource policy's idle_timeout is "undefined"
+        idle_timeout = self.idle_timeout.total_seconds()
+        policy_cache = self._policy_cache.get()
+        policy = policy_cache.get(session['access_key'], None)
+        print("\a\a\a\a\n\n\n\n\n\n==========================")
+        print(session_id, active_streams, t, raw_last_access, idle_timeout, policy_cache, policy)
+
+        print("==========================\n\n\n\n")
+        
+        
+        if policy is None:
+            query = (
+                sa.select([keypair_resource_policies])
+                .select_from(
+                    sa.join(
+                        keypairs,
+                        keypair_resource_policies,
+                        (keypair_resource_policies.c.name == keypairs.c.resource_policy),
+                    )
+                )
+                .where(
+                    keypairs.c.access_key == session['access_key']
+                )
+            )
+            result = await dbconn.execute(query)
+            print("result\n")
+            print(result)
+            policy = result.first()
+            print(policy)
+            print(session["access_key"], policy["idle_timeout"])
+            assert policy is not None
+            policy_cache[session['access_key']] = policy
+        # setting idle_timeout:
+        # - zero/inf means "infinite"
+        # - negative means "undefined"
+        if policy['idle_timeout'] >= 0:
+            idle_timeout = float(policy['idle_timeout'])
+        if (
+            (idle_timeout <= 0)
+            or (math.isinf(idle_timeout) and idle_timeout > 0)
+            or (t - last_access <= idle_timeout)
+        ):
+            return True
+        return False
 
     async def update_app_streaming_status(
         self,
