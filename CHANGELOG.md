@@ -16,6 +16,16 @@ Changes
 
 .. towncrier release notes start
 
+21.03.5 (2021-05-17)
+--------------------
+
+### Features
+* Add `PRE_AUTH_MIDDLEWARE` hook for cookie-based SSO plugins ([#420](https://github.com/lablup/backend.ai-manager/issues/420))
+
+### Fixes
+* Optimize read-only GraphQL queries to use read-only transaction isolation level, which greatly reduces the database loads when using GUI ([#431](https://github.com/lablup/backend.ai-manager/issues/431))
+
+
 21.03.4 (2021-05-14)
 --------------------
 
