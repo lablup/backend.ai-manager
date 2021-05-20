@@ -19,9 +19,10 @@ if TYPE_CHECKING:
         AsyncEngine as SAEngine,
     )
 
-from sqlalchemy import Row
-
 import ai.backend.common.validators as tx
+
+from sqlalchemy.engine import Row
+
 
 import aioredis
 import sqlalchemy as sa
