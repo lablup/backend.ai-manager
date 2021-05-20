@@ -559,7 +559,7 @@ async def query_owned_dotfiles(
         .select_from(keypairs)
         .where(keypairs.c.access_key == access_key)
     )
-    packed_dotfile = await conn.scalar(query)
+    packed_dotfile = (await conn.execute(query)).scalar()
     rows = msgpack.unpackb(packed_dotfile)
     return rows, MAXIMUM_DOTFILE_SIZE - len(packed_dotfile)
 
@@ -573,7 +573,7 @@ async def query_bootstrap_script(
         .select_from(keypairs)
         .where(keypairs.c.access_key == access_key)
     )
-    script = await conn.scalar(query)
+    script = (await conn.execute(query)).scalar()
     return script, MAXIMUM_DOTFILE_SIZE - len(script)
 
 

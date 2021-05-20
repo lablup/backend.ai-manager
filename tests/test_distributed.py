@@ -179,4 +179,4 @@ def test_global_timer(test_id, local_config, shared_config) -> None:
             break
         num_records += 1
     print(f"{num_records=}")
-    assert target_count - 1 <= num_records <= target_count + 2
+    assert target_count - 1 <= num_records <= target_count + 3
