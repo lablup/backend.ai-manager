@@ -1,1 +1,0 @@
-{"enabled":"timeout", "app-streaming-packet-timeout":"1m","checkers": {"timeout":{"threshold":"1m"}, "utilization":{"resource-thresholds":{"cpu":{"average":1,"window":"1m"}}}}}
