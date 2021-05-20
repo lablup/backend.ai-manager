@@ -5,7 +5,6 @@ from typing import Sequence, TYPE_CHECKING
 import attr
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncEngine as SAEngine
     from aioredis import Redis
 
     from ai.backend.common.events import EventDispatcher, EventProducer
@@ -14,6 +13,7 @@ if TYPE_CHECKING:
 
     from ..background import BackgroundTaskManager
     from ..models.storage import StorageSessionManager
+    from ..models.utils import ExtendedAsyncSAEngine
     from ..idle import BaseIdleChecker
     from ..plugin.webapp import WebappPluginContext
     from ..registry import AgentRegistry
@@ -28,7 +28,7 @@ class BaseContext:
 @attr.s(slots=True, auto_attribs=True, init=False)
 class RootContext(BaseContext):
     pidx: int
-    db: SAEngine
+    db: ExtendedAsyncSAEngine
     event_dispatcher: EventDispatcher
     event_producer: EventProducer
     redis_live: Redis

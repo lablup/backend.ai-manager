@@ -18,9 +18,11 @@ if TYPE_CHECKING:
         AsyncConnection as SAConnection,
         AsyncEngine as SAEngine,
     )
-    from sqlalchemy import Row
+
+from sqlalchemy import Row
 
 import ai.backend.common.validators as tx
+
 import aioredis
 import sqlalchemy as sa
 import trafaret as t
