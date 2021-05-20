@@ -302,8 +302,9 @@ class UtilizationIdleChecker(BaseIdleChecker):
     """
 
     name: ClassVar[str] = "utilization"
-    cpu_util_series = []
-    mem_util_series = []
+    cpu_util_series: List[float] = []
+    mem_util_series: List[float] = []
+
     idle_timeout: timedelta
 
     _config_iv = t.Dict(
