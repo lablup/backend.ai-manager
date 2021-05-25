@@ -313,6 +313,8 @@ class UtilizationIdleChecker(BaseIdleChecker):
     async def populate_config(self, raw_config: Mapping[str, Any]) -> None:
         self.cpu_threshold = int(raw_config["resource-thresholds"]["cpu"]["average"])
         self.mem_threshold = int(raw_config["resource-thresholds"]["mem"]["average"])
+        self.cuda_mem_threshold = int(raw_config["resource-thresholds"]["cuda_mem"]["average"])
+        self.threshold_condition = str(raw_config["thresholds_check_condition"]["condition"])
         self.window = raw_config["resource-thresholds"]["cpu"]["window"]
 
         log.info(
@@ -343,7 +345,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         await self._redis.set(
             f"session.{session_id}.last_execution",
             f"{t:.06f}",
-            expire=int(self.cpu_util_series[-1]),
+            expire=float(math.mean(self.cpu_util_series) / len(self.cpu_util_series))
         )
 
     async def _session_started_cb(
@@ -400,6 +402,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
         cpu_util_pct = float(live_stat["cpu_util"]["pct"])
         mem_util_pct = float(live_stat["mem"]["pct"])
+        cuda_mem_util_pct = float(live_stat["cuda_mem"]["pct"])
 
         interval = self.timer.interval
 
@@ -415,18 +418,26 @@ class UtilizationIdleChecker(BaseIdleChecker):
         if len(self.cpu_util_series) < window_size:
             self.cpu_util_series.append(float(cpu_util_pct))
             self.mem_util_series.append(float(mem_util_pct))
+            self.cuda_mem_util_series.append(float(cuda_mem_util_pct))
             return True
         else:
             avg_cpu_util = sum(self.cpu_util_series) / len(self.cpu_util_series)
             avg_mem_util = sum(self.mem_util_series) / len(self.mem_util_series)
+            cuda_mem_util = sum(self.cuda_mem_util_series) / len(self.cuda_mem_util_series)
 
             self.cpu_util_series.pop(0)
             self.mem_util_series.pop(0)
 
-            if (avg_cpu_util <= self.cpu_threshold) or (avg_mem_util <= self.mem_threshold):
-                return False
-            else:
-                return True
+            if self.threshold_condition == "or":
+                if (avg_cpu_util <= self.cpu_threshold) or (avg_mem_util <= self.mem_threshold) or (cuda_mem_util <= self.cuda_mem_threshold):
+                    return False
+                else:
+                    return True
+            elif self.threshold_condition:
+                if (avg_cpu_util <= self.cpu_threshold) and (avg_mem_util <= self.mem_threshold) and (cuda_mem_util <= self.cuda_mem_threshold):
+                    return False
+                else:
+                    return True
 
 
 checker_registry: Mapping[str, Type[BaseIdleChecker]] = {
