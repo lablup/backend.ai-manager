@@ -80,7 +80,12 @@ Alias keys are also URL-quoted in the same way.
                - window: "1m"  # average for duration
                # NOTE: To use "cuda.mem" criteria, user programs must use
                #       an incremental allocation strategy for CUDA memory.
-           - initial-grace_period: "30s"
+           + thresholds_check_condition: 
+               - condition: "and" # logical operator
+               # NOTE: If set "and"" utilization checks for both resources such as 
+               # (cpu < threshold) AND (memory < threshold) AND (cuda.mem < threshold)
+               #       If falue set to "or" resurces checked inclusively such as 
+               # (cpu < threshold) OR (memory < threshold) OR (cuda.mem < threshold)
      + resource_slots
        - {"cuda.device"}: {"count"}
        - {"cuda.mem"}: {"bytes"}
