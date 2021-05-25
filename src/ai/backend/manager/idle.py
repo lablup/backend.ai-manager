@@ -402,7 +402,13 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
         cpu_util_pct = float(live_stat["cpu_util"]["pct"])
         mem_util_pct = float(live_stat["mem"]["pct"])
-        cuda_mem_util_pct = float(live_stat["cuda_mem"]["pct"])
+        try:
+            cuda_mem_util_pct = float(live_stat["cuda_mem"]["pct"])
+        except Exception:
+            cuda_mem_util_pct = None
+
+        if math.isinf(cuda_mem_util_pct):
+            cuda_mem_util_pct = None
 
         interval = self.timer.interval
 
