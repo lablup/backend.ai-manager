@@ -389,7 +389,6 @@ class UtilizationIdleChecker(BaseIdleChecker):
         active_streams = await self._redis.zcount(
             f"session.{session_id}.active_app_connections"
         )
-
         if active_streams is not None and active_streams > 0:
             return True
 
@@ -405,9 +404,6 @@ class UtilizationIdleChecker(BaseIdleChecker):
         try:
             cuda_mem_util_pct = float(live_stat["cuda_mem"]["pct"])
         except Exception:
-            cuda_mem_util_pct = None
-
-        if math.isinf(cuda_mem_util_pct):
             cuda_mem_util_pct = None
 
         interval = self.timer.interval
