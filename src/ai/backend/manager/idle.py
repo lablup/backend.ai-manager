@@ -346,7 +346,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         await self._redis.set(
             f"session.{session_id}.last_execution",
             f"{t:.06f}",
-            expire=float(math.mean(self.cpu_util_series) / len(self.cpu_util_series))
+            expire=float(math.sum(self.cpu_util_series) / len(self.cpu_util_series))
         )
 
     async def _session_started_cb(
@@ -429,15 +429,24 @@ class UtilizationIdleChecker(BaseIdleChecker):
             self.mem_util_series.pop(0)
 
             if self.threshold_condition == "or":
-                if (avg_cpu_util <= self.cpu_threshold) or (avg_mem_util <= self.mem_threshold) or (cuda_mem_util <= self.cuda_mem_threshold):
+                if ((avg_cpu_util <= self.cpu_threshold) or
+                    (avg_mem_util <= self.mem_threshold) or
+                    (cuda_mem_util <= self.cuda_mem_threshold)
+                    ):
                     return False
                 else:
                     return True
             elif self.threshold_condition == "and":
-                if (avg_cpu_util <= self.cpu_threshold) and (avg_mem_util <= self.mem_threshold) and (cuda_mem_util <= self.cuda_mem_threshold):
+                if (
+                    (avg_cpu_util <= self.cpu_threshold) and
+                    (avg_mem_util <= self.mem_threshold) and
+                    (cuda_mem_util <= self.cuda_mem_threshold)
+                    ):
                     return False
                 else:
                     return True
+            else:
+                return True
 
 
 checker_registry: Mapping[str, Type[BaseIdleChecker]] = {
