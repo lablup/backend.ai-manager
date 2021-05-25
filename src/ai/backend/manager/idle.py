@@ -307,6 +307,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
     name: ClassVar[str] = "utilization"
     cpu_util_series: List[float] = []
     mem_util_series: List[float] = []
+    cuda_mem_util_series: List[float] = []
 
     _evhandlers: List[EventHandler[None, AbstractEvent]]
 
@@ -404,7 +405,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         try:
             cuda_mem_util_pct = float(live_stat["cuda_mem"]["pct"])
         except Exception:
-            cuda_mem_util_pct = None
+            cuda_mem_util_pct = 0.0
 
         interval = self.timer.interval
 
