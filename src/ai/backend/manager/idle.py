@@ -346,7 +346,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         await self._redis.set(
             f"session.{session_id}.last_execution",
             f"{t:.06f}",
-            expire=float(math.sum(self.cpu_util_series) / len(self.cpu_util_series))
+            expire=float(sum(self.cpu_util_series) / len(self.cpu_util_series))
         )
 
     async def _session_started_cb(
