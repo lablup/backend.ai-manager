@@ -439,7 +439,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
                     return False
                 else:
                     return True
-            elif self.threshold_condition:
+            elif self.threshold_condition == "and":
                 if (avg_cpu_util <= self.cpu_threshold) and (avg_mem_util <= self.mem_threshold) and (cuda_mem_util <= self.cuda_mem_threshold):
                     return False
                 else:
