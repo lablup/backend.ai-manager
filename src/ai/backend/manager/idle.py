@@ -308,27 +308,17 @@ class UtilizationIdleChecker(BaseIdleChecker):
     cpu_util_series: List[float] = []
     mem_util_series: List[float] = []
 
-    idle_timeout: timedelta
-
-    _config_iv = t.Dict(
-        {
-            t.Key("threshold", default="10m"): tx.TimeDuration(),
-        }
-    ).allow_extra("*")
-
     _evhandlers: List[EventHandler[None, AbstractEvent]]
 
     async def populate_config(self, raw_config: Mapping[str, Any]) -> None:
-        config = self._config_iv.check(raw_config)
-        self.idle_timeout = config["threshold"]
-        self.cpu_thresh = int(raw_config["resource-thresholds"]["cpu"]["average"])
-        self.mem_thresh = int(raw_config["resource-thresholds"]["mem"]["average"])
-        self.wind = raw_config["resource-thresholds"]["cpu"]["window"]
+        self.cpu_threshold = int(raw_config["resource-thresholds"]["cpu"]["average"])
+        self.mem_threshold = int(raw_config["resource-thresholds"]["mem"]["average"])
+        self.window = raw_config["resource-thresholds"]["cpu"]["window"]
 
         log.info(
-            f"ExecutionIdleChecker: default cpu idle_timeout = {self.cpu_thresh} pct; \
-              Mem idle execution = {self.mem_thresh} %, \
-              and observed moving window = {self.wind}"
+            f"ExecutionIdleChecker: default cpu idle_timeout = {self.cpu_threshold} pct; \
+              Mem idle execution = {self.mem_threshold} %, \
+              and observed moving window = {self.window}"
         )
 
     async def update_app_streaming_status(
@@ -344,16 +334,16 @@ class UtilizationIdleChecker(BaseIdleChecker):
     async def _disable_timeout(self, session_id: SessionId) -> None:
         log.debug(f"ExecutionIdleChecker._disable_timeout({session_id})")
         await self._redis.set(
-            f"session.{session_id}.last_access", "0", exist=self._redis.SET_IF_EXIST
+            f"session.{session_id}.last_execution", "0", exist=self._redis.SET_IF_EXIST
         )
 
     async def _update_timeout(self, session_id: SessionId) -> None:
         log.debug(f"ExecutionIdleChecker._update_timeout({session_id})")
         t = await self._redis.time()
         await self._redis.set(
-            f"session.{session_id}.last_access",
+            f"session.{session_id}.last_execution",
             f"{t:.06f}",
-            expire=max(86400, int(self.idle_timeout.total_seconds() * 2)),
+            expire=int(self.cpu_util_series[-1]),
         )
 
     async def _session_started_cb(
@@ -393,9 +383,15 @@ class UtilizationIdleChecker(BaseIdleChecker):
             pass
 
     async def check_session(self, session: Row, dbconn: SAConnection) -> bool:
+        session_id = session["id"]
+        active_streams = await self._redis.zcount(
+            f"session.{session_id}.active_app_connections"
+        )
+
+        if active_streams is not None and active_streams > 0:
+            return True
 
         redis = await aioredis.create_redis("redis://127.0.0.1:8111/")
-
         redis_out = await redis.get(str(session["session_id"]), encoding=None)
         try:
             live_stat = msgpack.unpackb(redis_out)
@@ -407,28 +403,27 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
         interval = self.timer.interval
 
-        if "m" in self.wind:
-            wind = int(self.wind.replace("m", ""))
-            wind_size = (wind * 60) / interval
-        elif "h" in self.wind:
-            wind = int(self.wind.replace("h", ""))
-            wind_size = (wind * 60 * 60) / interval
+        if "m" in self.window:
+            window = int(self.window.replace("m", ""))
+            window_size = (window * 60) / interval
+        elif "h" in self.window:
+            window = int(self.window.replace("h", ""))
+            window_size = (window * 60 * 60) / interval
         else:
             raise Exception("Undefined unit of window interval")
 
-        if len(self.cpu_util_series) < wind_size:
+        if len(self.cpu_util_series) < window_size:
             self.cpu_util_series.append(float(cpu_util_pct))
             self.mem_util_series.append(float(mem_util_pct))
-            print(self.cpu_util_series, len(self.cpu_util_series))
             return True
         else:
             avg_cpu_util = sum(self.cpu_util_series) / len(self.cpu_util_series)
             avg_mem_util = sum(self.mem_util_series) / len(self.mem_util_series)
 
-            self.cpu_util_series = []
-            self.mem_util_series = []
+            self.cpu_util_series.pop(0)
+            self.mem_util_series.pop(0)
 
-            if (avg_cpu_util <= self.cpu_thresh) or (avg_mem_util <= self.mem_thresh):
+            if (avg_cpu_util <= self.cpu_threshold) or (avg_mem_util <= self.mem_threshold):
                 return False
             else:
                 return True
