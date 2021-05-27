@@ -28,6 +28,7 @@ import aioredis
 import sqlalchemy as sa
 import trafaret as t
 from ai.backend.common import msgpack
+from ai.backend.common.utils import nmget, str_to_timedelta
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import AccessKey, aobject
 
@@ -307,21 +308,41 @@ class UtilizationIdleChecker(BaseIdleChecker):
     name: ClassVar[str] = "utilization"
     cpu_util_series: List[float] = []
     mem_util_series: List[float] = []
+    cuda_util_series: List[float] = []
     cuda_mem_util_series: List[float] = []
 
     _evhandlers: List[EventHandler[None, AbstractEvent]]
 
     async def populate_config(self, raw_config: Mapping[str, Any]) -> None:
-        self.cpu_threshold = int(raw_config["resource-thresholds"]["cpu"]["average"])
-        self.mem_threshold = int(raw_config["resource-thresholds"]["mem"]["average"])
-        self.cuda_mem_threshold = int(raw_config["resource-thresholds"]["cuda_mem"]["average"])
-        self.threshold_condition = str(raw_config["thresholds_check_condition"]["condition"])
-        self.window = raw_config["resource-thresholds"]["cpu"]["window"]
+        self.resource_thresholds = {}
+        self.resource_thresholds["cpu_threshold"] = nmget(raw_config,
+                                                          "resource-thresholds.cpu.average")
+        self.resource_thresholds["mem_threshold"] = nmget(raw_config,
+                                                          "resource-thresholds.mem.average")
+        self.resource_thresholds["cuda_mem_threshold"] = nmget(raw_config,
+                                                               "resource-thresholds.cuda_mem.average")
+        self.resource_thresholds["cuda_threshold"] = nmget(raw_config,
+                                                           "resource-thresholds.cuda.average")
+        self.threshold_condition = str(nmget(raw_config,
+                                             "thresholds-check-condition.condition"))
+        self.window = str(nmget(raw_config, "resource-thresholds.window"))
+
+        # generate string of available resources while maintaining index order
+        self.resource_list = [self.resource_thresholds["cpu_threshold"],
+                              self.resource_thresholds["mem_threshold"],
+                              self.resource_thresholds["cuda_mem_threshold"],
+                              self.resource_thresholds["cuda_threshold"]]
+
+        self.resource_avail = "".join(["1" if x is not None else "0" for x in self.resource_list])
 
         log.info(
-            f"ExecutionIdleChecker: default cpu idle_timeout = {self.cpu_threshold} pct; \
-              Mem idle execution = {self.mem_threshold} %, \
-              and observed moving window = {self.window}"
+            f"ExecutionIdleChecker: default cpu idle_execution: {self.cpu_threshold} pct; \
+              Mem idle execution: {self.mem_threshold} %; \
+              Cuda mem idle threshold: {self.cuda_mem_threshold} %; \
+              Cuda utilization threshold: {self.cuda_threshold} %;   \
+              Corresponding resource availablity string is {self.resource_avail}; \
+              threshold condition check: {self.threshold_condition}; \
+              and observed moving window: {self.window}"
         )
 
     async def update_app_streaming_status(
@@ -346,8 +367,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         await self._redis.set(
             f"session.{session_id}.last_execution",
             f"{t:.06f}",
-            expire=float(sum(self.cpu_util_series) / len(self.cpu_util_series))
-        )
+            expire=86400)
 
     async def _session_started_cb(
         self,
@@ -402,51 +422,61 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
         cpu_util_pct = float(live_stat["cpu_util"]["pct"])
         mem_util_pct = float(live_stat["mem"]["pct"])
+        cuda_util_pct = float(live_stat["cuda_util"]["pct"])
         cuda_mem_util_pct = float(live_stat["cuda_mem"]["pct"])
 
         interval = self.timer.interval
+        self.window = str_to_timedelta(self.window).total_seconds()
 
-        if "m" in self.window:
-            window = int(self.window.replace("m", ""))
-            window_size = (window * 60) / interval
-        elif "h" in self.window:
-            window = int(self.window.replace("h", ""))
-            window_size = (window * 60 * 60) / interval
-        else:
-            raise Exception("Undefined unit of window interval")
+        window_size = (self.window) / interval
+
+        self.cpu_util_series.append(float(cpu_util_pct))
+        self.mem_util_series.append(float(mem_util_pct))
+        self.cuda_mem_util_series.append(float(cuda_mem_util_pct))
+        self.cuda_util_series.append(float(cuda_util_pct))
 
         if len(self.cpu_util_series) < window_size:
-            self.cpu_util_series.append(float(cpu_util_pct))
-            self.mem_util_series.append(float(mem_util_pct))
-            self.cuda_mem_util_series.append(float(cuda_mem_util_pct))
+            return True
+        avg_cpu_util = sum(self.cpu_util_series) / len(self.cpu_util_series)
+        avg_mem_util = sum(self.mem_util_series) / len(self.mem_util_series)
+        avg_cuda_util = sum(self.cuda_util_series) / len(self.cuda_util_series)
+        cuda_mem_util = sum(self.cuda_mem_util_series) / len(self.cuda_mem_util_series)
+        avg_list = [avg_cpu_util, avg_mem_util, avg_cuda_util, cuda_mem_util]
+
+        self.cpu_util_series.pop(0)
+        self.mem_util_series.pop(0)
+        self.cuda_mem_util_series.pop(0)
+        self.cuda_util_series.pop(0)
+
+        def check_threshold_condition(resource_thresholds, resource_list,
+                                      resource_avail, avg_list, condition):
+
+            """ This function selected available resource based on ordered strings \
+            and auto-generates the boolean condtions """
+            avail_index = [pos for pos, char in enumerate(resource_avail) if char == "1"]
+            selected_resources = [resource_list[i] for i in avail_index]
+            selected_values = [avg_list[i] for i in avail_index]
+
+            eval_str = ""
+            i = 0
+            while i < len(selected_resources):
+                resource_thresh = selected_resources[i]
+                resource_value = selected_values[i]
+                eval_str += str(resource_value) + " <= " + (str(resource_thresh)) + f" {condition} "
+                i += 1
+            eval_str = eval_str[:-len(condition) - 1]
+            print(eval_str, eval(eval_str))
+
+            if eval(eval_str):
+                return True
+            else:
+                return False
+
+        if check_threshold_condition(self.resource_thresholds, self.resource_list,
+                                     self.resource_avail, avg_list, self.condition):
             return True
         else:
-            avg_cpu_util = sum(self.cpu_util_series) / len(self.cpu_util_series)
-            avg_mem_util = sum(self.mem_util_series) / len(self.mem_util_series)
-            cuda_mem_util = sum(self.cuda_mem_util_series) / len(self.cuda_mem_util_series)
-
-            self.cpu_util_series.pop(0)
-            self.mem_util_series.pop(0)
-
-            if self.threshold_condition == "or":
-                if ((avg_cpu_util <= self.cpu_threshold) or
-                    (avg_mem_util <= self.mem_threshold) or
-                    (cuda_mem_util <= self.cuda_mem_threshold)
-                    ):
-                    return False
-                else:
-                    return True
-            elif self.threshold_condition == "and":
-                if (
-                    (avg_cpu_util <= self.cpu_threshold) and
-                    (avg_mem_util <= self.mem_threshold) and
-                    (cuda_mem_util <= self.cuda_mem_threshold)
-                    ):
-                    return False
-                else:
-                    return True
-            else:
-                return True
+            return False
 
 
 checker_registry: Mapping[str, Type[BaseIdleChecker]] = {

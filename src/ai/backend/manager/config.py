@@ -74,18 +74,23 @@ Alias keys are also URL-quoted in the same way.
            + resource-thresholds
              + "cpu"
                - average: 30   # in percent
-               - window: "1m"  # average for duration
+             + "mem"
+               - average: 30 # in percent
              + "cuda.mem"
                - average: 15   # in percent
-               - window: "1m"  # average for duration
                # NOTE: To use "cuda.mem" criteria, user programs must use
                #       an incremental allocation strategy for CUDA memory.
-           + thresholds_check_condition:
-               - condition: "and" # logical operator
+             + "cuda"
+                - average: 30 # in percent
+                # " NOTE: cuda cores utilizations
+           - thresholds-check-condition: "and" # logical operator
                # NOTE: If set "and"" utilization checks for both resources such as
                # (cpu < threshold) AND (memory < threshold) AND (cuda.mem < threshold)
-               #       If falue set to "or" resurces checked inclusively such as
+               #       If falue set to "or" resurces are checked inclusively such as
                # (cpu < threshold) OR (memory < threshold) OR (cuda.mem < threshold)
+           - window: "1m" # average for duration
+           - expiration-time: 86400 # in seconds
+
      + resource_slots
        - {"cuda.device"}: {"count"}
        - {"cuda.mem"}: {"bytes"}
