@@ -55,6 +55,8 @@ if TYPE_CHECKING:
         AsyncEngine as SAEngine,
     )
 
+from icecream import ic
+
 log = BraceStyleAdapter(logging.getLogger("ai.backend.manager.idle"))
 
 
@@ -319,15 +321,29 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
     name: ClassVar[str] = "utilization"
 
+    _config_iv = t.Dict(
+        {
+            t.Key("time-window", default="10m"): tx.TimeDuration(),
+            t.Key("thresholds-check-condition", default="and"): t.String,
+            t.Key("resource-thresholds"): t.Dict(
+                {
+                    t.Key("cpu", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
+                    t.Key("mem", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
+                    t.Key("cuda", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
+                    t.Key("cuda.mem", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
+                }
+            ),
+        }
+    ).allow_extra("*")
+
     cpu_util_series: List[float] = []
     mem_util_series: List[float] = []
     cuda_util_series: List[float] = []
     cuda_mem_util_series: List[float] = []
 
     resource_thresholds: Mapping[str, Any]
-    threshold_condition: str | None
+    thresholds_check_operator: str | None
     window: timedelta
-    _policy_cache: ContextVar[Dict[AccessKey, Optional[Mapping[str, Any]]]]
     _evhandlers: List[EventHandler[None, AbstractEvent]]
 
     async def __ainit__(self) -> None:
@@ -335,7 +351,6 @@ class UtilizationIdleChecker(BaseIdleChecker):
         self._redis_stat = await aioredis.create_redis(
             str(self._shared_config.get_redis_url(db=REDIS_STAT_DB))
         )
-        self._policy_cache = ContextVar("_policy_cache")
         d = self._event_dispatcher
         self._evhandlers = [
             d.consume(SessionStartedEvent, None, self._session_started_cb),  # type: ignore
@@ -351,24 +366,22 @@ class UtilizationIdleChecker(BaseIdleChecker):
         await super().aclose()
 
     async def populate_config(self, raw_config: Mapping[str, Any]) -> None:
+        config = self._config_iv.check(raw_config)
         self.resource_thresholds = {
-            "cpu_threshold": nmget(raw_config, "resource-thresholds.cpu.average"),
-            "mem_threshold": nmget(raw_config, "resource-thresholds.mem.average"),
-            "cuda_threshold": nmget(raw_config, "resource-thresholds.cuda.average"),
-            "cuda_mem_threshold": nmget(
-                raw_config, "resource-thresholds.cuda_mem.average"
-            ),
+            "cpu": nmget(config, "resource-thresholds.cpu.average"),
+            "mem": nmget(config, "resource-thresholds.mem.average"),
+            "cuda": nmget(config, "resource-thresholds.cuda.average"),
+            "cuda_mem": nmget(config, "resource-thresholds.cuda_mem.average"),
         }
-
-        self.threshold_condition = raw_config.get("thresholds-check-condition")
-        self.window = str_to_timedelta(raw_config.get("time-window"))
+        self.thresholds_check_operator = config.get("thresholds-check-operator")
+        self.time_window = config.get("time-window")
 
         # Generate string of available resources while maintaining index order
         self.resource_list = [
-            self.resource_thresholds["cpu_threshold"],
-            self.resource_thresholds["mem_threshold"],
-            self.resource_thresholds["cuda_mem_threshold"],
-            self.resource_thresholds["cuda_threshold"],
+            self.resource_thresholds["cpu"],
+            self.resource_thresholds["mem"],
+            self.resource_thresholds["cuda"],
+            self.resource_thresholds["cuda_mem"],
         ]
         self.resource_avail = "".join(
             ["1" if x is not None else "0" for x in self.resource_list]
@@ -376,12 +389,12 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
         log.info(
             f"UtilizationIdleChecker(%): "
-            f"cpu({self.resource_thresholds['cpu_threshold']}), "
-            f"mem({self.resource_thresholds['mem_threshold']}), "
-            f"cuda({self.resource_thresholds['cuda_threshold']}), "
-            f"cuda.mem({self.resource_thresholds['cuda_mem_threshold']}), "
-            f"threshold check condition: {self.threshold_condition}, "
-            f"moving window: {self.window.total_seconds()}s"
+            f"cpu({self.resource_thresholds['cpu']}), "
+            f"mem({self.resource_thresholds['mem']}), "
+            f"cuda({self.resource_thresholds['cuda']}), "
+            f"cuda.mem({self.resource_thresholds['cuda_mem']}), "
+            f"thresholds-check-operator(\"{self.thresholds_check_operator}\"), "
+            f"time-window({self.time_window.total_seconds()}s)"
         )
 
     async def update_app_streaming_status(
@@ -406,7 +419,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         await self._redis.set(
             f"session.{session_id}.last_execution",
             f"{t:.06f}",
-            expire=max(86400, int(self.window.total_seconds() * 2)),
+            expire=max(86400, int(self.time_window.total_seconds() * 2)),
         ),
 
     async def _session_started_cb(
@@ -452,9 +465,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         if active_streams is not None and active_streams > 0:
             return True
 
-        raw_live_stat = await self._redis_stat.get(
-            str(session["session_id"]), encoding=None
-        )
+        raw_live_stat = await self._redis_stat.get(str(session_id), encoding=None)
 
         try:
             live_stat = msgpack.unpackb(raw_live_stat)
@@ -472,7 +483,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         for k in stream_values.keys():
             stream_values[k] = check_avail(k, live_stat)
         interval = self.timer.interval
-        window_size = int(self.window.total_seconds() / interval)
+        window_size = int(self.time_window.total_seconds() / interval)
 
         self.cpu_util_series.append(stream_values["cpu_util"])
         self.mem_util_series.append(stream_values["mem"])
@@ -492,10 +503,9 @@ class UtilizationIdleChecker(BaseIdleChecker):
         self.cuda_mem_util_series.pop(0)
         self.cuda_util_series.pop(0)
 
-        def check_threshold_condition(
+        def _check_threshold_condition(
             resource_list, resource_avail, avg_list, condition
         ):
-
             """ This function selected available resource based on ordered strings \
             and auto-generates the boolean condtions """
             avail_index = [
@@ -523,11 +533,11 @@ class UtilizationIdleChecker(BaseIdleChecker):
             else:
                 return False
 
-        if check_threshold_condition(
+        if _check_threshold_condition(
             self.resource_list,
             self.resource_avail,
             avg_list,
-            self.threshold_condition,
+            self.thresholds_check_operator,
         ):
             return True
         else:

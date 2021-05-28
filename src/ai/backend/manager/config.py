@@ -82,7 +82,7 @@ Alias keys are also URL-quoted in the same way.
                - average: 30  # in percent
                # NOTE: To use "cuda.mem" criteria, user programs must use
                #       an incremental allocation strategy for CUDA memory.
-           - thresholds-check-condition: "and"
+           - thresholds-check-operator: "and"
              # "and" (default, so any other words except the "or"):
              #     garbage collect a session only when ALL of the resources are
              #     under-utilized not exceeding their thresholds.
