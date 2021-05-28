@@ -223,7 +223,7 @@ class TimeoutIdleChecker(BaseIdleChecker):
         await self._redis.set(
             f"session.{session_id}.last_access",
             f"{t:.06f}",
-            expire=max(86400, int(self.idle_timeout.total_seconds() * 2)),
+            expire=max(86400, int(self.idle_timeout * 2)),
         )
 
     async def _session_started_cb(
@@ -335,6 +335,20 @@ class UtilizationIdleChecker(BaseIdleChecker):
         self._redis_stat = await aioredis.create_redis(
             str(self._shared_config.get_redis_url(db=REDIS_STAT_DB))
         )
+        self._policy_cache = ContextVar("_policy_cache")
+        d = self._event_dispatcher
+        self._evhandlers = [
+            d.consume(SessionStartedEvent, None, self._session_started_cb),  # type: ignore
+            d.consume(ExecutionStartedEvent, None, self._execution_started_cb),  # type: ignore
+            d.consume(ExecutionFinishedEvent, None, self._execution_exited_cb),  # type: ignore
+            d.consume(ExecutionTimeoutEvent, None, self._execution_exited_cb),  # type: ignore
+            d.consume(ExecutionCancelledEvent, None, self._execution_exited_cb),  # type: ignore
+        ]
+
+    async def aclose(self) -> None:
+        for _evh in self._evhandlers:
+            self._event_dispatcher.unconsume(_evh)
+        await super().aclose()
 
     async def populate_config(self, raw_config: Mapping[str, Any]) -> None:
         self.resource_thresholds = {
@@ -348,7 +362,6 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
         self.threshold_condition = raw_config.get("thresholds-check-condition")
         self.window = str_to_timedelta(raw_config.get("time-window")).total_seconds()
-        print(self.window)
 
         # Generate string of available resources while maintaining index order
         self.resource_list = [
@@ -440,6 +453,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
             return True
 
         raw_live_stat = await self._redis_stat.get(str(session["session_id"]), encoding=None)
+
         try:
             live_stat = msgpack.unpackb(raw_live_stat)
         except Exception:
@@ -454,9 +468,8 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
         for k in stream_values.keys():
             stream_values[k] = check_avail(k, live_stat)
-
         interval = self.timer.interval
-        window_size = self.window / interval
+        window_size = int(self.window / interval)
 
         self.cpu_util_series.append(stream_values["cpu_util"])
         self.mem_util_series.append(stream_values["mem"])
@@ -501,7 +514,6 @@ class UtilizationIdleChecker(BaseIdleChecker):
                 )
                 i += 1
             eval_str = eval_str[: -len(condition) - 1]
-
             if eval(eval_str):
                 return True
             else:
