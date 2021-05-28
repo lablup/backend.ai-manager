@@ -351,18 +351,10 @@ class UtilizationIdleChecker(BaseIdleChecker):
         self._redis_stat = await aioredis.create_redis(
             str(self._shared_config.get_redis_url(db=REDIS_STAT_DB))
         )
-        d = self._event_dispatcher
-        self._evhandlers = [
-            d.consume(SessionStartedEvent, None, self._session_started_cb),  # type: ignore
-            d.consume(ExecutionStartedEvent, None, self._execution_started_cb),  # type: ignore
-            d.consume(ExecutionFinishedEvent, None, self._execution_exited_cb),  # type: ignore
-            d.consume(ExecutionTimeoutEvent, None, self._execution_exited_cb),  # type: ignore
-            d.consume(ExecutionCancelledEvent, None, self._execution_exited_cb),  # type: ignore
-        ]
 
     async def aclose(self) -> None:
-        for _evh in self._evhandlers:
-            self._event_dispatcher.unconsume(_evh)
+        self._redis_stat.close()
+        await self._redis_stat.wait_closed()
         await super().aclose()
 
     async def populate_config(self, raw_config: Mapping[str, Any]) -> None:
@@ -402,49 +394,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         session_id: SessionId,
         status: AppStreamingStatus,
     ) -> None:
-        if status == AppStreamingStatus.HAS_ACTIVE_CONNECTIONS:
-            await self._disable_timeout(session_id)
-        elif status == AppStreamingStatus.NO_ACTIVE_CONNECTIONS:
-            await self._update_timeout(session_id)
-
-    async def _disable_timeout(self, session_id: SessionId) -> None:
-        log.debug(f"UtilizationIdleChecker._disable_timeout({session_id})")
-        await self._redis.set(
-            f"session.{session_id}.last_execution", "0", exist=self._redis.SET_IF_EXIST
-        )
-
-    async def _update_timeout(self, session_id: SessionId) -> None:
-        log.debug(f"UtilizationIdleChecker._update_timeout({session_id})")
-        t = await self._redis.time()
-        await self._redis.set(
-            f"session.{session_id}.last_execution",
-            f"{t:.06f}",
-            expire=max(86400, int(self.time_window.total_seconds() * 2)),
-        ),
-
-    async def _session_started_cb(
-        self,
-        context: None,
-        source: AgentId,
-        event: SessionStartedEvent,
-    ) -> None:
-        await self._update_timeout(event.session_id)
-
-    async def _execution_started_cb(
-        self,
-        context: None,
-        source: AgentId,
-        event: ExecutionStartedEvent,
-    ) -> None:
-        await self._disable_timeout(event.session_id)
-
-    async def _execution_exited_cb(
-        self,
-        context: None,
-        source: AgentId,
-        event: ExecutionFinishedEvent | ExecutionTimeoutEvent | ExecutionCancelledEvent,
-    ) -> None:
-        await self._update_timeout(event.session_id)
+        pass
 
     async def _do_idle_check(
         self,
