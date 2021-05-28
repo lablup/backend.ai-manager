@@ -360,7 +360,6 @@ class UtilizationIdleChecker(BaseIdleChecker):
             ),
         }
 
-
         self.threshold_condition = raw_config.get("thresholds-check-condition")
         self.window = str_to_timedelta(raw_config.get("time-window"))
 
@@ -453,17 +452,19 @@ class UtilizationIdleChecker(BaseIdleChecker):
         if active_streams is not None and active_streams > 0:
             return True
 
-        raw_live_stat = await self._redis_stat.get(str(session["session_id"]), encoding=None)
+        raw_live_stat = await self._redis_stat.get(
+            str(session["session_id"]), encoding=None
+        )
 
         try:
             live_stat = msgpack.unpackb(raw_live_stat)
         except Exception:
             return True
 
-        stream_values = {"cpu_util": 0.0,  "mem": 0.0, "cuda_util": 0.0, "cuda_mem": 0.0}
+        stream_values = {"cpu_util": 0.0, "mem": 0.0, "cuda_util": 0.0, "cuda_mem": 0.0}
 
         def check_avail(_k, _live_stat):
-            """ This function checks key values for being availbe from Redis"""
+            """This function checks key values for being availbe from Redis"""
             if _k not in _live_stat.keys():
                 return 0.0
             return float(_live_stat[_k]["pct"])
