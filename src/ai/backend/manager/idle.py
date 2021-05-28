@@ -339,8 +339,8 @@ class UtilizationIdleChecker(BaseIdleChecker):
                 raw_config, "resource-thresholds.cuda_mem.average"
             ),
         }
-        self.threshold_condition = raw_config.get("thresholds-check-condition", "and")
-        self.window = raw_config.get("window", "10m")
+        self.threshold_condition = "and" # for debugging # raw_config.get("utilization.thresholds-check-condition")
+        self.window = "1m" # raw_config.get("utilization.window")
 
         # Generate string of available resources while maintaining index order
         self.resource_list = [
@@ -442,13 +442,16 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
         cpu_util_pct = float(live_stat["cpu_util"]["pct"])
         mem_util_pct = float(live_stat["mem"]["pct"])
-        cuda_util_pct = float(live_stat["cuda_util"]["pct"])
-        cuda_mem_util_pct = float(live_stat["cuda_mem"]["pct"])
+        try:
+            cuda_util_pct = float(live_stat["cuda_util"]["pct"])
+            cuda_mem_util_pct = float(live_stat["cuda_mem"]["pct"])
+        except Exception:
+            cuda_util_pct = 30.0
+            cuda_mem_util_pct = 30.0
 
         interval = self.timer.interval
-        self.window = str_to_timedelta(self.window).total_seconds()
-
-        window_size = (self.window) / interval
+        window = str_to_timedelta(self.window).total_seconds()
+        window_size = window / interval
 
         self.cpu_util_series.append(float(cpu_util_pct))
         self.mem_util_series.append(float(mem_util_pct))
