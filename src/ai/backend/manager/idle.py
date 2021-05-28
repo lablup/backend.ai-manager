@@ -505,7 +505,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
             self.resource_list,
             self.resource_avail,
             avg_list,
-            self.condition,
+            self.threshold_condition,
         ):
             return True
         else:
