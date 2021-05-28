@@ -5,7 +5,7 @@ import logging
 import math
 from abc import ABCMeta, abstractmethod
 from contextvars import ContextVar
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import (
     Any,
     ClassVar,
@@ -326,7 +326,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
     resource_thresholds: Mapping[str, Any]
     threshold_condition: str | None
-    window: datetime
+    window: timedelta
     _policy_cache: ContextVar[Dict[AccessKey, Optional[Mapping[str, Any]]]]
     _evhandlers: List[EventHandler[None, AbstractEvent]]
 
@@ -340,7 +340,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
             ),
         }
         self.threshold_condition = raw_config.get("thresholds-check-condition", "and")
-        self.window = raw_config.get("window", "10m")
+        self.window = str_to_timedelta(raw_config.get("window", "10m"))
 
         # Generate string of available resources while maintaining index order
         self.resource_list = [
@@ -361,7 +361,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
             f"cuda.mem({self.resource_thresholds['cuda_mem_threshold']}), "
             f"resource availablity string: {self.resource_avail}, "
             f"threshold check condition: {self.threshold_condition}, "
-            f"moving window: {self.window}"
+            f"moving window: {self.window.total_seconds()}s"
         )
 
     async def update_app_streaming_status(
@@ -446,9 +446,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         cuda_mem_util_pct = float(live_stat["cuda_mem"]["pct"])
 
         interval = self.timer.interval
-        self.window = str_to_timedelta(self.window).total_seconds()
-
-        window_size = (self.window) / interval
+        window_size = self.window.total_seconds() / interval
 
         self.cpu_util_series.append(float(cpu_util_pct))
         self.mem_util_series.append(float(mem_util_pct))
