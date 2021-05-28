@@ -223,7 +223,7 @@ class TimeoutIdleChecker(BaseIdleChecker):
         await self._redis.set(
             f"session.{session_id}.last_access",
             f"{t:.06f}",
-            expire=max(86400, int(self.idle_timeout * 2)),
+            expire=max(86400, int(self.idle_timeout.total_seconds() * 2)),
         )
 
     async def _session_started_cb(
@@ -361,7 +361,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         }
 
         self.threshold_condition = raw_config.get("thresholds-check-condition")
-        self.window = str_to_timedelta(raw_config.get("time-window")).total_seconds()
+        self.window = str_to_timedelta(raw_config.get("time-window"))
 
         # Generate string of available resources while maintaining index order
         self.resource_list = [
@@ -381,7 +381,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
             f"cuda({self.resource_thresholds['cuda_threshold']}), "
             f"cuda.mem({self.resource_thresholds['cuda_mem_threshold']}), "
             f"threshold check condition: {self.threshold_condition}, "
-            f"moving window: {self.window}s"
+            f"moving window: {self.window.total_seconds()}s"
         )
 
     async def update_app_streaming_status(
@@ -469,7 +469,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         for k in stream_values.keys():
             stream_values[k] = check_avail(k, live_stat)
         interval = self.timer.interval
-        window_size = int(self.window / interval)
+        window_size = int(self.window.total_seconds() / interval)
 
         self.cpu_util_series.append(stream_values["cpu_util"])
         self.mem_util_series.append(stream_values["mem"])
