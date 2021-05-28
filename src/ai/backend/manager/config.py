@@ -41,7 +41,7 @@ Alias keys are also URL-quoted in the same way.
  + ''  # ConfigScoeps.GLOBAL
    + config
      + system
-       - timezone: "UTC"   # pytz-compatible timezone names (e.g., "Asia/Seoul")
+       - timezone: "UTC"  # pytz-compatible timezone names (e.g., "Asia/Seoul")
      + api
        - allow-origins: "*"
        + resources
@@ -57,7 +57,7 @@ Alias keys are also URL-quoted in the same way.
            - username: {username}
            - password: {password}
            - type: "docker" | "harbor" | "harbor2"
-           - project: "project1-name,porject2-name,..."  # harbor only
+           - project: "project1-name,project2-name,..."  # harbor only
            - ssl-verify: "yes" | "no"
          ...
      + redis
@@ -73,23 +73,23 @@ Alias keys are also URL-quoted in the same way.
          + "utilization"
            + resource-thresholds
              + "cpu"
-               - average: 30   # in percent
+               - average: 30  # in percent
              + "mem"
-               - average: 30 # in percent
+               - average: 30  # in percent
+             + "cuda"
+               - average: 30  # in percent  # CUDA core utilization
              + "cuda.mem"
-               - average: 15   # in percent
+               - average: 30  # in percent
                # NOTE: To use "cuda.mem" criteria, user programs must use
                #       an incremental allocation strategy for CUDA memory.
-             + "cuda"
-                - average: 30 # in percent
-                # " NOTE: cuda cores utilizations
            - thresholds-check-condition: "and" # logical operator
                # NOTE: If set "and"" utilization checks for both resources such as
                # (cpu < threshold) AND (memory < threshold) AND (cuda.mem < threshold)
                #       If falue set to "or" resurces are checked inclusively such as
                # (cpu < threshold) OR (memory < threshold) OR (cuda.mem < threshold)
-           - window: "1m" # average for duration
-           - expiration-time: 86400 # in seconds
+           - window: "10m"  # time window to average utilization
+                            # also means that a session will not be terminated until this time
+           - expiration-time: 86400  # in seconds
 
      + resource_slots
        - {"cuda.device"}: {"count"}

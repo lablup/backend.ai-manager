@@ -5,7 +5,7 @@ import logging
 import math
 from abc import ABCMeta, abstractmethod
 from contextvars import ContextVar
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Mapping, Optional, Sequence, Type
 
 from ai.backend.common.events import (AbstractEvent, DoIdleCheckEvent, DoTerminateSessionEvent,
@@ -306,43 +306,46 @@ class UtilizationIdleChecker(BaseIdleChecker):
     """
 
     name: ClassVar[str] = "utilization"
+
     cpu_util_series: List[float] = []
     mem_util_series: List[float] = []
     cuda_util_series: List[float] = []
     cuda_mem_util_series: List[float] = []
 
+    resource_thresholds: Mapping[str, Any]
+    threshold_condition: str | None
+    window: datetime
+    _policy_cache: ContextVar[Dict[AccessKey, Optional[Mapping[str, Any]]]]
     _evhandlers: List[EventHandler[None, AbstractEvent]]
 
     async def populate_config(self, raw_config: Mapping[str, Any]) -> None:
-        self.resource_thresholds = {}
-        self.resource_thresholds["cpu_threshold"] = nmget(raw_config,
-                                                          "resource-thresholds.cpu.average")
-        self.resource_thresholds["mem_threshold"] = nmget(raw_config,
-                                                          "resource-thresholds.mem.average")
-        self.resource_thresholds["cuda_mem_threshold"] = nmget(raw_config,
-                                                               "resource-thresholds.cuda_mem.average")
-        self.resource_thresholds["cuda_threshold"] = nmget(raw_config,
-                                                           "resource-thresholds.cuda.average")
-        self.threshold_condition = str(nmget(raw_config,
-                                             "thresholds-check-condition.condition"))
-        self.window = str(nmget(raw_config, "resource-thresholds.window"))
+        self.resource_thresholds = {
+            "cpu_threshold": nmget(raw_config, "resource-thresholds.cpu.average"),
+            "mem_threshold": nmget(raw_config, "resource-thresholds.mem.average"),
+            "cuda_threshold": nmget(raw_config, "resource-thresholds.cuda.average"),
+            "cuda_mem_threshold": nmget(raw_config, "resource-thresholds.cuda_mem.average"),
+        }
+        self.threshold_condition = raw_config.get("thresholds-check-condition", "and")
+        self.window = raw_config.get("window", "10m")
 
-        # generate string of available resources while maintaining index order
-        self.resource_list = [self.resource_thresholds["cpu_threshold"],
-                              self.resource_thresholds["mem_threshold"],
-                              self.resource_thresholds["cuda_mem_threshold"],
-                              self.resource_thresholds["cuda_threshold"]]
-
+        # Generate string of available resources while maintaining index order
+        self.resource_list = [
+            self.resource_thresholds["cpu_threshold"],
+            self.resource_thresholds["mem_threshold"],
+            self.resource_thresholds["cuda_mem_threshold"],
+            self.resource_thresholds["cuda_threshold"],
+        ]
         self.resource_avail = "".join(["1" if x is not None else "0" for x in self.resource_list])
 
         log.info(
-            f"ExecutionIdleChecker: default cpu idle_execution: {self.cpu_threshold} pct; \
-              Mem idle execution: {self.mem_threshold} %; \
-              Cuda mem idle threshold: {self.cuda_mem_threshold} %; \
-              Cuda utilization threshold: {self.cuda_threshold} %;   \
-              Corresponding resource availablity string is {self.resource_avail}; \
-              threshold condition check: {self.threshold_condition}; \
-              and observed moving window: {self.window}"
+            f"UtilizationIdleChecker: "
+            f"CPU utilization threshold: {self.resource_thresholds['cpu_threshold']} %; "
+            f"Memory utilization threshold: {self.resource_thresholds['mem_threshold']} %; "
+            f"CUDA utilization threshold: {self.resource_thresholds['cuda_threshold']} %; "
+            f"CUDA memory utilization threshold: {self.resource_thresholds['cuda_mem_threshold']} %; "
+            f"Corresponding resource availablity string is {self.resource_avail}; "
+            f"threshold condition check: {self.threshold_condition}; "
+            f"and observed moving window: {self.window}"
         )
 
     async def update_app_streaming_status(
