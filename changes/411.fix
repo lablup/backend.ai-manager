@@ -1,0 +1,1 @@
+Refactor the manager CLI initialization steps and promote `generate-keypair` as a regular `mgr` subcommand
