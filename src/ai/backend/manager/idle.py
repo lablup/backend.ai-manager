@@ -147,7 +147,7 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
                         f"The {self.name} idle checker triggered termination of s:{row['id']}"
                     )
                     await self._event_producer.produce_event(
-                        DoTerminateSessionEvent(row["id"], "idle-timeout")
+                        DoTerminateSessionEvent(row["id"], f"idle-{self.name}")
                     )
 
     @abstractmethod
@@ -343,7 +343,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
     resource_thresholds: Mapping[str, Any]
     thresholds_check_operator: str | None
-    window: timedelta
+    time_window: timedelta
     _evhandlers: List[EventHandler[None, AbstractEvent]]
 
     async def __ainit__(self) -> None:
@@ -466,7 +466,6 @@ class UtilizationIdleChecker(BaseIdleChecker):
             return True
 
         raw_live_stat = await self._redis_stat.get(str(session_id), encoding=None)
-
         try:
             live_stat = msgpack.unpackb(raw_live_stat)
         except Exception:
@@ -476,9 +475,8 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
         def check_avail(_k, _live_stat):
             """This function checks key values for being availbe from Redis"""
-            if _k not in _live_stat.keys():
-                return 0.0
-            return float(_live_stat[_k]["pct"])
+            pct = nmget(_live_stat, f"{_k}.pct")
+            return float(pct) if pct is not None else 0.0
 
         for k in stream_values.keys():
             stream_values[k] = check_avail(k, live_stat)
@@ -529,9 +527,9 @@ class UtilizationIdleChecker(BaseIdleChecker):
             eval_str = eval_str[: -len(condition) - 1]
 
             if eval(eval_str):
-                return True
-            else:
                 return False
+            else:
+                return True
 
         if _check_threshold_condition(
             self.resource_list,
