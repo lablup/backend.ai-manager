@@ -1,1 +1,0 @@
-Adjust the firing rate of `DoPrepareEvent` to follow and alternate with the scheduler execution
