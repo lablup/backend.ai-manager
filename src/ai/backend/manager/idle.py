@@ -340,9 +340,8 @@ class UtilizationIdleChecker(BaseIdleChecker):
             ),
         }
 
-        self.threshold_condition = "and" # for debugging # raw_config.get("thresholds-check-condition", "and")
-        self.window = "1m" 
-        self.window = str_to_timedelta(self.window) # raw_config.get("window", "10m")
+        self.threshold_condition = "and"  # for debugging # raw_config.get("thresholds-check-condition", "and")
+        self.window = "1m"  # str_to_timedelta(raw_config.get("window", "10m"))
 
         # Generate string of available resources while maintaining index order
         self.resource_list = [
