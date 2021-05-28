@@ -42,7 +42,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import AccessKey, aobject
 from ai.backend.common.utils import nmget, str_to_timedelta
 
-from .defs import REDIS_LIVE_DB
+from .defs import REDIS_LIVE_DB, REDIS_STAT_DB
 from .distributed import GlobalTimer
 from .models import kernels, keypair_resource_policies, keypairs
 from .models.kernel import LIVE_STATUS
@@ -130,7 +130,7 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
         source: AgentId,
         event: DoIdleCheckEvent,
     ) -> None:
-        log.debug("do_idle_check(): triggered")
+        log.debug("do_idle_check({}): triggered", self.name)
         async with self._db.begin() as conn:
             query = (
                 sa.select([kernels])
@@ -330,6 +330,12 @@ class UtilizationIdleChecker(BaseIdleChecker):
     _policy_cache: ContextVar[Dict[AccessKey, Optional[Mapping[str, Any]]]]
     _evhandlers: List[EventHandler[None, AbstractEvent]]
 
+    async def __ainit__(self) -> None:
+        await super().__ainit__()
+        self._redis_stat = await aioredis.create_redis(
+            str(self._shared_config.get_redis_url(db=REDIS_STAT_DB))
+        )
+
     async def populate_config(self, raw_config: Mapping[str, Any]) -> None:
         self.resource_thresholds = {
             "cpu_threshold": nmget(raw_config, "resource-thresholds.cpu.average"),
@@ -360,7 +366,6 @@ class UtilizationIdleChecker(BaseIdleChecker):
             f"mem({self.resource_thresholds['mem_threshold']}), "
             f"cuda({self.resource_thresholds['cuda_threshold']}), "
             f"cuda.mem({self.resource_thresholds['cuda_mem_threshold']}), "
-            f"resource availablity string: {self.resource_avail}, "
             f"threshold check condition: {self.threshold_condition}, "
             f"moving window: {self.window.total_seconds()}s"
         )
@@ -420,7 +425,6 @@ class UtilizationIdleChecker(BaseIdleChecker):
         source: AgentId,
         event: DoIdleCheckEvent,
     ) -> None:
-
         try:
             return await super()._do_idle_check(context, source, event)
         finally:
@@ -434,13 +438,11 @@ class UtilizationIdleChecker(BaseIdleChecker):
         if active_streams is not None and active_streams > 0:
             return True
 
-        redis = await aioredis.create_redis("redis://127.0.0.1:8111/")
-        redis_out = await redis.get(str(session["session_id"]), encoding=None)
+        raw_live_stat = await self._redis_stat.get(str(session["session_id"]), encoding=None)
         try:
-            live_stat = msgpack.unpackb(redis_out)
+            live_stat = msgpack.unpackb(raw_live_stat)
         except Exception:
             return True
-
         cpu_util_pct = float(live_stat["cpu_util"]["pct"])
         mem_util_pct = float(live_stat["mem"]["pct"])
         try:
@@ -451,7 +453,6 @@ class UtilizationIdleChecker(BaseIdleChecker):
             cuda_mem_util_pct = 30.0
 
         interval = self.timer.interval
-
         window_size = self.window.total_seconds() / interval
 
         self.cpu_util_series.append(float(cpu_util_pct))
