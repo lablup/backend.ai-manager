@@ -40,7 +40,7 @@ from ai.backend.common.events import (
 )
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import AccessKey, aobject
-from ai.backend.common.utils import nmget, str_to_timedelta
+from ai.backend.common.utils import nmget
 
 from .defs import REDIS_LIVE_DB, REDIS_STAT_DB
 from .distributed import GlobalTimer
@@ -54,8 +54,6 @@ if TYPE_CHECKING:
         AsyncConnection as SAConnection,
         AsyncEngine as SAEngine,
     )
-
-from icecream import ic
 
 log = BraceStyleAdapter(logging.getLogger("ai.backend.manager.idle"))
 
@@ -409,11 +407,6 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
     async def check_session(self, session: Row, dbconn: SAConnection) -> bool:
         session_id = session["id"]
-        active_streams = await self._redis.zcount(
-            f"session.{session_id}.active_app_connections"
-        )
-        if active_streams is not None and active_streams > 0:
-            return True
 
         raw_live_stat = await self._redis_stat.get(str(session_id), encoding=None)
         try:
