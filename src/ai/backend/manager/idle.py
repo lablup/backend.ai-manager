@@ -346,8 +346,9 @@ class UtilizationIdleChecker(BaseIdleChecker):
             ),
         }
 
-        self.threshold_condition = "and"  # for debugging # raw_config.get("thresholds-check-condition", "and")
-        self.window = "1m"  # str_to_timedelta(raw_config.get("window", "10m"))
+        self.threshold_condition = raw_config.get("thresholds-check-condition")
+        self.window = str_to_timedelta(raw_config.get("time-window")).total_seconds()
+        print(self.window)
 
         # Generate string of available resources while maintaining index order
         self.resource_list = [
@@ -367,7 +368,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
             f"cuda({self.resource_thresholds['cuda_threshold']}), "
             f"cuda.mem({self.resource_thresholds['cuda_mem_threshold']}), "
             f"threshold check condition: {self.threshold_condition}, "
-            f"moving window: {self.window.total_seconds()}s"
+            f"moving window: {self.window}s"
         )
 
     async def update_app_streaming_status(
@@ -443,22 +444,24 @@ class UtilizationIdleChecker(BaseIdleChecker):
             live_stat = msgpack.unpackb(raw_live_stat)
         except Exception:
             return True
-        cpu_util_pct = float(live_stat["cpu_util"]["pct"])
-        mem_util_pct = float(live_stat["mem"]["pct"])
-        try:
-            cuda_util_pct = float(live_stat["cuda_util"]["pct"])
-            cuda_mem_util_pct = float(live_stat["cuda_mem"]["pct"])
-        except Exception:
-            cuda_util_pct = 30.0
-            cuda_mem_util_pct = 30.0
+        stream_values = {"cpu_util": 0.0,  "mem": 0.0, "cuda_util": 0.0, "cuda_mem": 0.0}
+
+        def check_avail(_k, _live_stat):
+            """ This function checks key values for being availbe from Redis"""
+            if _k not in _live_stat.keys():
+                return 0.0
+            return float(_live_stat[_k]["pct"])
+
+        for k in stream_values.keys():
+            stream_values[k] = check_avail(k, live_stat)
 
         interval = self.timer.interval
-        window_size = self.window.total_seconds() / interval
+        window_size = self.window / interval
 
-        self.cpu_util_series.append(float(cpu_util_pct))
-        self.mem_util_series.append(float(mem_util_pct))
-        self.cuda_mem_util_series.append(float(cuda_mem_util_pct))
-        self.cuda_util_series.append(float(cuda_util_pct))
+        self.cpu_util_series.append(stream_values["cpu_util"])
+        self.mem_util_series.append(stream_values["mem"])
+        self.cuda_mem_util_series.append(stream_values["cuda_util"])
+        self.cuda_util_series.append(stream_values["cuda_mem"])
 
         if len(self.cpu_util_series) < window_size:
             return True
@@ -474,7 +477,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         self.cuda_util_series.pop(0)
 
         def check_threshold_condition(
-            resource_thresholds, resource_list, resource_avail, avg_list, condition
+            resource_list, resource_avail, avg_list, condition
         ):
 
             """ This function selected available resource based on ordered strings \
@@ -498,7 +501,6 @@ class UtilizationIdleChecker(BaseIdleChecker):
                 )
                 i += 1
             eval_str = eval_str[: -len(condition) - 1]
-            print(eval_str, eval(eval_str))
 
             if eval(eval_str):
                 return True
@@ -506,7 +508,6 @@ class UtilizationIdleChecker(BaseIdleChecker):
                 return False
 
         if check_threshold_condition(
-            self.resource_thresholds,
             self.resource_list,
             self.resource_avail,
             avg_list,
