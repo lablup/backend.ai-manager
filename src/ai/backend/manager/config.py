@@ -82,13 +82,17 @@ Alias keys are also URL-quoted in the same way.
                - average: 30  # in percent
                # NOTE: To use "cuda.mem" criteria, user programs must use
                #       an incremental allocation strategy for CUDA memory.
-           - thresholds-check-condition: "and" # logical operator
-               # NOTE: If set "and"" utilization checks for both resources such as
-               # (cpu < threshold) AND (memory < threshold) AND (cuda.mem < threshold)
-               #       If falue set to "or" resurces are checked inclusively such as
-               # (cpu < threshold) OR (memory < threshold) OR (cuda.mem < threshold)
-           - window: "10m"  # time window to average utilization
-                            # also means that a session will not be terminated until this time
+           - thresholds-check-condition: "and"
+             # "and" (default, so any other words except the "or"):
+             #     garbage collect a session only when ALL of the resources are
+             #     under-utilized not exceeding their thresholds.
+             #     ex) (cpu < threshold) AND (mem < threshold) AND ...
+             # "or":
+             #     garbage collect a session when ANY of the resources is
+             #     under-utilized not exceeding their thresholds.
+             #     ex) (cpu < threshold) OR (mem < threshold) OR ...
+           - time-window: "10m"  # time window to average utilization
+                                 # a session will not be terminated until this time
      + resource_slots
        - {"cuda.device"}: {"count"}
        - {"cuda.mem"}: {"bytes"}
