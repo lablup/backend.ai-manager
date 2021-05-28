@@ -6,12 +6,31 @@ import math
 from abc import ABCMeta, abstractmethod
 from contextvars import ContextVar
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Mapping, Optional, Sequence, Type
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Type,
+)
 
-from ai.backend.common.events import (AbstractEvent, DoIdleCheckEvent, DoTerminateSessionEvent,
-                                      EventDispatcher, EventHandler, EventProducer,
-                                      ExecutionCancelledEvent, ExecutionFinishedEvent,
-                                      ExecutionStartedEvent, ExecutionTimeoutEvent, SessionStartedEvent)
+from ai.backend.common.events import (
+    AbstractEvent,
+    DoIdleCheckEvent,
+    DoTerminateSessionEvent,
+    EventDispatcher,
+    EventHandler,
+    EventProducer,
+    ExecutionCancelledEvent,
+    ExecutionFinishedEvent,
+    ExecutionStartedEvent,
+    ExecutionTimeoutEvent,
+    SessionStartedEvent,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import (
@@ -323,7 +342,9 @@ class UtilizationIdleChecker(BaseIdleChecker):
             "cpu_threshold": nmget(raw_config, "resource-thresholds.cpu.average"),
             "mem_threshold": nmget(raw_config, "resource-thresholds.mem.average"),
             "cuda_threshold": nmget(raw_config, "resource-thresholds.cuda.average"),
-            "cuda_mem_threshold": nmget(raw_config, "resource-thresholds.cuda_mem.average"),
+            "cuda_mem_threshold": nmget(
+                raw_config, "resource-thresholds.cuda_mem.average"
+            ),
         }
         self.threshold_condition = raw_config.get("thresholds-check-condition", "and")
         self.window = raw_config.get("window", "10m")
@@ -335,7 +356,9 @@ class UtilizationIdleChecker(BaseIdleChecker):
             self.resource_thresholds["cuda_mem_threshold"],
             self.resource_thresholds["cuda_threshold"],
         ]
-        self.resource_avail = "".join(["1" if x is not None else "0" for x in self.resource_list])
+        self.resource_avail = "".join(
+            ["1" if x is not None else "0" for x in self.resource_list]
+        )
 
         log.info(
             f"UtilizationIdleChecker: "
@@ -368,9 +391,8 @@ class UtilizationIdleChecker(BaseIdleChecker):
         log.debug(f"ExecutionIdleChecker._update_timeout({session_id})")
         t = await self._redis.time()
         await self._redis.set(
-            f"session.{session_id}.last_execution",
-            f"{t:.06f}",
-            expire=86400)
+            f"session.{session_id}.last_execution", f"{t:.06f}", expire=86400
+        )
 
     async def _session_started_cb(
         self,
@@ -451,12 +473,15 @@ class UtilizationIdleChecker(BaseIdleChecker):
         self.cuda_mem_util_series.pop(0)
         self.cuda_util_series.pop(0)
 
-        def check_threshold_condition(resource_thresholds, resource_list,
-                                      resource_avail, avg_list, condition):
+        def check_threshold_condition(
+            resource_thresholds, resource_list, resource_avail, avg_list, condition
+        ):
 
             """ This function selected available resource based on ordered strings \
             and auto-generates the boolean condtions """
-            avail_index = [pos for pos, char in enumerate(resource_avail) if char == "1"]
+            avail_index = [
+                pos for pos, char in enumerate(resource_avail) if char == "1"
+            ]
             selected_resources = [resource_list[i] for i in avail_index]
             selected_values = [avg_list[i] for i in avail_index]
 
@@ -465,9 +490,14 @@ class UtilizationIdleChecker(BaseIdleChecker):
             while i < len(selected_resources):
                 resource_thresh = selected_resources[i]
                 resource_value = selected_values[i]
-                eval_str += str(resource_value) + " <= " + (str(resource_thresh)) + f" {condition} "
+                eval_str += (
+                    str(resource_value)
+                    + " <= "
+                    + (str(resource_thresh))
+                    + f" {condition} "
+                )
                 i += 1
-            eval_str = eval_str[:-len(condition) - 1]
+            eval_str = eval_str[: -len(condition) - 1]
             print(eval_str, eval(eval_str))
 
             if eval(eval_str):
@@ -475,8 +505,13 @@ class UtilizationIdleChecker(BaseIdleChecker):
             else:
                 return False
 
-        if check_threshold_condition(self.resource_thresholds, self.resource_list,
-                                     self.resource_avail, avg_list, self.condition):
+        if check_threshold_condition(
+            self.resource_thresholds,
+            self.resource_list,
+            self.resource_avail,
+            avg_list,
+            self.condition,
+        ):
             return True
         else:
             return False
