@@ -7,7 +7,6 @@ from abc import ABCMeta, abstractmethod
 from contextvars import ContextVar
 from datetime import datetime, timedelta
 from typing import (
-    TYPE_CHECKING,
     Any,
     ClassVar,
     Dict,
@@ -16,8 +15,16 @@ from typing import (
     Optional,
     Sequence,
     Type,
+    TYPE_CHECKING,
 )
 
+import aioredis
+import sqlalchemy as sa
+import trafaret as t
+from sqlalchemy.engine import Row
+
+import ai.backend.common.validators as tx
+from ai.backend.common import msgpack
 from ai.backend.common.events import (
     AbstractEvent,
     DoIdleCheckEvent,
@@ -31,28 +38,9 @@ from ai.backend.common.events import (
     ExecutionTimeoutEvent,
     SessionStartedEvent,
 )
-
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import (
-        AsyncConnection as SAConnection,
-        AsyncEngine as SAEngine,
-    )
-
-import ai.backend.common.validators as tx
-
-from sqlalchemy.engine import Row
-
-
-import aioredis
-import sqlalchemy as sa
-import trafaret as t
-from ai.backend.common import msgpack
-from ai.backend.common.utils import nmget, str_to_timedelta
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import AccessKey, aobject
-
-if TYPE_CHECKING:
-    from ai.backend.common.types import AgentId, SessionId
+from ai.backend.common.utils import nmget, str_to_timedelta
 
 from .defs import REDIS_LIVE_DB
 from .distributed import GlobalTimer
@@ -61,6 +49,11 @@ from .models.kernel import LIVE_STATUS
 
 if TYPE_CHECKING:
     from .config import SharedConfig
+    from ai.backend.common.types import AgentId, SessionId
+    from sqlalchemy.ext.asyncio import (
+        AsyncConnection as SAConnection,
+        AsyncEngine as SAEngine,
+    )
 
 log = BraceStyleAdapter(logging.getLogger("ai.backend.manager.idle"))
 
@@ -361,14 +354,14 @@ class UtilizationIdleChecker(BaseIdleChecker):
         )
 
         log.info(
-            f"UtilizationIdleChecker: "
-            f"CPU utilization threshold: {self.resource_thresholds['cpu_threshold']} %; "
-            f"Memory utilization threshold: {self.resource_thresholds['mem_threshold']} %; "
-            f"CUDA utilization threshold: {self.resource_thresholds['cuda_threshold']} %; "
-            f"CUDA memory utilization threshold: {self.resource_thresholds['cuda_mem_threshold']} %; "
-            f"Corresponding resource availablity string is {self.resource_avail}; "
-            f"threshold condition check: {self.threshold_condition}; "
-            f"and observed moving window: {self.window}"
+            f"UtilizationIdleChecker(%): "
+            f"cpu({self.resource_thresholds['cpu_threshold']}), "
+            f"mem({self.resource_thresholds['mem_threshold']}), "
+            f"cuda({self.resource_thresholds['cuda_threshold']}), "
+            f"cuda.mem({self.resource_thresholds['cuda_mem_threshold']}), "
+            f"resource availablity string: {self.resource_avail}, "
+            f"threshold check condition: {self.threshold_condition}, "
+            f"moving window: {self.window}"
         )
 
     async def update_app_streaming_status(
@@ -382,17 +375,19 @@ class UtilizationIdleChecker(BaseIdleChecker):
             await self._update_timeout(session_id)
 
     async def _disable_timeout(self, session_id: SessionId) -> None:
-        log.debug(f"ExecutionIdleChecker._disable_timeout({session_id})")
+        log.debug(f"UtilizationIdleChecker._disable_timeout({session_id})")
         await self._redis.set(
             f"session.{session_id}.last_execution", "0", exist=self._redis.SET_IF_EXIST
         )
 
     async def _update_timeout(self, session_id: SessionId) -> None:
-        log.debug(f"ExecutionIdleChecker._update_timeout({session_id})")
+        log.debug(f"UtilizationIdleChecker._update_timeout({session_id})")
         t = await self._redis.time()
         await self._redis.set(
-            f"session.{session_id}.last_execution", f"{t:.06f}", expire=86400
-        )
+            f"session.{session_id}.last_execution",
+            f"{t:.06f}",
+            expire=max(86400, int(self.window.total_seconds() * 2)),
+        ),
 
     async def _session_started_cb(
         self,

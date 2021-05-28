@@ -89,8 +89,6 @@ Alias keys are also URL-quoted in the same way.
                # (cpu < threshold) OR (memory < threshold) OR (cuda.mem < threshold)
            - window: "10m"  # time window to average utilization
                             # also means that a session will not be terminated until this time
-           - expiration-time: 86400  # in seconds
-
      + resource_slots
        - {"cuda.device"}: {"count"}
        - {"cuda.mem"}: {"bytes"}
