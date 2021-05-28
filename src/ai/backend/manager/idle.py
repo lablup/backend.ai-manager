@@ -360,6 +360,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
             ),
         }
 
+
         self.threshold_condition = raw_config.get("thresholds-check-condition")
         self.window = str_to_timedelta(raw_config.get("time-window"))
 
@@ -458,6 +459,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
             live_stat = msgpack.unpackb(raw_live_stat)
         except Exception:
             return True
+
         stream_values = {"cpu_util": 0.0,  "mem": 0.0, "cuda_util": 0.0, "cuda_mem": 0.0}
 
         def check_avail(_k, _live_stat):
@@ -514,6 +516,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
                 )
                 i += 1
             eval_str = eval_str[: -len(condition) - 1]
+
             if eval(eval_str):
                 return True
             else:
