@@ -401,17 +401,19 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
     async def check_session(self, session: Row, dbconn: SAConnection) -> bool:
         session_id = session["id"]
+        occupied_slots = session["occupied_slots"]
         interval = self.timer.interval
         window_size = int(self.time_window.total_seconds() / interval)
 
         # Get current utilization data.
-        current_utilizations = await self.get_current_utilization(session_id)
+        current_utilizations = await self.get_current_utilization(session_id, occupied_slots)
         if current_utilizations is None:
             return True
 
         # Update utilization time-series data.
         not_enough_data = False
-        raw_util_series = await self._redis.get(f"session.{session_id}.util_series")
+        util_series_key = f"session.{session_id}.util_series"
+        raw_util_series = await self._redis.get(util_series_key)
         try:
             util_series = json.loads(raw_util_series)
         except (TypeError, json.decoder.JSONDecodeError):
@@ -423,7 +425,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
             else:
                 not_enough_data = True
         await self._redis.set(
-            f"session.{session_id}.util_series",
+            util_series_key,
             json.dumps(util_series),
             expire=max(86400, int(self.time_window.total_seconds() * 2)),
         )
@@ -438,22 +440,36 @@ class UtilizationIdleChecker(BaseIdleChecker):
             if self.resource_thresholds[k] is not None
         }
 
-        if self.thresholds_check_operator.lower() == 'or':
+        if self.thresholds_check_operator.lower() == "or":
             check_result = any(over_utilized.values())
         else:  # "and" operation is the default
             check_result = all(over_utilized.values())
         return check_result
 
-    async def get_current_utilization(self, session_id: SessionId) -> Mapping[str, float] | None:
+    async def get_current_utilization(
+        self,
+        session_id: SessionId,
+        occupied_slots: Mapping[str, Any]
+    ) -> Mapping[str, float] | None:
         raw_live_stat = await self._redis_stat.get(str(session_id), encoding=None)
         try:
             live_stat = msgpack.unpackb(raw_live_stat)
-            return {
+            utilizations = {
                 k: float(nmget(live_stat, f"{k}.pct", 0.0))
                 for k in self.resource_thresholds
             }
-        except Exception:
-            log.warning("Unable to collect utilization for idleness check: {}", session_id)
+            # NOTE: Manual calculation of mem utilization.
+            # mem.capacity does not report total amount of memory allocated to
+            # the container, and mem.pct always report >90% even when nothing is
+            # executing. So, we just replace with the value of occupied slot.
+            mem_slots = occupied_slots.get('mem', 0)
+            mem_current = float(nmget(live_stat, "mem.current", 0.0))
+            mem_pct = float(mem_current) / float(mem_slots) * 100
+            utilizations['mem'] = mem_pct
+            return utilizations
+        except Exception as e:
+            log.warning("Unable to collect utilization for idleness check ({}):{}",
+                        session_id, repr(e))
             return None
 
 
