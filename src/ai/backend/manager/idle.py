@@ -67,6 +67,7 @@ class AppStreamingStatus(enum.Enum):
 class BaseIdleChecker(aobject, metaclass=ABCMeta):
 
     name: ClassVar[str] = "base"
+    check_period: float = 10.0
 
     _db: SAEngine
     _shared_config: SharedConfig
@@ -98,7 +99,7 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
             "idle_check",
             self._event_producer,
             lambda: DoIdleCheckEvent(),
-            10.0,
+            self.check_period,
         )
         self._evh_idle_check = self._event_dispatcher.consume(
             DoIdleCheckEvent,
@@ -131,7 +132,7 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
         source: AgentId,
         event: DoIdleCheckEvent,
     ) -> None:
-        log.debug("do_idle_check({}): triggered", self.name)
+        log.debug("do_idle_check({}, {}s): triggered", self.name, str(self.check_period))
         async with self._db.begin() as conn:
             query = (
                 sa.select([kernels])
@@ -318,6 +319,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
     """
 
     name: ClassVar[str] = "utilization"
+    check_period: float = 20.0
 
     _config_iv = t.Dict(
         {
@@ -333,11 +335,6 @@ class UtilizationIdleChecker(BaseIdleChecker):
             ),
         }
     ).allow_extra("*")
-
-    cpu_util_series: List[float] = []
-    mem_util_series: List[float] = []
-    cuda_util_series: List[float] = []
-    cuda_mem_util_series: List[float] = []
 
     resource_thresholds: Mapping[str, Any]
     thresholds_check_operator: str
@@ -362,18 +359,6 @@ class UtilizationIdleChecker(BaseIdleChecker):
         }
         self.thresholds_check_operator = config.get("thresholds-check-operator")
         self.time_window = config.get("time-window")
-
-        # Generate string of available resources while maintaining index order
-        self.resource_list = [
-            self.resource_thresholds["cpu_util"],
-            self.resource_thresholds["mem"],
-            self.resource_thresholds["cuda_util"],
-            self.resource_thresholds["cuda_mem"],
-        ]
-        self.resource_avail = "".join(
-            ["1" if x is not None else "0" for x in self.resource_list]
-        )
-
         thresholds_log = " ".join([f"{k}({v})," for k, v in self.resource_thresholds.items()])
         log.info(
             f"UtilizationIdleChecker(%): {thresholds_log} "
@@ -461,11 +446,10 @@ class UtilizationIdleChecker(BaseIdleChecker):
             # NOTE: Manual calculation of mem utilization.
             # mem.capacity does not report total amount of memory allocated to
             # the container, and mem.pct always report >90% even when nothing is
-            # executing. So, we just replace with the value of occupied slot.
-            mem_slots = occupied_slots.get('mem', 0)
+            # executing. So, we just replace it with the value of occupied slot.
+            mem_slots = float(occupied_slots.get('mem', 0))
             mem_current = float(nmget(live_stat, "mem.current", 0.0))
-            mem_pct = float(mem_current) / float(mem_slots) * 100
-            utilizations['mem'] = mem_pct
+            utilizations['mem'] = mem_current / mem_slots * 100 if mem_slots > 0 else 0
             return utilizations
         except Exception as e:
             log.warning("Unable to collect utilization for idleness check ({}):{}",
