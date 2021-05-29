@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import enum
+import json
 import logging
 import math
 from abc import ABCMeta, abstractmethod
@@ -313,8 +314,7 @@ class TimeoutIdleChecker(BaseIdleChecker):
 
 class UtilizationIdleChecker(BaseIdleChecker):
     """
-    Checks the idleness of a session by the current utilization of all
-    compute devices and agents assigned to it.
+    Checks the idleness of a session by the average utilization of compute devices.
     """
 
     name: ClassVar[str] = "utilization"
@@ -322,13 +322,13 @@ class UtilizationIdleChecker(BaseIdleChecker):
     _config_iv = t.Dict(
         {
             t.Key("time-window", default="10m"): tx.TimeDuration(),
-            t.Key("thresholds-check-condition", default="and"): t.String,
+            t.Key("thresholds-check-operator", default="and"): t.String,
             t.Key("resource-thresholds"): t.Dict(
                 {
-                    t.Key("cpu", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
+                    t.Key("cpu_util", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
                     t.Key("mem", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
-                    t.Key("cuda", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
-                    t.Key("cuda.mem", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
+                    t.Key("cuda_util", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
+                    t.Key("cuda_mem", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
                 }
             ),
         }
@@ -340,7 +340,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
     cuda_mem_util_series: List[float] = []
 
     resource_thresholds: Mapping[str, Any]
-    thresholds_check_operator: str | None
+    thresholds_check_operator: str
     time_window: timedelta
     _evhandlers: List[EventHandler[None, AbstractEvent]]
 
@@ -358,31 +358,25 @@ class UtilizationIdleChecker(BaseIdleChecker):
     async def populate_config(self, raw_config: Mapping[str, Any]) -> None:
         config = self._config_iv.check(raw_config)
         self.resource_thresholds = {
-            "cpu": nmget(config, "resource-thresholds.cpu.average"),
-            "mem": nmget(config, "resource-thresholds.mem.average"),
-            "cuda": nmget(config, "resource-thresholds.cuda.average"),
-            "cuda_mem": nmget(config, "resource-thresholds.cuda_mem.average"),
+            k: nmget(v, 'average') for k, v in config.get('resource-thresholds').items()
         }
         self.thresholds_check_operator = config.get("thresholds-check-operator")
         self.time_window = config.get("time-window")
 
         # Generate string of available resources while maintaining index order
         self.resource_list = [
-            self.resource_thresholds["cpu"],
+            self.resource_thresholds["cpu_util"],
             self.resource_thresholds["mem"],
-            self.resource_thresholds["cuda"],
+            self.resource_thresholds["cuda_util"],
             self.resource_thresholds["cuda_mem"],
         ]
         self.resource_avail = "".join(
             ["1" if x is not None else "0" for x in self.resource_list]
         )
 
+        thresholds_log = " ".join([f"{k}({v})," for k, v in self.resource_thresholds.items()])
         log.info(
-            f"UtilizationIdleChecker(%): "
-            f"cpu({self.resource_thresholds['cpu']}), "
-            f"mem({self.resource_thresholds['mem']}), "
-            f"cuda({self.resource_thresholds['cuda']}), "
-            f"cuda.mem({self.resource_thresholds['cuda_mem']}), "
+            f"UtilizationIdleChecker(%): {thresholds_log} "
             f"thresholds-check-operator(\"{self.thresholds_check_operator}\"), "
             f"time-window({self.time_window.total_seconds()}s)"
         )
@@ -407,82 +401,60 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
     async def check_session(self, session: Row, dbconn: SAConnection) -> bool:
         session_id = session["id"]
-
-        raw_live_stat = await self._redis_stat.get(str(session_id), encoding=None)
-        try:
-            live_stat = msgpack.unpackb(raw_live_stat)
-        except Exception:
-            return True
-
-        stream_values = {"cpu_util": 0.0, "mem": 0.0, "cuda_util": 0.0, "cuda_mem": 0.0}
-
-        def check_avail(_k, _live_stat):
-            """This function checks key values for being availbe from Redis"""
-            pct = nmget(_live_stat, f"{_k}.pct")
-            return float(pct) if pct is not None else 0.0
-
-        for k in stream_values.keys():
-            stream_values[k] = check_avail(k, live_stat)
         interval = self.timer.interval
         window_size = int(self.time_window.total_seconds() / interval)
 
-        self.cpu_util_series.append(stream_values["cpu_util"])
-        self.mem_util_series.append(stream_values["mem"])
-        self.cuda_mem_util_series.append(stream_values["cuda_util"])
-        self.cuda_util_series.append(stream_values["cuda_mem"])
-
-        if len(self.cpu_util_series) < window_size:
+        # Get current utilization data.
+        current_utilizations = await self.get_current_utilization(session_id)
+        if current_utilizations is None:
             return True
-        avg_cpu_util = sum(self.cpu_util_series) / len(self.cpu_util_series)
-        avg_mem_util = sum(self.mem_util_series) / len(self.mem_util_series)
-        avg_cuda_util = sum(self.cuda_util_series) / len(self.cuda_util_series)
-        cuda_mem_util = sum(self.cuda_mem_util_series) / len(self.cuda_mem_util_series)
-        avg_list = [avg_cpu_util, avg_mem_util, avg_cuda_util, cuda_mem_util]
 
-        self.cpu_util_series.pop(0)
-        self.mem_util_series.pop(0)
-        self.cuda_mem_util_series.pop(0)
-        self.cuda_util_series.pop(0)
-
-        def _check_threshold_condition(
-            resource_list, resource_avail, avg_list, condition
-        ):
-            """ This function selected available resource based on ordered strings \
-            and auto-generates the boolean condtions """
-            avail_index = [
-                pos for pos, char in enumerate(resource_avail) if char == "1"
-            ]
-            selected_resources = [resource_list[i] for i in avail_index]
-            selected_values = [avg_list[i] for i in avail_index]
-
-            eval_str = ""
-            i = 0
-            while i < len(selected_resources):
-                resource_thresh = selected_resources[i]
-                resource_value = selected_values[i]
-                eval_str += (
-                    str(resource_value)
-                    + " <= "
-                    + (str(resource_thresh))
-                    + f" {condition} "
-                )
-                i += 1
-            eval_str = eval_str[: -len(condition) - 1]
-
-            if eval(eval_str):
-                return False
+        # Update utilization time-series data.
+        not_enough_data = False
+        raw_util_series = await self._redis.get(f"session.{session_id}.util_series")
+        try:
+            util_series = json.loads(raw_util_series)
+        except (TypeError, json.decoder.JSONDecodeError):
+            util_series = {k: [] for k in self.resource_thresholds}
+        for k in util_series:
+            util_series[k].append(current_utilizations[k])
+            if len(util_series[k]) > window_size:
+                util_series[k].pop(0)
             else:
-                return True
-
-        if _check_threshold_condition(
-            self.resource_list,
-            self.resource_avail,
-            avg_list,
-            self.thresholds_check_operator,
-        ):
+                not_enough_data = True
+        await self._redis.set(
+            f"session.{session_id}.util_series",
+            json.dumps(util_series),
+            expire=max(86400, int(self.time_window.total_seconds() * 2)),
+        )
+        if not_enough_data:
             return True
-        else:
-            return False
+
+        # Check over-utilized (not to be collected) resources.
+        avg_utils = {k: sum(util_series[k]) / len(util_series[k]) for k in util_series}
+        over_utilized = {
+            k: (float(avg_utils[k]) >= float(self.resource_thresholds[k]))
+            for k in self.resource_thresholds
+            if self.resource_thresholds[k] is not None
+        }
+
+        if self.thresholds_check_operator.lower() == 'or':
+            check_result = any(over_utilized.values())
+        else:  # "and" operation is the default
+            check_result = all(over_utilized.values())
+        return check_result
+
+    async def get_current_utilization(self, session_id: SessionId) -> Mapping[str, float] | None:
+        raw_live_stat = await self._redis_stat.get(str(session_id), encoding=None)
+        try:
+            live_stat = msgpack.unpackb(raw_live_stat)
+            return {
+                k: float(nmget(live_stat, f"{k}.pct", 0.0))
+                for k in self.resource_thresholds
+            }
+        except Exception:
+            log.warning("Unable to collect utilization for idleness check: {}", session_id)
+            return None
 
 
 checker_registry: Mapping[str, Type[BaseIdleChecker]] = {
