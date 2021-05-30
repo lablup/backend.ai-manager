@@ -91,8 +91,8 @@ Alias keys are also URL-quoted in the same way.
              #     garbage collect a session when ANY of the resources is
              #     under-utilized not exceeding their thresholds.
              #     ex) (cpu < threshold) OR (mem < threshold) OR ...
-           - time-window: "12hr"  # time window to average utilization
-                                  # a session will not be terminated until this time
+           - time-window: "12h"  # time window to average utilization
+                                 # a session will not be terminated until this time
      + resource_slots
        - {"cuda.device"}: {"count"}
        - {"cuda.mem"}: {"bytes"}

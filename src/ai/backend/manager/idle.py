@@ -50,7 +50,7 @@ from .models.kernel import LIVE_STATUS
 
 if TYPE_CHECKING:
     from .config import SharedConfig
-    from ai.backend.common.types import AgentId, SessionId
+    from ai.backend.common.types import AgentId, KernelId, SessionId
     from sqlalchemy.ext.asyncio import (
         AsyncConnection as SAConnection,
         AsyncEngine as SAEngine,
@@ -423,8 +423,22 @@ class UtilizationIdleChecker(BaseIdleChecker):
         if (window_size <= 0) or (math.isinf(window_size) and window_size > 0):
             return True
 
-        # Get current utilization data.
-        current_utilizations = await self.get_current_utilization(session_id, occupied_slots)
+        # Get current utilization data from all containers of the session.
+        if session["cluster_size"] > 1:
+            query = (
+                sa.select([kernels.c.id])
+                .select_from(kernels)
+                .where(
+                    (kernels.c.session_id == session_id) &
+                    (kernels.c.status.in_(LIVE_STATUS))
+                )
+            )
+            result = await dbconn.execute(query)
+            rows = result.fetchall()
+            kernel_ids = [k["id"] for k in rows]
+        else:
+            kernel_ids = [session_id]
+        current_utilizations = await self.get_current_utilization(kernel_ids, occupied_slots)
         if current_utilizations is None:
             return True
 
@@ -466,14 +480,29 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
     async def get_current_utilization(
         self,
-        session_id: SessionId,
+        kernel_ids: Sequence[KernelIds],
         occupied_slots: Mapping[str, Any]
     ) -> Mapping[str, float] | None:
-        raw_live_stat = await self._redis_stat.get(str(session_id), encoding=None)
+        """
+        Return the current utilization key-value pairs of multiple kernels, possibly the
+        components of a cluster session. If there are multiple kernel_ids, this method
+        will return the averaged values over the kernels for each utilization.
+        """
         try:
-            live_stat = msgpack.unpackb(raw_live_stat)
+            utilizations = {k: 0.0 for k in self.resource_thresholds}
+            for kernel_id in kernel_ids:
+                raw_live_stat = await self._redis_stat.get(str(kernel_id), encoding=None)
+                live_stat = msgpack.unpackb(raw_live_stat)
+                kernel_utils = {
+                    k: float(nmget(live_stat, f"{k}.pct", 0.0))
+                    for k in self.resource_thresholds
+                }
+                utilizations = {
+                    k: utilizations[k] + kernel_utils[k]
+                    for k in self.resource_thresholds
+                }
             utilizations = {
-                k: float(nmget(live_stat, f"{k}.pct", 0.0))
+                k: utilizations[k] / len(kernel_ids)
                 for k in self.resource_thresholds
             }
             # NOTE: Manual calculation of mem utilization.
@@ -485,8 +514,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
             utilizations['mem'] = mem_current / mem_slots * 100 if mem_slots > 0 else 0
             return utilizations
         except Exception as e:
-            log.warning("Unable to collect utilization for idleness check ({}):{}",
-                        session_id, repr(e))
+            log.warning("Unable to collect utilization for idleness check:{}", repr(e))
             return None
 
 
