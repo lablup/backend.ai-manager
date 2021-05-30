@@ -43,7 +43,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import AccessKey, aobject
 from ai.backend.common.utils import nmget
 
-from .defs import REDIS_LIVE_DB, REDIS_STAT_DB
+from .defs import DEFAULT_ROLE, REDIS_LIVE_DB, REDIS_STAT_DB
 from .distributed import GlobalTimer
 from .models import kernels, keypair_resource_policies, keypairs
 from .models.kernel import LIVE_STATUS
@@ -137,7 +137,10 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
             query = (
                 sa.select([kernels])
                 .select_from(kernels)
-                .where((kernels.c.status.in_(LIVE_STATUS)))
+                .where(
+                    (kernels.c.status.in_(LIVE_STATUS)) &
+                    (kernels.c.cluster_role == DEFAULT_ROLE)
+                )
             )
             result = await conn.execute(query)
             rows = result.fetchall()
