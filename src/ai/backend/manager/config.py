@@ -76,9 +76,9 @@ Alias keys are also URL-quoted in the same way.
                - average: 30  # in percent
              + "mem"
                - average: 30  # in percent
-             + "cuda"
+             + "cuda_util"
                - average: 30  # in percent  # CUDA core utilization
-             + "cuda.mem"
+             + "cuda_mem"
                - average: 30  # in percent
                # NOTE: To use "cuda.mem" criteria, user programs must use
                #       an incremental allocation strategy for CUDA memory.
