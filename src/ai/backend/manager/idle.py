@@ -472,7 +472,9 @@ class UtilizationIdleChecker(BaseIdleChecker):
             if self.resource_thresholds[k] is not None
         }
 
-        if self.thresholds_check_operator.lower() == "or":
+        if len(over_utilized) < 1:
+            check_result = True
+        elif self.thresholds_check_operator.lower() == "or":
             check_result = any(over_utilized.values())
         else:  # "and" operation is the default
             check_result = all(over_utilized.values())
