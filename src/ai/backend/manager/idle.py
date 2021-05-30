@@ -480,7 +480,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
     async def get_current_utilization(
         self,
-        kernel_ids: Sequence[KernelIds],
+        kernel_ids: Sequence[KernelId],
         occupied_slots: Mapping[str, Any]
     ) -> Mapping[str, float] | None:
         """
