@@ -339,10 +339,12 @@ class UtilizationIdleChecker(BaseIdleChecker):
     resource_thresholds: Mapping[str, Any]
     thresholds_check_operator: str
     time_window: timedelta
+    _policy_cache: ContextVar[Dict[AccessKey, Optional[Mapping[str, Any]]]]
     _evhandlers: List[EventHandler[None, AbstractEvent]]
 
     async def __ainit__(self) -> None:
         await super().__ainit__()
+        self._policy_cache = ContextVar("_policy_cache")
         self._redis_stat = await aioredis.create_redis(
             str(self._shared_config.get_redis_url(db=REDIS_STAT_DB))
         )
@@ -379,16 +381,44 @@ class UtilizationIdleChecker(BaseIdleChecker):
         source: AgentId,
         event: DoIdleCheckEvent,
     ) -> None:
+        cache_token = self._policy_cache.set(dict())
         try:
             return await super()._do_idle_check(context, source, event)
         finally:
-            pass
+            self._policy_cache.reset(cache_token)
 
     async def check_session(self, session: Row, dbconn: SAConnection) -> bool:
         session_id = session["id"]
         occupied_slots = session["occupied_slots"]
         interval = self.timer.interval
         window_size = int(self.time_window.total_seconds() / interval)
+
+        # Respect idle_timeout, from keypair resource policy, over time_window.
+        policy_cache = self._policy_cache.get()
+        policy = policy_cache.get(session["access_key"], None)
+        if policy is None:
+            query = (
+                sa.select([keypair_resource_policies])
+                .select_from(
+                    sa.join(
+                        keypairs,
+                        keypair_resource_policies,
+                        (
+                            keypair_resource_policies.c.name
+                            == keypairs.c.resource_policy
+                        ),
+                    )
+                )
+                .where(keypairs.c.access_key == session["access_key"])
+            )
+            result = await dbconn.execute(query)
+            policy = result.first()
+            assert policy is not None
+            policy_cache[session["access_key"]] = policy
+        if policy["idle_timeout"] >= 0:
+            window_size = int(float(policy["idle_timeout"]) / interval)
+        if (window_size <= 0) or (math.isinf(window_size) and window_size > 0):
+            return True
 
         # Get current utilization data.
         current_utilizations = await self.get_current_utilization(session_id, occupied_slots)
