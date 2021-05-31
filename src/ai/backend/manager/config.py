@@ -93,6 +93,7 @@ Alias keys are also URL-quoted in the same way.
              #     ex) (cpu < threshold) OR (mem < threshold) OR ...
            - time-window: "12h"  # time window to average utilization
                                  # a session will not be terminated until this time
+           - initial-grace-period: "5m" # time to allow to be idle for first amount of time
      + resource_slots
        - {"cuda.device"}: {"count"}
        - {"cuda.mem"}: {"bytes"}

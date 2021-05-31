@@ -276,6 +276,7 @@ class TimeoutIdleChecker(BaseIdleChecker):
         if active_streams is not None and active_streams > 0:
             return True
         t = await self._redis.time()
+
         raw_last_access = await self._redis.get(f"session.{session_id}.last_access")
         if raw_last_access is None or raw_last_access == "0":
             return True
@@ -328,10 +329,11 @@ class UtilizationIdleChecker(BaseIdleChecker):
     _config_iv = t.Dict(
         {
             t.Key("time-window", default="10m"): tx.TimeDuration(),
+            t.Key("initial-grace-period", default="5m"): tx.TimeDuration(),
             t.Key("thresholds-check-operator", default="and"): t.String,
             t.Key("resource-thresholds"): t.Dict(
                 {
-                    t.Key("cpu_util", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
+                    t.Key("cpu", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
                     t.Key("mem", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
                     t.Key("cuda_util", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
                     t.Key("cuda_mem", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
@@ -343,6 +345,9 @@ class UtilizationIdleChecker(BaseIdleChecker):
     resource_thresholds: Mapping[str, Any]
     thresholds_check_operator: str
     time_window: timedelta
+    initial_grace_period: timedelta
+    time_pass_grace_period: timedelta
+
     _policy_cache: ContextVar[Dict[AccessKey, Optional[Mapping[str, Any]]]]
     _evhandlers: List[EventHandler[None, AbstractEvent]]
 
@@ -365,6 +370,9 @@ class UtilizationIdleChecker(BaseIdleChecker):
         }
         self.thresholds_check_operator = config.get("thresholds-check-operator")
         self.time_window = config.get("time-window")
+        self.initial_grace_period = config.get("initial-grace-period")
+        self.time_pass_grace_period = self.initial_grace_period + (await self._redis.time())
+
         thresholds_log = " ".join([f"{k}({v})," for k, v in self.resource_thresholds.items()])
         log.info(
             f"UtilizationIdleChecker(%): {thresholds_log} "
@@ -396,6 +404,10 @@ class UtilizationIdleChecker(BaseIdleChecker):
         occupied_slots = session["occupied_slots"]
         interval = self.timer.interval
         window_size = int(self.time_window.total_seconds() / interval)
+        t = await self._redis.time()
+
+        if t < self.time_pass_grace_period:
+            return True
 
         # Respect idle_timeout, from keypair resource policy, over time_window.
         policy_cache = self._policy_cache.get()
@@ -446,10 +458,10 @@ class UtilizationIdleChecker(BaseIdleChecker):
         # Update utilization time-series data.
         not_enough_data = False
         util_series_key = f"session.{session_id}.util_series"
-        raw_util_series = await self._redis.get(util_series_key)
+        raw_util_series = await self._redis.get(util_series_key, encoding=None)
         try:
-            util_series = json.loads(raw_util_series)
-        except (TypeError, json.decoder.JSONDecodeError):
+            util_series = msgpack.unpackb(raw_util_series, use_list=True)
+        except TypeError:
             util_series = {k: [] for k in self.resource_thresholds}
         for k in util_series:
             util_series[k].append(current_utilizations[k])
