@@ -42,6 +42,7 @@ from ai.backend.common.events import (
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import AccessKey, aobject
 from ai.backend.common.utils import nmget
+from ai.backend.manager.models.utils import ExtendedAsyncSAEngine
 
 from .defs import DEFAULT_ROLE, REDIS_LIVE_DB, REDIS_STAT_DB
 from .distributed import GlobalTimer
@@ -67,9 +68,9 @@ class AppStreamingStatus(enum.Enum):
 class BaseIdleChecker(aobject, metaclass=ABCMeta):
 
     name: ClassVar[str] = "base"
-    check_period: float = 10.0
+    check_interval: float = 10.0
 
-    _db: SAEngine
+    _db: ExtendedAsyncSAEngine
     _shared_config: SharedConfig
     _event_dispatcher: EventDispatcher
     _event_producer: EventProducer
@@ -99,7 +100,7 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
             "idle_check",
             self._event_producer,
             lambda: DoIdleCheckEvent(),
-            self.check_period,
+            self.check_interval,
         )
         self._evh_idle_check = self._event_dispatcher.consume(
             DoIdleCheckEvent,
@@ -132,8 +133,8 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
         source: AgentId,
         event: DoIdleCheckEvent,
     ) -> None:
-        log.debug("do_idle_check({}, {}s): triggered", self.name, str(self.check_period))
-        async with self._db.begin() as conn:
+        log.debug("do_idle_check({}, {}s): triggered", self.name, str(self.check_interval))
+        async with self._db.begin_readonly() as conn:
             query = (
                 sa.select([kernels])
                 .select_from(kernels)
@@ -322,7 +323,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
     """
 
     name: ClassVar[str] = "utilization"
-    check_period: float = 20.0
+    check_interval: float = 20.0
 
     _config_iv = t.Dict(
         {
