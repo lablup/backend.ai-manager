@@ -499,6 +499,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
                     k: float(nmget(live_stat, f"{k}.pct", 0.0))
                     for k in self.resource_thresholds
                 }
+                kernel_utils["cpu"] = float(nmget(live_stat, "cpu_util.pct", 0.0))
                 utilizations = {
                     k: utilizations[k] + kernel_utils[k]
                     for k in self.resource_thresholds
