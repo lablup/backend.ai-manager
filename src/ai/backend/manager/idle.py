@@ -371,7 +371,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         self.thresholds_check_operator = config.get("thresholds-check-operator")
         self.time_window = config.get("time-window")
         self.initial_grace_period = config.get("initial-grace-period")
-        self.time_pass_grace_period = self.initial_grace_period + (await self._redis.time())
+        self.time_pass_grace_period = self.initial_grace_period.total_seconds() + (await self._redis.time())
 
         thresholds_log = " ".join([f"{k}({v})," for k, v in self.resource_thresholds.items()])
         log.info(
