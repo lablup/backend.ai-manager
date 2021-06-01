@@ -1347,6 +1347,7 @@ async def stats_report_timer(root_ctx: RootContext):
 @check_api_params(
     t.Dict({
         t.Key('forced', default='false'): t.ToBool(),
+        t.Key('owner_access_key', default=None): t.Null | t.String,
     }))
 async def destroy(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']

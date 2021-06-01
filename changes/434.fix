@@ -1,1 +1,3 @@
-Comment out about removing `owner_access_key` in checking API parameter during session creation
+Fix `owner_access_key` related issues in creating and terminating the session
+- Comment out about removing `owner_access_key` in checking API parameter during session creation
+- Add `owner_access_key` in checking API parameter during session termination
