@@ -113,7 +113,7 @@ def check_api_params(checker: t.Trafaret, loads: Callable[[str], Any] = None,
                 else:
                     orig_params = dict(request.query)
                 stripped_params = orig_params.copy()
-                stripped_params.pop('owner_access_key', None)
+                # stripped_params.pop('owner_access_key', None)
                 log.debug('stripped raw params: {}', mask_sensitive_keys(stripped_params))
                 checked_params = checker.check(stripped_params)
                 if body_exists and query_param_checker:
