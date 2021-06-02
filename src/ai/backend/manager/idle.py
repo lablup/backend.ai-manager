@@ -399,21 +399,21 @@ class UtilizationIdleChecker(BaseIdleChecker):
     async def check_session(self, session: Row, dbconn: SAConnection) -> bool:
         session_id = session["id"]
         occupied_slots: dict[str, int] = dict(session["occupied_slots"])
-        unavailable_devices: List[str] = []
+        unavailable_resources: List[str] = []
 
         for slot in occupied_slots.copy().keys():
             if occupied_slots[slot] == 0:
                 del occupied_slots[slot]
                 if slot != "cuda.device":
-                    unavailable_devices.append(slot)
+                    unavailable_resources.append(slot)
                     self.resource_thresholds.pop(slot)
 
                 if "cuda_util" in self.resource_thresholds.keys():
-                    unavailable_devices.append("cuda_util")
+                    unavailable_resources.append("cuda_util")
                     self.resource_thresholds.pop("cuda_util")
 
                 if "cuda_mem" in self.resource_thresholds.keys():
-                    unavailable_devices.append("cuda_mem")
+                    unavailable_resources.append("cuda_mem")
                     self.resource_thresholds.pop("cuda_mem")
         interval = self.timer.interval
         window_size = int(self.time_window.total_seconds() / interval)
@@ -477,7 +477,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
             util_series = {k: [] for k in self.resource_thresholds}
 
         for k in util_series:
-            if k in unavailable_devices:
+            if k in unavailable_resources:
                 continue
             util_series[k].append(current_utilizations[k])
             if len(util_series[k]) > window_size:
