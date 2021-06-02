@@ -346,8 +346,6 @@ class UtilizationIdleChecker(BaseIdleChecker):
     resource_thresholds: MutableMapping[str, Any]
     thresholds_check_operator: str
     time_window: timedelta
-    initial_grace_period: timedelta
-
     _policy_cache: ContextVar[Dict[AccessKey, Optional[Mapping[str, Any]]]]
     _evhandlers: List[EventHandler[None, AbstractEvent]]
 
@@ -419,6 +417,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         # Respect idle_timeout, from keypair resource policy, over time_window.
         policy_cache = self._policy_cache.get()
         policy = policy_cache.get(session["access_key"], None)
+
         if policy is None:
             query = (
                 sa.select([keypair_resource_policies])
@@ -459,6 +458,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         else:
             kernel_ids = [session_id]
         current_utilizations = await self.get_current_utilization(kernel_ids, occupied_slots)
+
         if current_utilizations is None:
             return True
 
@@ -466,9 +466,10 @@ class UtilizationIdleChecker(BaseIdleChecker):
         not_enough_data = False
         util_series_key = f"session.{session_id}.util_series"
         raw_util_series = await self._redis.get(util_series_key, encoding=None)
+
         try:
-            util_series = msgpack.unpackb(raw_util_series, use_list=True)
-        except TypeError:
+            util_series = json.loads(raw_util_series)
+        except (TypeError, json.decoder.JSONDecodeError):
             util_series = {k: [] for k in self.resource_thresholds}
         for k in util_series:
             util_series[k].append(current_utilizations[k])
@@ -485,6 +486,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
             return True
 
         # Check over-utilized (not to be collected) resources.
+
         avg_utils = {k: sum(util_series[k]) / len(util_series[k]) for k in util_series}
         over_utilized = {
             k: (float(avg_utils[k]) >= float(self.resource_thresholds[k]))
