@@ -346,7 +346,6 @@ class UtilizationIdleChecker(BaseIdleChecker):
     thresholds_check_operator: str
     time_window: timedelta
     initial_grace_period: timedelta
-    time_pass_grace_period: timedelta
 
     _policy_cache: ContextVar[Dict[AccessKey, Optional[Mapping[str, Any]]]]
     _evhandlers: List[EventHandler[None, AbstractEvent]]
@@ -403,12 +402,16 @@ class UtilizationIdleChecker(BaseIdleChecker):
     async def check_session(self, session: Row, dbconn: SAConnection) -> bool:
         session_id = session["id"]
         occupied_slots = session["occupied_slots"]
+
+        for slot in occupied_slots.keys():
+            if occupied_slots[slot] == 0.0 or occupied_slots is None:
+                if "cuda" in slot:
+                    del self.resource_thresholds["cuda_util"], self.resource_thresholds["cuda_mem"]
+                else:
+                    del self.resource_thresholds[slot]
+
         interval = self.timer.interval
         window_size = int(self.time_window.total_seconds() / interval)
-        t = await self._redis.time()
-
-        if t < self.time_pass_grace_period:
-            return True
 
         # Respect idle_timeout, from keypair resource policy, over time_window.
         policy_cache = self._policy_cache.get()
