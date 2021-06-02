@@ -404,11 +404,15 @@ class UtilizationIdleChecker(BaseIdleChecker):
         occupied_slots = session["occupied_slots"]
 
         for slot in occupied_slots.keys():
-            if occupied_slots[slot] == 0.0 or occupied_slots is None:
-                if "cuda" in slot:
-                    del self.resource_thresholds["cuda_util"], self.resource_thresholds["cuda_mem"]
-                else:
+            if occupied_slots[slot] == 0:
+                if slot != "cuda.device":
                     del self.resource_thresholds[slot]
+
+                if "cuda_util" in self.resource_thresholds.keys():
+                    del self.resource_thresholds["cuda_util"]
+
+                if "cuda_mem" in self.resource_thresholds.keys():
+                    del self.resource_thresholds["cuda_mem"]
 
         interval = self.timer.interval
         window_size = int(self.time_window.total_seconds() / interval)
