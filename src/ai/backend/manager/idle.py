@@ -13,6 +13,7 @@ from typing import (
     Dict,
     List,
     Mapping,
+    MutableMapping,
     Optional,
     Sequence,
     Type,
@@ -342,7 +343,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         }
     ).allow_extra("*")
 
-    resource_thresholds: Mapping[str, Any]
+    resource_thresholds: MutableMapping[str, Any]
     thresholds_check_operator: str
     time_window: timedelta
     initial_grace_period: timedelta
@@ -364,14 +365,12 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
     async def populate_config(self, raw_config: Mapping[str, Any]) -> None:
         config = self._config_iv.check(raw_config)
+        config
         self.resource_thresholds = {
             k: nmget(v, 'average') for k, v in config.get('resource-thresholds').items()
         }
         self.thresholds_check_operator = config.get("thresholds-check-operator")
         self.time_window = config.get("time-window")
-        self.initial_grace_period = config.get("initial-grace-period")
-        _t = await self._redis.time()
-        self.time_pass = self.initial_grace_period.total_seconds() + _t
 
         thresholds_log = " ".join([f"{k}({v})," for k, v in self.resource_thresholds.items()])
         log.info(
@@ -406,13 +405,13 @@ class UtilizationIdleChecker(BaseIdleChecker):
         for slot in occupied_slots.keys():
             if occupied_slots[slot] == 0:
                 if slot != "cuda.device":
-                    del self.resource_thresholds[slot]
+                    self.resource_thresholds.pop(slot)
 
                 if "cuda_util" in self.resource_thresholds.keys():
-                    del self.resource_thresholds["cuda_util"]
+                    self.resource_thresholds.pop("cuda_util")
 
                 if "cuda_mem" in self.resource_thresholds.keys():
-                    del self.resource_thresholds["cuda_mem"]
+                    self.resource_thresholds.pop("cuda_mem")
 
         interval = self.timer.interval
         window_size = int(self.time_window.total_seconds() / interval)
