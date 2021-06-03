@@ -330,7 +330,6 @@ class UtilizationIdleChecker(BaseIdleChecker):
     _config_iv = t.Dict(
         {
             t.Key("time-window", default="10m"): tx.TimeDuration(),
-            t.Key("initial-grace-period", default="5m"): tx.TimeDuration(),
             t.Key("thresholds-check-operator", default="and"): t.String,
             t.Key("resource-thresholds"): t.Dict(
                 {
