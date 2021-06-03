@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager as actxmgr
+import logging
 from typing import (
     Any,
     AsyncIterator,
@@ -22,7 +23,11 @@ from sqlalchemy.ext.asyncio import (
     AsyncEngine as SAEngine,
 )
 
+from ai.backend.common.logging import BraceStyleAdapter
+
 from ..defs import AdvisoryLock
+
+log = BraceStyleAdapter(logging.getLogger(__name__))
 
 
 class ExtendedAsyncSAEngine(SAEngine):
@@ -30,15 +35,46 @@ class ExtendedAsyncSAEngine(SAEngine):
     A subclass to add a few more convenience methods to the SQLAlchemy's async engine.
     """
 
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._readonly_txn_count = 0
+        self._generic_txn_count = 0
+        self._txn_warn_threshold = kwargs.pop("txn_warn_threshold", 8)
+
+    @actxmgr
+    async def begin(self) -> AsyncIterator[SAConnection]:
+        async with super().begin() as conn:
+            self._readonly_txn_count += 1
+            if self._readonly_txn_count >= self._txn_warn_threshold:
+                log.warning(
+                    "The number of concurrent read-only transaction ({}) exceeded the threshold {}.",
+                    self._readonly_txn_count, self._txn_warn_threshold,
+                    stack_info=True,
+                )
+            try:
+                yield conn
+            finally:
+                self._readonly_txn_count -= 1
+
     @actxmgr
     async def begin_readonly(self, deferrable: bool = False) -> AsyncIterator[SAConnection]:
         async with self.connect() as conn:
+            self._generic_txn_count += 1
+            if self._readonly_txn_count >= self._txn_warn_threshold:
+                log.warning(
+                    "The number of concurrent generic transaction ({}) exceeded the threshold {}.",
+                    self._generic_txn_count, self._txn_warn_threshold,
+                    stack_info=True,
+                )
             await conn.execution_options(
                 postgresql_readonly=True,
                 postgresql_deferrable=deferrable,
             )
             async with conn.begin():
-                yield conn
+                try:
+                    yield conn
+                finally:
+                    self._generic_txn_count -= 1
 
     @actxmgr
     async def advisory_lock(self, lock_id: AdvisoryLock) -> AsyncIterator[None]:
