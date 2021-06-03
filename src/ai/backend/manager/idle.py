@@ -6,7 +6,7 @@ import logging
 import math
 from abc import ABCMeta, abstractmethod
 from contextvars import ContextVar
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import (
     Any,
     ClassVar,
@@ -347,7 +347,6 @@ class UtilizationIdleChecker(BaseIdleChecker):
     thresholds_check_operator: str
     time_window: timedelta
     initial_grace_period: timedelta
-    time_pass_grace_period: timedelta
     _policy_cache: ContextVar[Dict[AccessKey, Optional[Mapping[str, Any]]]]
     _evhandlers: List[EventHandler[None, AbstractEvent]]
 
@@ -372,9 +371,6 @@ class UtilizationIdleChecker(BaseIdleChecker):
         self.thresholds_check_operator = config.get("thresholds-check-operator")
         self.time_window = config.get("time-window")
         self.initial_grace_period = config.get("initial-grace-period")
-        self.time_pass_grace_period = self.initial_grace_period.total_seconds() \
-            + (await self._redis.time())
-        self.grace_period_flag = False
 
         thresholds_log = " ".join([f"{k}({v})," for k, v in self.resource_thresholds.items()])
         log.info(
@@ -406,11 +402,12 @@ class UtilizationIdleChecker(BaseIdleChecker):
         session_id = session["id"]
         occupied_slots: dict[str, int] = dict(session["occupied_slots"])
         unavailable_resources: List[str] = []
+        session_created_date: datetime = session["created_at"]
 
         t = await self._redis.time()
-        if t < self.time_pass_grace_period:
+        if t - session_created_date.timestamp() <= self.initial_grace_period.total_seconds():
             return True
-        self.grace_period_flag = True
+
         for slot in occupied_slots.copy().keys():
             if occupied_slots[slot] == 0:
                 del occupied_slots[slot]
