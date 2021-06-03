@@ -330,10 +330,11 @@ class UtilizationIdleChecker(BaseIdleChecker):
     _config_iv = t.Dict(
         {
             t.Key("time-window", default="10m"): tx.TimeDuration(),
+            t.Key("initial-grace-period", default="5m"): tx.TimeDuration(),
             t.Key("thresholds-check-operator", default="and"): t.String,
             t.Key("resource-thresholds"): t.Dict(
                 {
-                    t.Key("cpu", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
+                    t.Key("cpu_util", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
                     t.Key("mem", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
                     t.Key("cuda_util", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
                     t.Key("cuda_mem", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
@@ -345,6 +346,8 @@ class UtilizationIdleChecker(BaseIdleChecker):
     resource_thresholds: MutableMapping[str, Any]
     thresholds_check_operator: str
     time_window: timedelta
+    initial_grace_period: timedelta
+    time_pass_grace_period: timedelta
     _policy_cache: ContextVar[Dict[AccessKey, Optional[Mapping[str, Any]]]]
     _evhandlers: List[EventHandler[None, AbstractEvent]]
 
@@ -368,6 +371,10 @@ class UtilizationIdleChecker(BaseIdleChecker):
         }
         self.thresholds_check_operator = config.get("thresholds-check-operator")
         self.time_window = config.get("time-window")
+        self.initial_grace_period = config.get("initial-grace-period")
+        self.time_pass_grace_period = self.initial_grace_period.total_seconds() \
+            + (await self._redis.time())
+        self.grace_period_flag = False
 
         thresholds_log = " ".join([f"{k}({v})," for k, v in self.resource_thresholds.items()])
         log.info(
@@ -400,6 +407,10 @@ class UtilizationIdleChecker(BaseIdleChecker):
         occupied_slots: dict[str, int] = dict(session["occupied_slots"])
         unavailable_resources: List[str] = []
 
+        t = await self._redis.time()
+        if t < self.time_pass_grace_period:
+            return True
+        self.grace_period_flag = True
         for slot in occupied_slots.copy().keys():
             if occupied_slots[slot] == 0:
                 del occupied_slots[slot]
@@ -527,7 +538,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
                     k: float(nmget(live_stat, f"{k}.pct", 0.0))
                     for k in self.resource_thresholds
                 }
-                kernel_utils["cpu"] = float(nmget(live_stat, "cpu_util.pct", 0.0))
+
                 utilizations = {
                     k: utilizations[k] + kernel_utils[k]
                     for k in self.resource_thresholds
@@ -536,6 +547,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
                 k: utilizations[k] / len(kernel_ids)
                 for k in self.resource_thresholds
             }
+
             # NOTE: Manual calculation of mem utilization.
             # mem.capacity does not report total amount of memory allocated to
             # the container, and mem.pct always report >90% even when nothing is
