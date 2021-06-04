@@ -44,26 +44,26 @@ class ExtendedAsyncSAEngine(SAEngine):
     @actxmgr
     async def begin(self) -> AsyncIterator[SAConnection]:
         async with super().begin() as conn:
-            self._readonly_txn_count += 1
-            if self._readonly_txn_count >= self._txn_concurrency_threshold:
+            self._generic_txn_count += 1
+            if self._generic_txn_count >= self._txn_concurrency_threshold:
                 log.warning(
                     "The number of concurrent read-only transaction ({}) exceeded the threshold {}.",
-                    self._readonly_txn_count, self._txn_concurrency_threshold,
+                    self._generic_txn_count, self._txn_concurrency_threshold,
                     stack_info=True,
                 )
             try:
                 yield conn
             finally:
-                self._readonly_txn_count -= 1
+                self._generic_txn_count -= 1
 
     @actxmgr
     async def begin_readonly(self, deferrable: bool = False) -> AsyncIterator[SAConnection]:
         async with self.connect() as conn:
-            self._generic_txn_count += 1
+            self._readonly_txn_count += 1
             if self._readonly_txn_count >= self._txn_concurrency_threshold:
                 log.warning(
                     "The number of concurrent generic transaction ({}) exceeded the threshold {}.",
-                    self._generic_txn_count, self._txn_concurrency_threshold,
+                    self._readonly_txn_count, self._txn_concurrency_threshold,
                     stack_info=True,
                 )
             await conn.execution_options(
@@ -74,7 +74,7 @@ class ExtendedAsyncSAEngine(SAEngine):
                 try:
                     yield conn
                 finally:
-                    self._generic_txn_count -= 1
+                    self._readonly_txn_count -= 1
 
     @actxmgr
     async def advisory_lock(self, lock_id: AdvisoryLock) -> AsyncIterator[None]:
