@@ -1196,6 +1196,7 @@ class AgentRegistry:
         )
         scheduled_session.environ.update({
             'BACKENDAI_SESSION_ID': str(scheduled_session.session_id),
+            'BACKENDAI_SESSION_NAME': str(scheduled_session.session_name),
             'BACKENDAI_CLUSTER_SIZE': str(scheduled_session.cluster_size),
             'BACKENDAI_CLUSTER_REPLICAS':
                 ",".join(f"{k}:{v}" for k, v in replicas.items()),
