@@ -23,6 +23,7 @@ from typing import (
 import aioredis
 import sqlalchemy as sa
 import trafaret as t
+from dateutil.tz import tzutc
 from sqlalchemy.engine import Row
 
 import ai.backend.common.validators as tx
@@ -402,10 +403,10 @@ class UtilizationIdleChecker(BaseIdleChecker):
         session_id = session["id"]
         occupied_slots: dict[str, int] = dict(session["occupied_slots"])
         unavailable_resources: List[str] = []
-        session_created_date: datetime = session["created_at"]
 
-        t = await self._redis.time()
-        if t - session_created_date.timestamp() <= self.initial_grace_period.total_seconds():
+        # Respect initial grace period (no termination of the session)
+        now = datetime.now(tzutc())
+        if now - session["created_at"] <= self.initial_grace_period:
             return True
 
         for slot in occupied_slots.copy().keys():
