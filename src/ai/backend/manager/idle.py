@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import enum
-import json
 import logging
 import math
 from abc import ABCMeta, abstractmethod
@@ -477,8 +476,8 @@ class UtilizationIdleChecker(BaseIdleChecker):
         raw_util_series = await self._redis.get(util_series_key, encoding=None)
 
         try:
-            util_series = json.loads(raw_util_series)
-        except (TypeError, json.decoder.JSONDecodeError):
+            util_series = msgpack.unpackb(raw_util_series, use_list=True)
+        except TypeError:
             util_series = {k: [] for k in self.resource_thresholds}
 
         for k in util_series:
@@ -489,7 +488,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
                 not_enough_data = True
         await self._redis.set(
             util_series_key,
-            json.dumps(util_series),
+            msgpack.packb(util_series),
             expire=max(86400, int(self.time_window.total_seconds() * 2)),
         )
         if not_enough_data:
