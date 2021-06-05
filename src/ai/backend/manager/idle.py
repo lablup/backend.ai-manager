@@ -371,7 +371,6 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
     async def populate_config(self, raw_config: Mapping[str, Any]) -> None:
         config = self._config_iv.check(raw_config)
-        config
         self.resource_thresholds = {
             k: nmget(v, 'average') for k, v in config.get('resource-thresholds').items()
         }
