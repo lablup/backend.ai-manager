@@ -16,6 +16,7 @@ from typing import (
     MutableMapping,
     Optional,
     Sequence,
+    Set,
     Type,
     TYPE_CHECKING,
 )
@@ -505,9 +506,9 @@ class UtilizationIdleChecker(BaseIdleChecker):
         if len(over_utilized) < 1:
             check_result = True
         elif self.thresholds_check_operator.lower() == "or":
-            check_result = any(over_utilized.values())
-        else:  # "and" operation is the default
             check_result = all(over_utilized.values())
+        else:  # "and" operation is the default
+            check_result = any(over_utilized.values())
         return check_result
 
     async def get_current_utilization(
