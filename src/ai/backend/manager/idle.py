@@ -350,6 +350,12 @@ class UtilizationIdleChecker(BaseIdleChecker):
     initial_grace_period: timedelta
     _policy_cache: ContextVar[Dict[AccessKey, Optional[Mapping[str, Any]]]]
     _evhandlers: List[EventHandler[None, AbstractEvent]]
+    slot_resource_map: Mapping[str, Set[str]] = {
+        'cpu': {'cpu_util'},
+        'mem': {'mem'},
+        'cuda.shares': {'cuda_util', 'cuda_mem'},
+        'cuda.device': {'cuda_util', 'cuda_mem'},
+    }
 
     async def __ainit__(self) -> None:
         await super().__ainit__()
@@ -401,30 +407,21 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
     async def check_session(self, session: Row, dbconn: SAConnection) -> bool:
         session_id = session["id"]
-        occupied_slots: dict[str, int] = dict(session["occupied_slots"])
-        unavailable_resources: List[str] = []
+        interval = self.timer.interval
+        window_size = int(self.time_window.total_seconds() / interval)
+        occupied_slots = session["occupied_slots"]
+        unavailable_resources: Set[str] = set()
 
         # Respect initial grace period (no termination of the session)
         now = datetime.now(tzutc())
         if now - session["created_at"] <= self.initial_grace_period:
             return True
 
-        for slot in occupied_slots.copy().keys():
+        # Do not take into account unallocated resources. For example, do not garbage collect
+        # a session without GPU even if cuda_util is configured in resource-thresholds.
+        for slot in occupied_slots:
             if occupied_slots[slot] == 0:
-                del occupied_slots[slot]
-                if slot != "cuda.device":
-                    unavailable_resources.append(slot)
-                    self.resource_thresholds.pop(slot)
-
-                if "cuda_util" in self.resource_thresholds.keys():
-                    unavailable_resources.append("cuda_util")
-                    self.resource_thresholds.pop("cuda_util")
-
-                if "cuda_mem" in self.resource_thresholds.keys():
-                    unavailable_resources.append("cuda_mem")
-                    self.resource_thresholds.pop("cuda_mem")
-        interval = self.timer.interval
-        window_size = int(self.time_window.total_seconds() / interval)
+                unavailable_resources.update(self.slot_resource_map[slot])
 
         # Respect idle_timeout, from keypair resource policy, over time_window.
         policy_cache = self._policy_cache.get()
@@ -470,7 +467,6 @@ class UtilizationIdleChecker(BaseIdleChecker):
         else:
             kernel_ids = [session_id]
         current_utilizations = await self.get_current_utilization(kernel_ids, occupied_slots)
-
         if current_utilizations is None:
             return True
 
@@ -485,8 +481,6 @@ class UtilizationIdleChecker(BaseIdleChecker):
             util_series = {k: [] for k in self.resource_thresholds}
 
         for k in util_series:
-            if k in unavailable_resources:
-                continue
             util_series[k].append(current_utilizations[k])
             if len(util_series[k]) > window_size:
                 util_series[k].pop(0)
@@ -501,12 +495,11 @@ class UtilizationIdleChecker(BaseIdleChecker):
             return True
 
         # Check over-utilized (not to be collected) resources.
-
         avg_utils = {k: sum(util_series[k]) / len(util_series[k]) for k in util_series}
         over_utilized = {
             k: (float(avg_utils[k]) >= float(self.resource_thresholds[k]))
             for k in self.resource_thresholds
-            if self.resource_thresholds[k] is not None
+            if (self.resource_thresholds[k] is not None) and (k not in unavailable_resources)
         }
 
         if len(over_utilized) < 1:
