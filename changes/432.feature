@@ -1,1 +1,1 @@
-Feature to implement utilization based idle session checker
+A new idle timeout checker to support utilization-based garbage collection of sessions.
