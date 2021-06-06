@@ -16,6 +16,14 @@ Changes
 
 .. towncrier release notes start
 
+21.03.6 (2021-06-07)
+--------------------
+
+### Features
+* Add an internal warning logs for excessive number of concurrent DB transactions ([#435](https://github.com/lablup/backend.ai-manager/issues/435))
+* Add a common session environment variable `BACKENDAI_SESSION_NAME` for improved prompts and user acquaintance of which container they use ([#443](https://github.com/lablup/backend.ai-manager/issues/443))
+
+
 21.03.5 (2021-05-17)
 --------------------
 
