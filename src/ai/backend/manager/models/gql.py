@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Optional, Mapping, Sequence, TYPE_CHECKING
 import uuid
 
@@ -134,7 +135,6 @@ class GraphQueryContext:
     user: Mapping[str, Any]  # TODO: express using typed dict
     access_key: str
     db: ExtendedAsyncSAEngine
-    db_conn: SAConnection
     redis_stat: Redis
     redis_image: Redis
     manager_status: ManagerStatus
