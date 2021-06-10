@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import inspect
 import logging
 import re
@@ -22,8 +21,6 @@ import trafaret as t
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common import validators as tx
-
-from ai.backend.manager.models.utils import execute_with_retry
 
 from ..models.base import DataLoaderManager
 from ..models.gql import (

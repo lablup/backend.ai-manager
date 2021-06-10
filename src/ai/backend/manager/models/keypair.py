@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import base64
 import secrets
 from typing import (
@@ -417,7 +416,7 @@ class CreateKeyPair(graphene.Mutation):
             )
         )
         return await simple_db_mutate_returning_item(cls, graph_ctx, insert_query, item_cls=KeyPair)
-    
+
     @classmethod
     def prepare_new_keypair(cls, user_email: str, props: KeyPairInput) -> Dict[str, Any]:
         ak, sk = generate_keypair()

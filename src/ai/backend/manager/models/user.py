@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import enum
 import logging
 from typing import (
@@ -43,7 +42,6 @@ from .base import (
     simple_db_mutate_returning_item,
 )
 from .storage import StorageSessionManager
-from .utils import execute_with_retry
 
 if TYPE_CHECKING:
     from .gql import GraphQueryContext
@@ -683,7 +681,7 @@ class ModifyUser(graphene.Mutation):
                     await conn.execute(
                         sa.insert(association_groups_users).values(values)
                     )
-            
+
             return updated_user
 
         return await simple_db_mutate_returning_item(

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from typing import Any, Optional, Mapping, Sequence, TYPE_CHECKING
 import uuid
 
@@ -10,9 +9,6 @@ import graphene
 if TYPE_CHECKING:
     from aioredis import Redis
     from graphql.execution.executors.asyncio import AsyncioExecutor
-    from sqlalchemy.ext.asyncio import (
-        AsyncConnection as SAConnection,
-    )
 
     from ai.backend.common.etcd import AsyncEtcd
     from ai.backend.common.types import (
