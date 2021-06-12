@@ -1202,7 +1202,7 @@ class AgentRegistry:
                 ",".join(f"{k}:{v}" for k, v in replicas.items()),
             'BACKENDAI_CLUSTER_HOSTS':
                 ",".join(binding.kernel.cluster_hostname for binding in kernel_agent_bindings),
-            'BACKENDAI_ACCESS_KEY': scheduled_session.access_key
+            'BACKENDAI_ACCESS_KEY': scheduled_session.access_key,
         })
 
         # Aggregate by agents to minimize RPC calls
@@ -1355,7 +1355,7 @@ class AgentRegistry:
                                 'BACKENDAI_CLUSTER_ROLE': binding.kernel.cluster_role,
                                 'BACKENDAI_CLUSTER_IDX': str(binding.kernel.cluster_idx),
                                 'BACKENDAI_CLUSTER_HOST': str(binding.kernel.cluster_hostname),
-                                'BACKENDAI_ACCESS_KEY': scheduled_session.access_key
+                                'BACKENDAI_ACCESS_KEY': scheduled_session.access_key,
                             },
                             'resource_slots': binding.kernel.requested_slots.to_json(),
                             'resource_opts': binding.kernel.resource_opts,

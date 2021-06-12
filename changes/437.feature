@@ -1,1 +1,1 @@
-Add a environment variable `BACKENDAI_ACCESSKEY` for identifying the owner of the session
+Add a environment variable `BACKENDAI_ACCESS_KEY` for identifying the owner of the session
