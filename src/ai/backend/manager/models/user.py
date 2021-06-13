@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import enum
 import logging
 from typing import (
@@ -18,11 +17,13 @@ import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 from passlib.hash import bcrypt
 import sqlalchemy as sa
+from sqlalchemy.engine.result import Result
 from sqlalchemy.engine.row import Row
 from sqlalchemy.ext.asyncio import (
     AsyncConnection as SAConnection,
     AsyncEngine as SAEngine,
 )
+from sqlalchemy.sql.expression import bindparam
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
 from ai.backend.common.logging import BraceStyleAdapter
@@ -37,6 +38,8 @@ from .base import (
     set_if_set,
     batch_result,
     batch_multiresult,
+    simple_db_mutate,
+    simple_db_mutate_returning_item,
 )
 from .storage import StorageSessionManager
 
@@ -240,7 +243,8 @@ class User(graphene.ObjectType):
             query = query.where(users.c.status.in_(_statuses))
         if limit is not None:
             query = query.limit(limit)
-        return [cls.from_row(ctx, row) async for row in (await ctx.db_conn.stream(query))]
+        async with ctx.db.begin_readonly() as conn:
+            return [cls.from_row(ctx, row) async for row in (await conn.stream(query))]
 
     @staticmethod
     async def load_count(
@@ -271,7 +275,8 @@ class User(graphene.ObjectType):
         elif is_active is not None:  # consider is_active field only if status is empty
             _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
             query = query.where(users.c.status.in_(_statuses))
-        result = await ctx.db_conn.execute(query)
+        async with ctx.db.begin_readonly() as conn:
+            result = await conn.execute(query)
         return result.scalar()
 
     @classmethod
@@ -319,9 +324,10 @@ class User(graphene.ObjectType):
         elif is_active is not None:  # consider is_active field only if status is empty
             _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
             query = query.where(users.c.status.in_(_statuses))
-        return [
-            cls.from_row(ctx, row) async for row in (await ctx.db_conn.stream(query))
-        ]
+        async with ctx.db.begin_readonly() as conn:
+            return [
+                cls.from_row(ctx, row) async for row in (await conn.stream(query))
+            ]
 
     @classmethod
     async def batch_load_by_email(
@@ -347,10 +353,11 @@ class User(graphene.ObjectType):
         elif is_active is not None:  # consider is_active field only if status is empty
             _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
             query = query.where(users.c.status.in_(_statuses))
-        return await batch_result(
-            ctx, ctx.db_conn, query, cls,
-            emails, lambda row: row['email'],
-        )
+        async with ctx.db.begin_readonly() as conn:
+            return await batch_result(
+                ctx, conn, query, cls,
+                emails, lambda row: row['email'],
+            )
 
     @classmethod
     async def batch_load_by_uuid(
@@ -376,10 +383,11 @@ class User(graphene.ObjectType):
         elif is_active is not None:  # consider is_active field only if status is empty
             _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
             query = query.where(users.c.status.in_(_statuses))
-        return await batch_result(
-            ctx, ctx.db_conn, query, cls,
-            user_ids, lambda row: row['uuid'],
-        )
+        async with ctx.db.begin_readonly() as conn:
+            return await batch_result(
+                ctx, conn, query, cls,
+                user_ids, lambda row: row['uuid'],
+            )
 
 
 class UserList(graphene.ObjectType):
@@ -448,7 +456,7 @@ class CreateUser(graphene.Mutation):
             _status = UserStatus.ACTIVE if props.is_active else UserStatus.INACTIVE
         else:
             _status = UserStatus(props.status)
-        data = {
+        user_data = {
             'username': username,
             'email': email,
             'password': props.password,
@@ -460,59 +468,59 @@ class CreateUser(graphene.Mutation):
             'domain_name': props.domain_name,
             'role': UserRole(props.role),
         }
-        try:
-            query = (users.insert().values(data))
-            result = await graph_ctx.db_conn.execute(query)
-            if result.rowcount > 0:
-                # Read the created user data from DB.
-                checkq = users.select().where(users.c.email == email)
-                result = await graph_ctx.db_conn.execute(checkq)
-                o = User.from_row(info.context, result.first())
+        user_insert_query = (
+            sa.insert(users)
+            .values(user_data)
+        )
 
-                # Create user's first access_key and secret_key.
-                from .keypair import generate_keypair, generate_ssh_keypair, keypairs
-                ak, sk = generate_keypair()
-                pubkey, privkey = generate_ssh_keypair()
-                is_admin = True if data['role'] in [UserRole.SUPERADMIN, UserRole.ADMIN] else False
-                kp_data = {
-                    'user_id': email,
-                    'access_key': ak,
-                    'secret_key': sk,
-                    'is_active': True if _status == UserStatus.ACTIVE else False,
-                    'is_admin': is_admin,
-                    'resource_policy': 'default',
-                    'concurrency_used': 0,
-                    'rate_limit': 10000,
-                    'num_queries': 0,
-                    'user': o.uuid,
-                    'ssh_public_key': pubkey,
-                    'ssh_private_key': privkey,
-                }
-                query = (keypairs.insert().values(kp_data))
-                await graph_ctx.db_conn.execute(query)
+        async def _post_func(conn: SAConnection, result: Result) -> Row:
+            if result.rowcount == 0:
+                return
+            created_user = result.first()
 
-                # Add user to groups if group_ids parameter is provided.
-                from .group import association_groups_users, groups
-                if props.group_ids:
-                    query = (sa.select([groups.c.id])
-                                .select_from(groups)
-                                .where(groups.c.domain_name == props.domain_name)
-                                .where(groups.c.id.in_(props.group_ids)))
-                    result = await graph_ctx.db_conn.execute(query)
-                    grps = result.fetchall()
-                    if grps:
-                        values = [{'user_id': o.uuid, 'group_id': grp.id} for grp in grps]
-                        query = association_groups_users.insert().values(values)
-                        await graph_ctx.db_conn.execute(query)
-                return cls(ok=True, msg='success', user=o)
-            else:
-                return cls(ok=False, msg='failed to create user', user=None)
-        except sa.exc.IntegrityError as e:
-            return cls(ok=False, msg=f'integrity error: {e}', user=None)
-        except (asyncio.CancelledError, asyncio.TimeoutError):
-            raise
-        except Exception as e:
-            return cls(ok=False, msg=f'unexpected error: {e}', user=None)
+            # Create a default keypair for the user.
+            from .keypair import KeyPair, KeyPairInput, keypairs
+            kp_data = KeyPair.prepare_new_keypair(email, KeyPairInput(
+                is_active=(_status == UserStatus.ACTIVE),
+                is_admin=(user_data['role'] in [UserRole.SUPERADMIN, UserRole.ADMIN]),
+                resource_policy='default',
+                rate_limit=10000,
+            ))
+            kp_insert_query = (
+                sa.insert(keypairs)
+                .values(
+                    **kp_data,
+                    user=created_user.uuid,
+                )
+            )
+            await conn.execute(kp_insert_query)
+
+            # Add user to groups if group_ids parameter is provided.
+            from .group import association_groups_users, groups
+            if props.group_ids:
+                query = (
+                    sa.select([groups.c.id])
+                    .select_from(groups)
+                    .where(groups.c.domain_name == props.domain_name)
+                    .where(groups.c.id.in_(props.group_ids))
+                )
+                grps = (await conn.execute(query)).all()
+                if grps:
+                    group_data = [
+                        {'user_id': created_user.uuid, 'group_id': grp.id}
+                        for grp in grps
+                    ]
+                    group_insert_query = (
+                        sa.insert(association_groups_users)
+                        .values(group_data)
+                    )
+                    await conn.execute(group_insert_query)
+
+            return created_user
+
+        return await simple_db_mutate_returning_item(
+            cls, graph_ctx, user_insert_query, item_cls=User, post_func=_post_func
+        )
 
 
 class ModifyUser(graphene.Mutation):
@@ -542,57 +550,59 @@ class ModifyUser(graphene.Mutation):
         set_if_set(props, data, 'need_password_change')
         set_if_set(props, data, 'full_name')
         set_if_set(props, data, 'description')
-        set_if_set(props, data, 'status')
+        set_if_set(props, data, 'status', clean_func=UserStatus)
         set_if_set(props, data, 'domain_name')
-        set_if_set(props, data, 'role')
-
-        if 'role' in data:
-            data['role'] = UserRole(data['role'])
-
-        if data.get('status') is None and props.is_active is not None:
-            _status = 'active' if props.is_active else 'inactive'
-            data['status'] = _status
-        if 'status' in data and data['status'] is not None:
-            data['status'] = UserStatus(data['status'])
-
+        set_if_set(props, data, 'role', clean_func=UserRole)
         if not data and not props.group_ids:
             return cls(ok=False, msg='nothing to update', user=None)
+        if data.get('status') is None and props.is_active is not None:
+            data['status'] = UserStatus.ACTIVE if props.is_active else UserStatus.INACTIVE
 
-        try:
-            # Get previous domain name of the user.
-            query = (sa.select([users.c.domain_name, users.c.role, users.c.status])
-                        .select_from(users)
-                        .where(users.c.email == email))
-            result = await graph_ctx.db_conn.execute(query)
+        user_update_data: Dict[str, Any]
+        prev_domain_name: str
+        prev_role: UserRole
+
+        async def _pre_func(conn: SAConnection) -> None:
+            nonlocal user_update_data, prev_domain_name, prev_role
+            result = await conn.execute(
+                sa.select([
+                    users.c.domain_name,
+                    users.c.role,
+                    users.c.status,
+                ])
+                .select_from(users)
+                .where(users.c.email == email)
+            )
             row = result.first()
             prev_domain_name = row.domain_name
             prev_role = row.role
-
+            user_update_data = data.copy()
             if 'status' in data and row.status != data['status']:
-                data['status_info'] = 'admin-requested'  # user mutation is only for admin
+                user_update_data['status_info'] = 'admin-requested'  # user mutation is only for admin
 
-            # Update user.
-            query = (users.update().values(data).where(users.c.email == email))
-            result = await graph_ctx.db_conn.execute(query)
-            if result.rowcount > 0:
-                checkq = users.select().where(users.c.email == email)
-                result = await graph_ctx.db_conn.execute(checkq)
-                o = User.from_row(graph_ctx, result.first())
-            else:
-                return cls(ok=False, msg='no such user', user=None)
+        update_query = lambda: (  # uses lambda because user_update_data is modified in _pre_func()
+            sa.update(users)
+            .values(user_update_data)
+            .where(users.c.email == email)
+        )
 
-            # Update keypair if user's role is updated.
-            # NOTE: This assumes that user have only one keypair.
+        async def _post_func(conn: SAConnection, result: Result) -> Row:
+            nonlocal prev_domain_name, prev_role
+            updated_user = result.first()
+
             if 'role' in data and data['role'] != prev_role:
                 from ai.backend.manager.models import keypairs
-                query = (sa.select([keypairs.c.user,
-                                    keypairs.c.is_active,
-                                    keypairs.c.is_admin])
-                            .select_from(keypairs)
-                            .where(keypairs.c.user == o.uuid)
-                            .order_by(sa.desc(keypairs.c.is_admin))
-                            .order_by(sa.desc(keypairs.c.is_active)))
-                result = await graph_ctx.db_conn.execute(query)
+                result = await conn.execute(
+                    sa.select([
+                        keypairs.c.user,
+                        keypairs.c.is_active,
+                        keypairs.c.is_admin,
+                    ])
+                    .select_from(keypairs)
+                    .where(keypairs.c.user == updated_user.uuid)
+                    .order_by(sa.desc(keypairs.c.is_admin))
+                    .order_by(sa.desc(keypairs.c.is_active))
+                )
                 if data['role'] in [UserRole.SUPERADMIN, UserRole.ADMIN]:
                     # User's becomes admin. Set the keypair as active admin.
                     kp = result.first()
@@ -602,62 +612,82 @@ class ModifyUser(graphene.Mutation):
                     if not kp.is_active:
                         kp_data['is_active'] = True
                     if len(kp_data.keys()) > 0:
-                        query = (keypairs.update()
-                                            .values(kp_data)
-                                            .where(keypairs.c.user == o.uuid))
-                        await graph_ctx.db_conn.execute(query)
+                        await conn.execute(
+                            sa.update(keypairs)
+                            .values(kp_data)
+                            .where(keypairs.c.user == updated_user.uuid)
+                        )
                 else:
                     # User becomes non-admin. Make the keypair non-admin as well.
                     # If there are multiple admin keypairs, inactivate them.
                     rows = result.fetchall()
                     cnt = 0
+                    kp_updates = []
                     for row in rows:
-                        kp_data = dict()
+                        kp_data = {
+                            'user': row.user,
+                            'is_admin': keypairs.c.is_admin,
+                            'is_active': keypairs.c.is_active,
+                        }
+                        changed = False
                         if cnt == 0:
                             kp_data['is_admin'] = False
+                            changed = True
                         elif row.is_admin and row.is_active:
                             kp_data['is_active'] = False
-                        if len(kp_data.keys()) > 0:
-                            query = (keypairs.update()
-                                                .values(kp_data)
-                                                .where(keypairs.c.user == row.user))
-                            await graph_ctx.db_conn.execute(query)
+                            changed = True
+                        if changed:
+                            kp_updates.append(kp_data)
                         cnt += 1
+                    await conn.execute(
+                        sa.update(keypairs)
+                        .values({
+                            'is_admin': bindparam('is_admin'),
+                            'is_active': bindparam('is_active'),
+                        })
+                        .where(keypairs.c.user == bindparam('user')),
+                        kp_updates,
+                    )
 
             # If domain is changed and no group is associated, clear previous domain's group.
-            if prev_domain_name != o.domain_name and not props.group_ids:
+            if prev_domain_name != updated_user.domain_name and not props.group_ids:
                 from .group import association_groups_users, groups
-                query = (association_groups_users
-                            .delete()
-                            .where(association_groups_users.c.user_id == o.uuid))
-                await graph_ctx.db_conn.execute(query)
+                await conn.execute(
+                    sa.delete(association_groups_users)
+                    .where(association_groups_users.c.user_id == updated_user.uuid)
+                )
 
             # Update user's group if group_ids parameter is provided.
-            if props.group_ids and o is not None:
+            if props.group_ids and updated_user is not None:
                 from .group import association_groups_users, groups  # noqa
                 # Clear previous groups associated with the user.
-                query = (association_groups_users
-                            .delete()
-                            .where(association_groups_users.c.user_id == o.uuid))
-                await graph_ctx.db_conn.execute(query)
+                await conn.execute(
+                    sa.delete(association_groups_users)
+                    .where(association_groups_users.c.user_id == updated_user.uuid)
+                )
                 # Add user to new groups.
-                query = (sa.select([groups.c.id])
-                            .select_from(groups)
-                            .where(groups.c.domain_name == o.domain_name)
-                            .where(groups.c.id.in_(props.group_ids)))
-                result = await graph_ctx.db_conn.execute(query)
+                result = await conn.execute(
+                    sa.select([groups.c.id])
+                    .select_from(groups)
+                    .where(groups.c.domain_name == updated_user.domain_name)
+                    .where(groups.c.id.in_(props.group_ids))
+                )
                 grps = result.fetchall()
                 if grps:
-                    values = [{'user_id': o.uuid, 'group_id': grp.id} for grp in grps]
-                    query = association_groups_users.insert().values(values)
-                    await graph_ctx.db_conn.execute(query)
-            return cls(ok=True, msg='success', user=o)
-        except sa.exc.IntegrityError as e:
-            return cls(ok=False, msg=f'integrity error: {e}', user=None)
-        except (asyncio.CancelledError, asyncio.TimeoutError):
-            raise
-        except Exception as e:
-            return cls(ok=False, msg=f'unexpected error: {e}', user=None)
+                    values = [
+                        {'user_id': updated_user.uuid, 'group_id': grp.id}
+                        for grp in grps
+                    ]
+                    await conn.execute(
+                        sa.insert(association_groups_users).values(values)
+                    )
+
+            return updated_user
+
+        return await simple_db_mutate_returning_item(
+            cls, graph_ctx, update_query, item_cls=User,
+            pre_func=_pre_func, post_func=_post_func,
+        )
 
 
 class DeleteUser(graphene.Mutation):
@@ -683,33 +713,23 @@ class DeleteUser(graphene.Mutation):
         email: str,
     ) -> DeleteUser:
         graph_ctx: GraphQueryContext = info.context
-        try:
+
+        async def _pre_func(conn: SAConnection) -> None:
             # Make all user keypairs inactive.
             from ai.backend.manager.models import keypairs
-            query = (
-                keypairs.update()
+            await conn.execute(
+                sa.update(keypairs)
                 .values(is_active=False)
                 .where(keypairs.c.user_id == email)
             )
-            await graph_ctx.db_conn.execute(query)
-            # Mark user as deleted.
-            query = (
-                users.update()
-                .values(status=UserStatus.DELETED,
-                        status_info='admin-requested')
-                .where(users.c.email == email)
-            )
-            result = await graph_ctx.db_conn.execute(query)
-            if result.rowcount > 0:
-                return cls(ok=True, msg='success')
-            else:
-                return cls(ok=False, msg='no such user')
-        except sa.exc.IntegrityError as e:
-            return cls(ok=False, msg=f'integrity error: {e}')
-        except (asyncio.CancelledError, asyncio.TimeoutError):
-            raise
-        except Exception as e:
-            return cls(ok=False, msg=f'unexpected error: {e}')
+
+        update_query = (
+            sa.update(users)
+            .values(status=UserStatus.DELETED,
+                    status_info='admin-requested')
+            .where(users.c.email == email)
+        )
+        return await simple_db_mutate(cls, graph_ctx, update_query, pre_func=_pre_func)
 
 
 class PurgeUser(graphene.Mutation):
@@ -745,48 +765,39 @@ class PurgeUser(graphene.Mutation):
         props: PurgeUserInput,
     ) -> PurgeUser:
         graph_ctx: GraphQueryContext = info.context
-        try:
-            query = (
+
+        async def _pre_func(conn: SAConnection) -> None:
+            user_uuid = await conn.scalar(
                 sa.select([users.c.uuid])
                 .select_from(users)
                 .where(users.c.email == email)
             )
-            user_uuid = await graph_ctx.db_conn.scalar(query)
-            log.info('completly deleting user {0}...', email)
+            log.info("Purging all records of the user {0}...", email)
 
-            if await cls.user_vfolder_mounted_to_active_kernels(graph_ctx.db_conn, user_uuid):
-                raise RuntimeError('Some of user\'s virtual folders are mounted to active kernels. '
-                                    'Terminate those kernels first.')
-            if await cls.user_has_active_kernels(graph_ctx.db_conn, user_uuid):
-                raise RuntimeError('User has some active kernels. Terminate them first.')
+            if await cls.user_vfolder_mounted_to_active_kernels(conn, user_uuid):
+                raise RuntimeError(
+                    "Some of user's virtual folders are mounted to active kernels. "
+                    "Terminate those kernels first."
+                )
+            if await cls.user_has_active_kernels(conn, user_uuid):
+                raise RuntimeError("User has some active kernels. Terminate them first.")
 
             if not props.purge_shared_vfolders:
                 await cls.migrate_shared_vfolders(
-                    graph_ctx.db_conn,
+                    conn,
                     deleted_user_uuid=user_uuid,
                     target_user_uuid=graph_ctx.user['uuid'],
                     target_user_email=graph_ctx.user['email'],
                 )
-            await cls.delete_vfolders(graph_ctx.db_conn, user_uuid, graph_ctx.storage_manager)
-            await cls.delete_kernels(graph_ctx.db_conn, user_uuid)
-            await cls.delete_keypairs(graph_ctx.db_conn, user_uuid)
+            await cls.delete_vfolders(conn, user_uuid, graph_ctx.storage_manager)
+            await cls.delete_kernels(conn, user_uuid)
+            await cls.delete_keypairs(conn, user_uuid)
 
-            query = (
-                users.delete()
-                .where(users.c.email == email)
-            )
-            result = await graph_ctx.db_conn.execute(query)
-            if result.rowcount > 0:
-                log.info('user is deleted: {0}', email)
-                return cls(ok=True, msg='success')
-            else:
-                return cls(ok=False, msg='no such user')
-        except sa.exc.IntegrityError as e:
-            return cls(ok=False, msg=f'integrity error: {e}')
-        except (asyncio.CancelledError, asyncio.TimeoutError):
-            raise
-        except Exception as e:
-            return cls(ok=False, msg=f'unexpected error: {e}')
+        delete_query = (
+            sa.delete(users)
+            .where(users.c.email == email)
+        )
+        return await simple_db_mutate(cls, graph_ctx, delete_query, pre_func=_pre_func)
 
     @classmethod
     async def migrate_shared_vfolders(
@@ -840,34 +851,36 @@ class PurgeUser(graphene.Mutation):
             # Target user will be the new owner, and it does not make sense to have
             # invitation and shared permission for its own folder.
             migrate_vfolder_ids = [item['vid'] for item in migrate_updates]
-            query = (
-                vfolder_invitations.delete()
+            delete_query = (
+                sa.delete(vfolder_invitations)
                 .where((vfolder_invitations.c.invitee == target_user_email) &
                        (vfolder_invitations.c.vfolder.in_(migrate_vfolder_ids)))
             )
-            await conn.execute(query)
-            query = (
-                vfolder_permissions.delete()
+            await conn.execute(delete_query)
+            delete_query = (
+                sa.delete(vfolder_permissions)
                 .where((vfolder_permissions.c.user == target_user_uuid) &
                        (vfolder_permissions.c.vfolder.in_(migrate_vfolder_ids)))
             )
-            await conn.execute(query)
+            await conn.execute(delete_query)
 
             rowcount = 0
             for item in migrate_updates:
-                query = (
-                    vfolders.update()
+                update_query = (
+                    sa.update(vfolders)
                     .values(
                         user=target_user_uuid,
                         name=item['vname'],
                     )
                     .where(vfolders.c.id == item['vid'])
                 )
-                result = await conn.execute(query)
+                result = await conn.execute(update_query)
                 rowcount += result.rowcount
             if rowcount > 0:
-                log.info('{0} shared folders detected. migrated to user {1}',
-                         rowcount, target_user_uuid)
+                log.info(
+                    "{0} shared folders are detected and migrated to user {1}",
+                    rowcount, target_user_uuid,
+                )
             return rowcount
         else:
             return 0
@@ -888,20 +901,19 @@ class PurgeUser(graphene.Mutation):
         :return: number of deleted rows
         """
         from . import vfolders, vfolder_permissions
-        query = (
+        await conn.execute(
             vfolder_permissions.delete()
             .where(vfolder_permissions.c.user == user_uuid)
         )
-        await conn.execute(query)
-        query = (
+        result = await conn.execute(
             sa.select([vfolders.c.id, vfolders.c.host])
             .select_from(vfolders)
             .where(vfolders.c.user == user_uuid)
         )
-        result = await conn.execute(query)
         target_vfs = result.fetchall()
-        query = (vfolders.delete().where(vfolders.c.user == user_uuid))
-        result = await conn.execute(query)
+        result = await conn.execute(
+            sa.delete(vfolders).where(vfolders.c.user == user_uuid)
+        )
         for row in target_vfs:
             try:
                 async with storage_manager.request(
@@ -935,12 +947,11 @@ class PurgeUser(graphene.Mutation):
         :return: True if a virtual folder is mounted to active kernels.
         """
         from . import kernels, vfolders, AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES
-        query = (
+        result = await conn.execute(
             sa.select([vfolders.c.id])
             .select_from(vfolders)
             .where(vfolders.c.user == user_uuid)
         )
-        result = await conn.execute(query)
         rows = result.fetchall()
         user_vfolder_ids = [row.id for row in rows]
         query = (
@@ -973,13 +984,14 @@ class PurgeUser(graphene.Mutation):
         :return: True if the user has some active kernels.
         """
         from . import kernels, AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES
-        query = (
+        active_kernel_count = await conn.scalar(
             sa.select([sa.func.count()])
             .select_from(kernels)
-            .where((kernels.c.user_uuid == user_uuid) &
-                   (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)))
+            .where(
+                (kernels.c.user_uuid == user_uuid) &
+                (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES))
+            )
         )
-        active_kernel_count = await conn.scalar(query)
         return (active_kernel_count > 0)
 
     @classmethod
@@ -996,11 +1008,10 @@ class PurgeUser(graphene.Mutation):
         :return: number of deleted rows
         """
         from . import kernels
-        query = (
-            kernels.delete()
+        result = await conn.execute(
+            sa.delete(kernels)
             .where(kernels.c.user_uuid == user_uuid)
         )
-        result = await conn.execute(query)
         if result.rowcount > 0:
             log.info('deleted {0} user\'s kernels ({1})', result.rowcount, user_uuid)
         return result.rowcount
@@ -1019,11 +1030,10 @@ class PurgeUser(graphene.Mutation):
         :return: number of deleted rows
         """
         from . import keypairs
-        query = (
-            keypairs.delete()
+        result = await conn.execute(
+            sa.delete(keypairs)
             .where(keypairs.c.user == user_uuid)
         )
-        result = await conn.execute(query)
         if result.rowcount > 0:
             log.info('deleted {0} user\'s keypairs ({1})', result.rowcount, user_uuid)
         return result.rowcount
@@ -1043,8 +1053,8 @@ async def check_credential(
     email: str,
     password: str,
 ) -> Any:
-    async with db.begin() as conn:
-        query = (
+    async with db.begin_readonly() as conn:
+        result = await conn.execute(
             sa.select([users])
             .select_from(users)
             .where(
@@ -1052,16 +1062,15 @@ async def check_credential(
                 (users.c.domain_name == domain)
             )
         )
-        result = await conn.execute(query)
-        row = result.first()
-        if row is None:
-            return None
-        if row['password'] is None:
-            # user password is not set.
-            return None
-        try:
-            if _verify_password(password, row['password']):
-                return row
-        except ValueError:
-            return None
+    row = result.first()
+    if row is None:
         return None
+    if row['password'] is None:
+        # user password is not set.
+        return None
+    try:
+        if _verify_password(password, row['password']):
+            return row
+    except ValueError:
+        return None
+    return None
