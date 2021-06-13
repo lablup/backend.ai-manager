@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import base64
 import secrets
 from typing import (
@@ -43,6 +42,7 @@ from .base import (
     batch_multiresult,
     set_if_set,
     simple_db_mutate,
+    simple_db_mutate_returning_item,
 )
 from .user import ModifyUserInput, UserRole
 from ..defs import RESERVED_DOTFILES
@@ -234,10 +234,11 @@ class KeyPair(graphene.ObjectType):
             query = query.where(keypairs.c.is_active == is_active)
         if limit is not None:
             query = query.limit(limit)
-        return [
-            obj async for row in (await graph_ctx.db_conn.stream(query))
-            if (obj := cls.from_row(graph_ctx, row)) is not None
-        ]
+        async with graph_ctx.db.begin_readonly() as conn:
+            return [
+                obj async for row in (await conn.stream(query))
+                if (obj := cls.from_row(graph_ctx, row)) is not None
+            ]
 
     @staticmethod
     async def load_count(
@@ -259,8 +260,9 @@ class KeyPair(graphene.ObjectType):
             query = query.where(keypairs.c.user_id == email)
         if is_active is not None:
             query = query.where(keypairs.c.is_active == is_active)
-        result = await graph_ctx.db_conn.execute(query)
-        return result.scalar()
+        async with graph_ctx.db.begin_readonly() as conn:
+            result = await conn.execute(query)
+            return result.scalar()
 
     @classmethod
     async def load_slice(
@@ -295,10 +297,11 @@ class KeyPair(graphene.ObjectType):
             query = query.where(keypairs.c.user_id == email)
         if is_active is not None:
             query = query.where(keypairs.c.is_active == is_active)
-        return [
-            obj async for row in (await graph_ctx.db_conn.stream(query))
-            if (obj := cls.from_row(graph_ctx, row)) is not None
-        ]
+        async with graph_ctx.db.begin_readonly() as conn:
+            return [
+                obj async for row in (await conn.stream(query))
+                if (obj := cls.from_row(graph_ctx, row)) is not None
+            ]
 
     @classmethod
     async def batch_load_by_email(
@@ -323,10 +326,11 @@ class KeyPair(graphene.ObjectType):
             query = query.where(users.c.domain_name == domain_name)
         if is_active is not None:
             query = query.where(keypairs.c.is_active == is_active)
-        return await batch_multiresult(
-            graph_ctx, graph_ctx.db_conn, query, cls,
-            user_ids, lambda row: row['user_id'],
-        )
+        async with graph_ctx.db.begin_readonly() as conn:
+            return await batch_multiresult(
+                graph_ctx, conn, query, cls,
+                user_ids, lambda row: row['user_id'],
+            )
 
     @classmethod
     async def batch_load_by_ak(
@@ -348,10 +352,11 @@ class KeyPair(graphene.ObjectType):
         )
         if domain_name is not None:
             query = query.where(users.c.domain_name == domain_name)
-        return await batch_result(
-            graph_ctx, graph_ctx.db_conn, query, cls,
-            access_keys, lambda row: row['access_key'],
-        )
+        async with graph_ctx.db.begin_readonly() as conn:
+            return await batch_result(
+                graph_ctx, conn, query, cls,
+                access_keys, lambda row: row['access_key'],
+            )
 
 
 class KeyPairList(graphene.ObjectType):
@@ -397,34 +402,27 @@ class CreateKeyPair(graphene.Mutation):
         cls,
         root,
         info: graphene.ResolveInfo,
-        user_id: uuid.UUID,
+        user_id: str,
         props: KeyPairInput,
     ) -> CreateKeyPair:
-        graph_ctx: GraphQueryContext = info.context
-        # Check if user exists with requested email (user_id for legacy).
         from .user import users  # noqa
-        query = (
-            sa.select([users.c.uuid])
-            .select_from(users)
-            .where(users.c.email == user_id)
+        graph_ctx: GraphQueryContext = info.context
+        data = cls.prepare_new_keypair(user_id, props)
+        insert_query = (
+            sa.insert(keypairs)
+            .values(
+                **data,
+                user=sa.select([users.c.uuid]).where(users.c.email == user_id).as_scalar(),
+            )
         )
-        try:
-            result = await graph_ctx.db_conn.execute(query)
-            user_uuid = result.scalar()
-            if user_uuid is None:
-                return cls(ok=False, msg=f'User not found: {user_id}', keypair=None)
-        except sa.exc.IntegrityError as e:
-            return cls(ok=False, msg=f'integrity error: {e}', keypair=None)
-        except (asyncio.CancelledError, asyncio.TimeoutError):
-            raise
-        except Exception as e:
-            return cls(ok=False, msg=f'unexpected error: {e}', keypair=None)
+        return await simple_db_mutate_returning_item(cls, graph_ctx, insert_query, item_cls=KeyPair)
 
-        # Create keypair.
+    @classmethod
+    def prepare_new_keypair(cls, user_email: str, props: KeyPairInput) -> Dict[str, Any]:
         ak, sk = generate_keypair()
         pubkey, privkey = generate_ssh_keypair()
         data = {
-            'user_id': user_id,
+            'user_id': user_email,
             'access_key': ak,
             'secret_key': sk,
             'is_active': bool(props.is_active),
@@ -433,27 +431,10 @@ class CreateKeyPair(graphene.Mutation):
             'concurrency_used': 0,
             'rate_limit': props.rate_limit,
             'num_queries': 0,
-            'user': user_uuid,
             'ssh_public_key': pubkey,
             'ssh_private_key': privkey,
         }
-        insert_query = (sa.insert(keypairs).values(data))
-        try:
-            result = await graph_ctx.db_conn.execute(insert_query)
-            if result.rowcount > 0:
-                # Read the created key data from DB.
-                checkq = sa.select([keypairs]).where(keypairs.c.access_key == ak)
-                result = await graph_ctx.db_conn.execute(checkq)
-                o = KeyPair.from_row(info.context, result.first())
-                return cls(ok=True, msg='success', keypair=o)
-            else:
-                return cls(ok=False, msg='failed to create keypair', keypair=None)
-        except sa.exc.IntegrityError as e:
-            return cls(ok=False, msg=f'integrity error: {e}', keypair=None)
-        except (asyncio.CancelledError, asyncio.TimeoutError):
-            raise
-        except Exception as e:
-            return cls(ok=False, msg=f'unexpected error: {e}', keypair=None)
+        return data
 
 
 class ModifyKeyPair(graphene.Mutation):

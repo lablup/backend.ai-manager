@@ -67,11 +67,11 @@ class ResourcePreset(graphene.ObjectType):
 
     @classmethod
     async def load_all(cls, ctx: GraphQueryContext) -> Sequence[ResourcePreset]:
-        async with ctx.db.begin() as conn:
-            query = (
-                sa.select([resource_presets])
-                .select_from(resource_presets)
-            )
+        query = (
+            sa.select([resource_presets])
+            .select_from(resource_presets)
+        )
+        async with ctx.db.begin_readonly() as conn:
             return [
                 obj async for r in (await conn.stream(query))
                 if (obj := cls.from_row(ctx, r)) is not None
@@ -83,13 +83,13 @@ class ResourcePreset(graphene.ObjectType):
         ctx: GraphQueryContext,
         names: Sequence[str],
     ) -> Sequence[ResourcePreset | None]:
-        async with ctx.db.begin() as conn:
-            query = (
-                sa.select([resource_presets])
-                .select_from(resource_presets)
-                .where(resource_presets.c.name.in_(names))
-                .order_by(resource_presets.c.name)
-            )
+        query = (
+            sa.select([resource_presets])
+            .select_from(resource_presets)
+            .where(resource_presets.c.name.in_(names))
+            .order_by(resource_presets.c.name)
+        )
+        async with ctx.db.begin_readonly() as conn:
             return await batch_result(
                 ctx, conn, query, cls,
                 names, lambda row: row['name'],
@@ -132,14 +132,11 @@ class CreateResourcePreset(graphene.Mutation):
                 props.resource_slots, None),
             'shared_memory': BinarySize.from_str(props.shared_memory) if props.shared_memory else None,
         }
-        insert_query = (resource_presets.insert().values(data))
-        item_query = (
-            resource_presets.select()
-            .where(resource_presets.c.name == name)
-        )
+        insert_query = sa.insert(resource_presets).values(data)
         return await simple_db_mutate_returning_item(
             cls, info.context, insert_query,
-            item_query=item_query, item_cls=ResourcePreset)
+            item_cls=ResourcePreset,
+        )
 
 
 class ModifyResourcePreset(graphene.Mutation):
@@ -167,7 +164,7 @@ class ModifyResourcePreset(graphene.Mutation):
         set_if_set(props, data, 'shared_memory',
                    clean_func=lambda v: BinarySize.from_str(v) if v else None)
         update_query = (
-            resource_presets.update()
+            sa.update(resource_presets)
             .values(data)
             .where(resource_presets.c.name == name)
         )
@@ -192,7 +189,7 @@ class DeleteResourcePreset(graphene.Mutation):
         name: str,
     ) -> DeleteResourcePreset:
         delete_query = (
-            resource_presets.delete()
+            sa.delete(resource_presets)
             .where(resource_presets.c.name == name)
         )
         return await simple_db_mutate(cls, info.context, delete_query)

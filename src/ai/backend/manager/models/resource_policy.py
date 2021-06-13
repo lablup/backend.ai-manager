@@ -97,9 +97,11 @@ class KeyPairResourcePolicy(graphene.ObjectType):
 
     @classmethod
     async def load_all(cls, ctx: GraphQueryContext) -> Sequence[KeyPairResourcePolicy]:
-        async with ctx.db.begin() as conn:
-            query = (sa.select([keypair_resource_policies])
-                       .select_from(keypair_resource_policies))
+        query = (
+            sa.select([keypair_resource_policies])
+            .select_from(keypair_resource_policies)
+        )
+        async with ctx.db.begin_readonly() as conn:
             return [
                 obj async for r in (await conn.stream(query))
                 if (obj := cls.from_row(ctx, r)) is not None
@@ -111,24 +113,23 @@ class KeyPairResourcePolicy(graphene.ObjectType):
         ctx: GraphQueryContext,
         access_key: str,
     ) -> Sequence[KeyPairResourcePolicy]:
-        async with ctx.db.begin() as conn:
-            query = (
-                sa.select([keypairs.c.user_id])
-                .select_from(keypairs)
-                .where(keypairs.c.access_key == access_key)
+        j = sa.join(
+            keypairs, keypair_resource_policies,
+            keypairs.c.resource_policy == keypair_resource_policies.c.name
+        )
+        query = (
+            sa.select([keypair_resource_policies])
+            .select_from(j)
+            .where(
+                keypairs.c.user_id == (
+                    sa.select([keypairs.c.user_id])
+                    .select_from(keypairs)
+                    .where(keypairs.c.access_key == access_key)
+                    .as_scalar()
+                )
             )
-            result = await conn.execute(query)
-            row = result.first()
-            user_id = row['user_id']
-            j = sa.join(
-                keypairs, keypair_resource_policies,
-                keypairs.c.resource_policy == keypair_resource_policies.c.name
-            )
-            query = (
-                sa.select([keypair_resource_policies])
-                .select_from(j)
-                .where((keypairs.c.user_id == user_id))
-            )
+        )
+        async with ctx.db.begin_readonly() as conn:
             return [
                 obj async for r in (await conn.stream(query))
                 if (obj := cls.from_row(ctx, r)) is not None
@@ -140,13 +141,13 @@ class KeyPairResourcePolicy(graphene.ObjectType):
         ctx: GraphQueryContext,
         names: Sequence[str],
     ) -> Sequence[KeyPairResourcePolicy | None]:
-        async with ctx.db.begin() as conn:
-            query = (
-                sa.select([keypair_resource_policies])
-                .select_from(keypair_resource_policies)
-                .where(keypair_resource_policies.c.name.in_(names))
-                .order_by(keypair_resource_policies.c.name)
-            )
+        query = (
+            sa.select([keypair_resource_policies])
+            .select_from(keypair_resource_policies)
+            .where(keypair_resource_policies.c.name.in_(names))
+            .order_by(keypair_resource_policies.c.name)
+        )
+        async with ctx.db.begin_readonly() as conn:
             return await batch_result(
                 ctx, conn, query, cls,
                 names, lambda row: row['name'],
@@ -158,20 +159,21 @@ class KeyPairResourcePolicy(graphene.ObjectType):
         ctx: GraphQueryContext,
         names: Sequence[str],
     ) -> Sequence[KeyPairResourcePolicy | None]:
-        async with ctx.db.begin() as conn:
-            access_key = ctx.access_key
-            j = sa.join(
-                keypairs, keypair_resource_policies,
-                keypairs.c.resource_policy == keypair_resource_policies.c.name
+        access_key = ctx.access_key
+        j = sa.join(
+            keypairs, keypair_resource_policies,
+            keypairs.c.resource_policy == keypair_resource_policies.c.name
+        )
+        query = (
+            sa.select([keypair_resource_policies])
+            .select_from(j)
+            .where(
+                (keypair_resource_policies.c.name.in_(names)) &
+                (keypairs.c.access_key == access_key)
             )
-            query = (
-                sa.select([keypair_resource_policies])
-                .select_from(j)
-                .where(
-                    (keypair_resource_policies.c.name.in_(names)) &
-                    (keypairs.c.access_key == access_key)
-                )
-                .order_by(keypair_resource_policies.c.name))
+            .order_by(keypair_resource_policies.c.name)
+        )
+        async with ctx.db.begin_readonly() as conn:
             return await batch_result(
                 ctx, conn, query, cls,
                 names, lambda row: row['name'],
@@ -183,15 +185,17 @@ class KeyPairResourcePolicy(graphene.ObjectType):
         ctx: GraphQueryContext,
         access_keys: Sequence[str],
     ) -> Sequence[KeyPairResourcePolicy]:
-        async with ctx.db.begin() as conn:
-            j = sa.join(
-                keypairs, keypair_resource_policies,
-                keypairs.c.resource_policy == keypair_resource_policies.c.name
-            )
-            query = (sa.select([keypair_resource_policies])
-                       .select_from(j)
-                       .where((keypairs.c.access_key.in_(access_keys)))
-                       .order_by(keypair_resource_policies.c.name))
+        j = sa.join(
+            keypairs, keypair_resource_policies,
+            keypairs.c.resource_policy == keypair_resource_policies.c.name
+        )
+        query = (
+            sa.select([keypair_resource_policies])
+            .select_from(j)
+            .where((keypairs.c.access_key.in_(access_keys)))
+            .order_by(keypair_resource_policies.c.name)
+        )
+        async with ctx.db.begin_readonly() as conn:
             return [
                 obj async for r in (await conn.stream(query))
                 if (obj := cls.from_row(ctx, r)) is not None
@@ -253,14 +257,12 @@ class CreateKeyPairResourcePolicy(graphene.Mutation):
             'max_vfolder_size': props.max_vfolder_size,
             'allowed_vfolder_hosts': props.allowed_vfolder_hosts,
         }
-        insert_query = (keypair_resource_policies.insert().values(data))
-        item_query = (
-            keypair_resource_policies.select()
-            .where(keypair_resource_policies.c.name == name)
+        insert_query = (
+            sa.insert(keypair_resource_policies).values(data)
         )
         return await simple_db_mutate_returning_item(
-            cls, info.context, insert_query,
-            item_query=item_query, item_cls=KeyPairResourcePolicy)
+            cls, info.context, insert_query, item_cls=KeyPairResourcePolicy
+        )
 
 
 class ModifyKeyPairResourcePolicy(graphene.Mutation):
@@ -294,9 +296,10 @@ class ModifyKeyPairResourcePolicy(graphene.Mutation):
         set_if_set(props, data, 'max_vfolder_size')
         set_if_set(props, data, 'allowed_vfolder_hosts')
         update_query = (
-            keypair_resource_policies.update()
+            sa.update(keypair_resource_policies)
             .values(data)
-            .where(keypair_resource_policies.c.name == name))
+            .where(keypair_resource_policies.c.name == name)
+        )
         return await simple_db_mutate(cls, info.context, update_query)
 
 
@@ -318,7 +321,7 @@ class DeleteKeyPairResourcePolicy(graphene.Mutation):
         name: str,
     ) -> DeleteKeyPairResourcePolicy:
         delete_query = (
-            keypair_resource_policies.delete()
+            sa.delete(keypair_resource_policies)
             .where(keypair_resource_policies.c.name == name)
         )
         return await simple_db_mutate(cls, info.context, delete_query)
