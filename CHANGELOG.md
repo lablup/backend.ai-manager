@@ -16,6 +16,16 @@ Changes
 
 .. towncrier release notes start
 
+21.03.7 (2021-06-13)
+--------------------
+
+### Features
+* Add a environment variable `BACKENDAI_ACCESS_KEY` for identifying the session owner inside the session containers ([#437](https://github.com/lablup/backend.ai-manager/issues/437))
+
+### Fixes
+* Rewrite internal database connection and transaction management for GraphQL query and mutation processing, which improves overall stability and performance ([#436](https://github.com/lablup/backend.ai-manager/issues/436))
+
+
 21.03.6 (2021-06-07)
 --------------------
 
