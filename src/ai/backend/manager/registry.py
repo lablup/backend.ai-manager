@@ -1349,13 +1349,14 @@ class AgentRegistry:
                             'mounts': scheduled_session.mounts,
                             'mount_map': scheduled_session.mount_map,
                             'environ': {
+                                # inherit per-session environment variables
                                 **scheduled_session.environ,
+                                # set per-kernel environment variables
                                 'BACKENDAI_KERNEL_ID': str(binding.kernel.kernel_id),
                                 'BACKENDAI_KERNEL_IMAGE': str(binding.kernel.image_ref),
                                 'BACKENDAI_CLUSTER_ROLE': binding.kernel.cluster_role,
                                 'BACKENDAI_CLUSTER_IDX': str(binding.kernel.cluster_idx),
                                 'BACKENDAI_CLUSTER_HOST': str(binding.kernel.cluster_hostname),
-                                'BACKENDAI_ACCESS_KEY': scheduled_session.access_key,
                             },
                             'resource_slots': binding.kernel.requested_slots.to_json(),
                             'resource_opts': binding.kernel.resource_opts,
