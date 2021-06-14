@@ -124,6 +124,7 @@ from ..api.exceptions import (
 
 @attr.s(auto_attribs=True, slots=True)
 class GraphQueryContext:
+    schema: graphene.Schema
     dataloader_manager: DataLoaderManager
     local_config: LocalConfig
     shared_config: SharedConfig
