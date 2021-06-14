@@ -595,10 +595,7 @@ async def simple_db_mutate(
         async with graph_ctx.db.begin() as conn:
             if pre_func:
                 await pre_func(conn)
-            if callable(mutation_query):
-                _query = mutation_query()
-            else:
-                _query = mutation_query
+            _query = mutation_query() if callable(mutation_query) else mutation_query
             result = await conn.execute(_query)
             if post_func:
                 await post_func(conn, result)
@@ -654,8 +651,7 @@ async def simple_db_mutate_returning_item(
         async with graph_ctx.db.begin() as conn:
             if pre_func:
                 await pre_func(conn)
-            if callable(mutation_query):
-                _query = mutation_query()
+            _query = mutation_query() if callable(mutation_query) else mutation_query
             _query = _query.returning(_query.table)
             result = await conn.execute(_query)
             if post_func:

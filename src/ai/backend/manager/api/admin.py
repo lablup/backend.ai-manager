@@ -69,6 +69,7 @@ async def handle_gql(request: web.Request, params: Any) -> web.Response:
     known_slot_types = await root_ctx.shared_config.get_resource_slots()
 
     gql_ctx = GraphQueryContext(
+        schema=app_ctx.gql_schema,
         dataloader_manager=DataLoaderManager(),
         local_config=root_ctx.local_config,
         shared_config=root_ctx.shared_config,
