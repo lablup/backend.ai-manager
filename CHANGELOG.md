@@ -16,6 +16,12 @@ Changes
 
 .. towncrier release notes start
 
+21.03.8 (2021-06-14)
+--------------------
+
+* A hotfix release to fix some mistakes in [#436](https://github.com/lablup/backend.ai-manager/issues/436)
+
+
 21.03.7 (2021-06-13)
 --------------------
 
