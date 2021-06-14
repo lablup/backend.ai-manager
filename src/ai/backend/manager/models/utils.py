@@ -66,13 +66,13 @@ class ExtendedAsyncSAEngine(SAEngine):
                     self._readonly_txn_count, self._txn_concurrency_threshold,
                     stack_info=True,
                 )
-            await conn.execution_options(
+            conn_with_exec_opts = await conn.execution_options(
                 postgresql_readonly=True,
                 postgresql_deferrable=deferrable,
             )
-            async with conn.begin():
+            async with conn_with_exec_opts.begin():
                 try:
-                    yield conn
+                    yield conn_with_exec_opts
                 finally:
                     self._readonly_txn_count -= 1
 

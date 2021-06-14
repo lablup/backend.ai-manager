@@ -1202,6 +1202,7 @@ class AgentRegistry:
                 ",".join(f"{k}:{v}" for k, v in replicas.items()),
             'BACKENDAI_CLUSTER_HOSTS':
                 ",".join(binding.kernel.cluster_hostname for binding in kernel_agent_bindings),
+            'BACKENDAI_ACCESS_KEY': scheduled_session.access_key,
         })
 
         # Aggregate by agents to minimize RPC calls
@@ -1348,7 +1349,9 @@ class AgentRegistry:
                             'mounts': scheduled_session.mounts,
                             'mount_map': scheduled_session.mount_map,
                             'environ': {
+                                # inherit per-session environment variables
                                 **scheduled_session.environ,
+                                # set per-kernel environment variables
                                 'BACKENDAI_KERNEL_ID': str(binding.kernel.kernel_id),
                                 'BACKENDAI_KERNEL_IMAGE': str(binding.kernel.image_ref),
                                 'BACKENDAI_CLUSTER_ROLE': binding.kernel.cluster_role,

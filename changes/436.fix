@@ -1,0 +1,1 @@
+Rewrite internal database connection and transaction management for GraphQL query and mutation processing, which improves overall stability and performance

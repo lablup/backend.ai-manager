@@ -520,8 +520,9 @@ class VirtualFolder(graphene.ObjectType):
             query = query.where(vfolders.c.group == group_id)
         if user_id is not None:
             query = query.where(vfolders.c.user == user_id)
-        result = await graph_ctx.db_conn.execute(query)
-        return result.scalar()
+        async with graph_ctx.db.begin_readonly() as conn:
+            result = await conn.execute(query)
+            return result.scalar()
 
     @classmethod
     async def load_slice(
@@ -556,10 +557,11 @@ class VirtualFolder(graphene.ObjectType):
             query = query.where(vfolders.c.group == group_id)
         if user_id is not None:
             query = query.where(vfolders.c.user == user_id)
-        return [
-            obj async for r in (await graph_ctx.db_conn.stream(query))
-            if (obj := cls.from_row(graph_ctx, r)) is not None
-        ]
+        async with graph_ctx.db.begin_readonly() as conn:
+            return [
+                obj async for r in (await conn.stream(query))
+                if (obj := cls.from_row(graph_ctx, r)) is not None
+            ]
 
     @classmethod
     async def batch_load_by_user(
@@ -583,10 +585,11 @@ class VirtualFolder(graphene.ObjectType):
             query = query.where(users.c.domain_name == domain_name)
         if group_id is not None:
             query = query.where(vfolders.c.group == group_id)
-        return await batch_multiresult(
-            graph_ctx, graph_ctx.db_conn, query, cls,
-            user_uuids, lambda row: row['user']
-        )
+        async with graph_ctx.db.begin_readonly() as conn:
+            return await batch_multiresult(
+                graph_ctx, conn, query, cls,
+                user_uuids, lambda row: row['user']
+            )
 
 
 class VirtualFolderList(graphene.ObjectType):
