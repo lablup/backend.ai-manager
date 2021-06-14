@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import defaultdict
+from decimal import Decimal
 import enum
 import logging
 import math
@@ -9,6 +11,7 @@ from datetime import datetime, timedelta
 from typing import (
     Any,
     ClassVar,
+    DefaultDict,
     Dict,
     List,
     Mapping,
@@ -353,8 +356,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
     slot_resource_map: Mapping[str, Set[str]] = {
         'cpu': {'cpu_util'},
         'mem': {'mem'},
-        'cuda.shares': {'cuda_util', 'cuda_mem'},
-        'cuda.device': {'cuda_util', 'cuda_mem'},
+        'cuda': {'cuda_util', 'cuda_mem'},
     }
 
     async def __ainit__(self) -> None:
@@ -416,16 +418,18 @@ class UtilizationIdleChecker(BaseIdleChecker):
         if now - session["created_at"] <= self.initial_grace_period:
             return True
 
+        # Merge same type of (exclusive) resources as a unique resource with the values added.
+        # Example: {cuda.device: 0, cuda.shares: 0.5} -> {cuda: 0.5}.
+        unique_res_map: DefaultDict[str, Any] = defaultdict(Decimal)
+        for k, v in occupied_slots.items():
+            unique_key = k.split('.')[0]
+            unique_res_map[unique_key] += v
+
         # Do not take into account unallocated resources. For example, do not garbage collect
         # a session without GPU even if cuda_util is configured in resource-thresholds.
-        for slot in occupied_slots:
-            if occupied_slots[slot] == 0:
+        for slot in unique_res_map:
+            if unique_res_map[slot] == 0:
                 unavailable_resources.update(self.slot_resource_map[slot])
-
-        if ("cuda.device" in occupied_slots.keys()) or ("cuda.shares" in occupied_slots.keys()):
-            if (occupied_slots["cuda.device"] == 1) or (occupied_slots["cuda.shares"] == 1):
-                unavailable_resources.remove('cuda_util')
-                unavailable_resources.remove('cuda_mem')
 
         # Respect idle_timeout, from keypair resource policy, over time_window.
         policy_cache = self._policy_cache.get()
