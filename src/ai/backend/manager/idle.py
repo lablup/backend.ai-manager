@@ -422,6 +422,11 @@ class UtilizationIdleChecker(BaseIdleChecker):
             if occupied_slots[slot] == 0:
                 unavailable_resources.update(self.slot_resource_map[slot])
 
+        if ("cuda.device" in occupied_slots.keys()) or ("cuda.shares" in occupied_slots.keys()):
+            if (occupied_slots["cuda.device"] == 1) or (occupied_slots["cuda.shares"] == 1):
+                unavailable_resources.remove('cuda_util')
+                unavailable_resources.remove('cuda_mem')
+
         # Respect idle_timeout, from keypair resource policy, over time_window.
         policy_cache = self._policy_cache.get()
         policy = policy_cache.get(session["access_key"], None)
