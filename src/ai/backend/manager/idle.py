@@ -486,7 +486,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         try:
             util_series = msgpack.unpackb(raw_util_series, use_list=True)
         except TypeError:
-            util_series = {k: [] for k in self.resource_thresholds}
+            util_series = {k: [] for k in self.resource_thresholds.keys()}
 
         for k in util_series:
             util_series[k].append(current_utilizations[k])
@@ -503,19 +503,19 @@ class UtilizationIdleChecker(BaseIdleChecker):
             return True
 
         # Check over-utilized (not to be collected) resources.
-        avg_utils = {k: sum(util_series[k]) / len(util_series[k]) for k in util_series}
-        over_utilized = {
-            k: (float(avg_utils[k]) >= float(self.resource_thresholds[k]))
-            for k in self.resource_thresholds
-            if (self.resource_thresholds[k] is not None) and (k not in unavailable_resources)
+        avg_utils = {k: sum(v) / len(v) for k, v in util_series.items()}
+        sufficiently_utilized = {
+            k: (float(avg_utils[k]) >= float(self.resource_thresholds.get(k)))
+            for k, v in self.resource_thresholds.items()
+            if (v is not None) and (v not in unavailable_resources)
         }
 
-        if len(over_utilized) < 1:
+        if len(sufficiently_utilized) < 1:
             check_result = True
         elif self.thresholds_check_operator.lower() == "or":
-            check_result = all(over_utilized.values())
+            check_result = all(sufficiently_utilized.values())
         else:  # "and" operation is the default
-            check_result = any(over_utilized.values())
+            check_result = any(sufficiently_utilized.values())
         return check_result
 
     async def get_current_utilization(
@@ -529,22 +529,22 @@ class UtilizationIdleChecker(BaseIdleChecker):
         will return the averaged values over the kernels for each utilization.
         """
         try:
-            utilizations = {k: 0.0 for k in self.resource_thresholds}
+            utilizations = {k: 0.0 for k in self.resource_thresholds.keys()}
             for kernel_id in kernel_ids:
                 raw_live_stat = await self._redis_stat.get(str(kernel_id), encoding=None)
                 live_stat = msgpack.unpackb(raw_live_stat)
                 kernel_utils = {
                     k: float(nmget(live_stat, f"{k}.pct", 0.0))
-                    for k in self.resource_thresholds
+                    for k in self.resource_thresholds.keys()
                 }
 
                 utilizations = {
                     k: utilizations[k] + kernel_utils[k]
-                    for k in self.resource_thresholds
+                    for k in self.resource_thresholds.keys()
                 }
             utilizations = {
                 k: utilizations[k] / len(kernel_ids)
-                for k in self.resource_thresholds
+                for k in self.resource_thresholds.keys()
             }
 
             # NOTE: Manual calculation of mem utilization.
@@ -556,7 +556,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
             utilizations['mem'] = mem_current / mem_slots * 100 if mem_slots > 0 else 0
             return utilizations
         except Exception as e:
-            log.warning("Unable to collect utilization for idleness check:{}", repr(e))
+            log.warning("Unable to collect utilization for idleness check", exc_info=e)
             return None
 
 
