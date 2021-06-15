@@ -380,7 +380,8 @@ class UtilizationIdleChecker(BaseIdleChecker):
         self.time_window = config.get("time-window")
         self.initial_grace_period = config.get("initial-grace-period")
 
-        thresholds_log = " ".join([f"{k}({v})," for k, v in self.resource_thresholds.items()])
+        thresholds_log = " ".join([f"{k}({threshold})," for k,
+                                   threshold in self.resource_thresholds.items()])
         log.info(
             f"UtilizationIdleChecker(%): {thresholds_log} "
             f"thresholds-check-operator(\"{self.thresholds_check_operator}\"), "
@@ -505,9 +506,9 @@ class UtilizationIdleChecker(BaseIdleChecker):
         # Check over-utilized (not to be collected) resources.
         avg_utils = {k: sum(v) / len(v) for k, v in util_series.items()}
         sufficiently_utilized = {
-            k: (float(avg_utils[k]) >= float(self.resource_thresholds.get(k)))
-            for k, v in self.resource_thresholds.items()
-            if (v is not None) and (v not in unavailable_resources)
+            k: (float(avg_utils[k]) >= float(threshold))
+            for k, threshold in self.resource_thresholds.items()
+            if (threshold is not None) and (threshold not in unavailable_resources)
         }
 
         if len(sufficiently_utilized) < 1:
