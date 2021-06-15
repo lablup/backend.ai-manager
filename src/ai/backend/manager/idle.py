@@ -335,7 +335,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         {
             t.Key("time-window", default="10m"): tx.TimeDuration(),
             t.Key("initial-grace-period", default="5m"): tx.TimeDuration(),
-            t.Key("thresholds-check-operator", default="and"): t.String,
+            t.Key("thresholds-check-operator"): t.Enum('and', 'or'),
             t.Key("resource-thresholds"): t.Dict(
                 {
                     t.Key("cpu_util", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
