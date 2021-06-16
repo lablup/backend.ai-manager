@@ -34,8 +34,7 @@ from graphene.types import Scalar
 from graphql.language import ast
 from graphene.types.scalars import MIN_INT, MAX_INT
 import sqlalchemy as sa
-from sqlalchemy.engine.result import Result
-from sqlalchemy.engine.row import Row
+from sqlalchemy.engine import Result, Row
 from sqlalchemy.ext.asyncio import (
     AsyncConnection as SAConnection,
     AsyncEngine as SAEngine,
@@ -112,10 +111,10 @@ class EnumType(TypeDecorator, SchemaType):
         super().__init__(*enums, **opts)
         self._enum_cls = enum_cls
 
-    def process_bind_param(self, value, dialect):
+    def process_bind_param(self, value: Optional[Any], dialect):
         return value.name if value else None
 
-    def process_result_value(self, value: str, dialect):
+    def process_result_value(self, value: Optional[Any], dialect):
         return self._enum_cls[value] if value else None
 
     def copy(self):
@@ -146,10 +145,10 @@ class EnumValueType(TypeDecorator, SchemaType):
         super().__init__(*enums, **opts)
         self._enum_cls = enum_cls
 
-    def process_bind_param(self, value, dialect):
+    def process_bind_param(self, value: Optional[Any], dialect):
         return value.value if value else None
 
-    def process_result_value(self, value: str, dialect):
+    def process_result_value(self, value: Optional[Any], dialect):
         return self._enum_cls(value) if value else None
 
     def copy(self):
@@ -576,7 +575,8 @@ ItemType = TypeVar('ItemType', bound=graphene.ObjectType)
 async def simple_db_mutate(
     result_cls: Type[ResultType],
     graph_ctx: GraphQueryContext,
-    mutation_query: sa.sql.Update | sa.sql.Insert | Callable[[], sa.sql.Update | sa.sql.Insert],
+    mutation_query: sa.sql.Update | sa.sql.Insert | sa.sql.Delete |
+                    Callable[[], sa.sql.Update | sa.sql.Insert | sa.sql.Delete],
     *,
     pre_func: Callable[[SAConnection], Awaitable[None]] | None = None,
     post_func: Callable[[SAConnection, Result], Awaitable[None]] | None = None,
@@ -617,7 +617,8 @@ async def simple_db_mutate(
 async def simple_db_mutate_returning_item(
     result_cls: Type[ResultType],
     graph_ctx: GraphQueryContext,
-    mutation_query: sa.sql.Update | sa.sql.Insert | Callable[[], sa.sql.Update | sa.sql.Insert],
+    mutation_query: sa.sql.Update | sa.sql.Insert | sa.sql.Delete |
+                    Callable[[], sa.sql.Update | sa.sql.Insert | sa.sql.Delete],
     *,
     item_cls: Type[ItemType],
     pre_func: Callable[[SAConnection], Awaitable[None]] | None = None,
