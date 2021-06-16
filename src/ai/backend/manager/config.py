@@ -41,7 +41,7 @@ Alias keys are also URL-quoted in the same way.
  + ''  # ConfigScoeps.GLOBAL
    + config
      + system
-       - timezone: "UTC"   # pytz-compatible timezone names (e.g., "Asia/Seoul")
+       - timezone: "UTC"  # pytz-compatible timezone names (e.g., "Asia/Seoul")
      + api
        - allow-origins: "*"
        + resources
@@ -57,7 +57,7 @@ Alias keys are also URL-quoted in the same way.
            - username: {username}
            - password: {password}
            - type: "docker" | "harbor" | "harbor2"
-           - project: "project1-name,porject2-name,..."  # harbor only
+           - project: "project1-name,project2-name,..."  # harbor only
            - ssl-verify: "yes" | "no"
          ...
      + redis
@@ -72,15 +72,28 @@ Alias keys are also URL-quoted in the same way.
            - threshold: "10m"
          + "utilization"
            + resource-thresholds
-             + "cpu"
-               - average: 30   # in percent
-               - window: "1m"  # average for duration
-             + "cuda.mem"
-               - average: 15   # in percent
-               - window: "1m"  # average for duration
+             + "cpu_util"
+               - average: 30  # in percent
+             + "mem"
+               - average: 30  # in percent
+             + "cuda_util"
+               - average: 30  # in percent  # CUDA core utilization
+             + "cuda_mem"
+               - average: 30  # in percent
                # NOTE: To use "cuda.mem" criteria, user programs must use
                #       an incremental allocation strategy for CUDA memory.
-           - initial-grace_period: "30s"
+           - thresholds-check-operator: "and"
+             # "and" (default, so any other words except the "or"):
+             #     garbage collect a session only when ALL of the resources are
+             #     under-utilized not exceeding their thresholds.
+             #     ex) (cpu < threshold) AND (mem < threshold) AND ...
+             # "or":
+             #     garbage collect a session when ANY of the resources is
+             #     under-utilized not exceeding their thresholds.
+             #     ex) (cpu < threshold) OR (mem < threshold) OR ...
+           - time-window: "12h"  # time window to average utilization
+                                 # a session will not be terminated until this time
+           - initial-grace-period: "5m" # time to allow to be idle for first
      + resource_slots
        - {"cuda.device"}: {"count"}
        - {"cuda.mem"}: {"bytes"}
