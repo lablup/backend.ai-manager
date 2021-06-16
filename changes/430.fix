@@ -1,0 +1,1 @@
+Fix a regression that destroying a cluster session generates duplicate session termination events
