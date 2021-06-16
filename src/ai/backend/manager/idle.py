@@ -70,6 +70,11 @@ class AppStreamingStatus(enum.Enum):
     HAS_ACTIVE_CONNECTIONS = 1
 
 
+class Operator(enum.Enum):
+    AND = 'and'
+    OR = 'or'
+
+
 class BaseIdleChecker(aobject, metaclass=ABCMeta):
 
     name: ClassVar[str] = "base"
@@ -335,7 +340,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         {
             t.Key("time-window", default="10m"): tx.TimeDuration(),
             t.Key("initial-grace-period", default="5m"): tx.TimeDuration(),
-            t.Key("thresholds-check-operator"): t.Enum('and', 'or'),
+            t.Key("thresholds-check-operator", default=Operator.AND): tx.Enum(Operator),
             t.Key("resource-thresholds"): t.Dict(
                 {
                     t.Key("cpu_util", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
@@ -513,7 +518,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
         if len(sufficiently_utilized) < 1:
             check_result = True
-        elif self.thresholds_check_operator.lower() == "or":
+        elif self.thresholds_check_operator == Operator.OR:
             check_result = all(sufficiently_utilized.values())
         else:  # "and" operation is the default
             check_result = any(sufficiently_utilized.values())
