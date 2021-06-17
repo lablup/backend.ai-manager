@@ -113,7 +113,7 @@ class Domain(graphene.ObjectType):
         *,
         is_active: bool = None,
     ) -> Sequence[Domain]:
-        async with ctx.db.begin() as conn:
+        async with ctx.db.begin_readonly() as conn:
             query = sa.select([domains]).select_from(domains)
             if is_active is not None:
                 query = query.where(domains.c.is_active == is_active)
@@ -130,7 +130,7 @@ class Domain(graphene.ObjectType):
         *,
         is_active: bool = None
     ) -> Sequence[Optional[Domain]]:
-        async with ctx.db.begin() as conn:
+        async with ctx.db.begin_readonly() as conn:
             query = (
                 sa.select([domains])
                 .select_from(domains)
@@ -197,13 +197,9 @@ class CreateDomain(graphene.Mutation):
             'integration_id': props.integration_id,
         }
         insert_query = (
-            domains.insert()
-            .values(data)
+            sa.insert(domains).values(data)
         )
-        item_query = domains.select().where(domains.c.name == name)
-        return await simple_db_mutate_returning_item(
-            cls, ctx, insert_query,
-            item_query=item_query, item_cls=Domain)
+        return await simple_db_mutate_returning_item(cls, ctx, insert_query, item_cls=Domain)
 
 
 class ModifyDomain(graphene.Mutation):
@@ -239,17 +235,9 @@ class ModifyDomain(graphene.Mutation):
         if 'name' in data and _rx_slug.search(data['name']) is None:
             raise ValueError('invalid name format. slug format required.')
         update_query = (
-            domains.update()
-            .values(data)
-            .where(domains.c.name == name)
+            sa.update(domains).values(data).where(domains.c.name == name)
         )
-        # The name may have changed if set.
-        if 'name' in data:
-            name = data['name']
-        item_query = domains.select().where(domains.c.name == name)
-        return await simple_db_mutate_returning_item(
-            cls, ctx, update_query,
-            item_query=item_query, item_cls=Domain)
+        return await simple_db_mutate_returning_item(cls, ctx, update_query, item_cls=Domain)
 
 
 class DeleteDomain(graphene.Mutation):
@@ -267,12 +255,12 @@ class DeleteDomain(graphene.Mutation):
     @classmethod
     async def mutate(cls, root, info: graphene.ResolveInfo, name: str) -> DeleteDomain:
         ctx: GraphQueryContext = info.context
-        query = (
-            domains.update()
+        update_query = (
+            sa.update(domains)
             .values(is_active=False)
             .where(domains.c.name == name)
         )
-        return await simple_db_mutate(cls, ctx, query)
+        return await simple_db_mutate(cls, ctx, update_query)
 
 
 class PurgeDomain(graphene.Mutation):
@@ -294,27 +282,29 @@ class PurgeDomain(graphene.Mutation):
     async def mutate(cls, root, info: graphene.ResolveInfo, name: str) -> PurgeDomain:
         from . import users, groups
         ctx: GraphQueryContext = info.context
-        async with ctx.db.begin() as conn:
+
+        async def _pre_func(conn: SAConnection) -> None:
             if await cls.domain_has_active_kernels(conn, name):
-                raise RuntimeError('Domain has some active kernels. Terminate them first.')
+                raise RuntimeError("Domain has some active kernels. Terminate them first.")
             query = (
                 sa.select([sa.func.count()])
                 .where(users.c.domain_name == name)
             )
             user_count = await conn.scalar(query)
             if user_count > 0:
-                raise RuntimeError('There are users bound to the domain. Remove users first.')
+                raise RuntimeError("There are users bound to the domain. Remove users first.")
             query = (
                 sa.select([sa.func.count()])
                 .where(groups.c.domain_name == name)
             )
             group_count = await conn.scalar(query)
             if group_count > 0:
-                raise RuntimeError('There are groups bound to the domain. Remove groups first.')
+                raise RuntimeError("There are groups bound to the domain. Remove groups first.")
 
             await cls.delete_kernels(conn, name)
-        query = domains.delete().where(domains.c.name == name)
-        return await simple_db_mutate(cls, ctx, query)
+
+        delete_query = (sa.delete(domains).where(domains.c.name == name))
+        return await simple_db_mutate(cls, ctx, delete_query, pre_func=_pre_func)
 
     @classmethod
     async def delete_kernels(
@@ -331,13 +321,13 @@ class PurgeDomain(graphene.Mutation):
         :return: number of deleted rows
         """
         from . import kernels
-        query = (
-            kernels.delete()
+        delete_query = (
+            sa.delete(kernels)
             .where(kernels.c.domain_name == domain_name)
         )
-        result = await conn.execute(query)
+        result = await conn.execute(delete_query)
         if result.rowcount > 0:
-            log.info('deleted {0} domain\'s kernels ({1})', result.rowcount, domain_name)
+            log.info("deleted {0} domain\"s kernels ({1})", result.rowcount, domain_name)
         return result.rowcount
 
     @classmethod
@@ -375,9 +365,11 @@ async def query_domain_dotfiles(
     conn: SAConnection,
     name: str,
 ) -> Tuple[Union[List[DomainDotfile], None], Union[int, None]]:
-    query = (sa.select([domains.c.dotfiles])
-               .select_from(domains)
-               .where(domains.c.name == name))
+    query = (
+        sa.select([domains.c.dotfiles])
+        .select_from(domains)
+        .where(domains.c.name == name)
+    )
     packed_dotfile = await conn.scalar(query)
     if packed_dotfile is None:
         return None, None

@@ -60,6 +60,7 @@ from ai.backend.common.events import (
     DoSyncKernelLogsEvent,
     DoSyncKernelStatsEvent,
     DoTerminateSessionEvent,
+    KernelCancelledEvent,
     KernelCreatingEvent,
     KernelPreparingEvent,
     KernelPullingEvent,
@@ -101,6 +102,7 @@ from ..models import (
     DEAD_KERNEL_STATUSES,
 )
 from ..models.kernel import match_session_ids
+from ..models.utils import execute_with_retry
 from .exceptions import (
     InvalidAPIParameters,
     GenericNotFound,
@@ -226,17 +228,21 @@ overwritten_param_check = t.Dict({
     t.Key('session_name'): t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
     t.Key('image', default=None): t.Null | t.String,
     tx.AliasedKey(['session_type', 'sess_type']): tx.Enum(SessionTypes),
-    t.Key('group', default='default'): t.String,
-    t.Key('domain', default='default'): t.String,
-    t.Key('config', default=dict): t.Mapping(t.String, t.Any),
+    t.Key('group', default=None): t.Null | t.String,
+    t.Key('domain', default=None): t.Null | t.String,
+    t.Key('config', default=None): t.Null | t.Mapping(t.String, t.Any),
     t.Key('tag', default=None): t.Null | t.String,
     t.Key('enqueue_only', default=False): t.ToBool,
     t.Key('max_wait_seconds', default=0): t.Int[0:],
     t.Key('reuse', default=True): t.ToBool,
     t.Key('startup_command', default=None): t.Null | t.String,
     t.Key('bootstrap_script', default=None): t.Null | t.String,
-    t.Key('owner_access_key', default=None): t.Null | t.String
-})
+    t.Key('owner_access_key', default=None): t.Null | t.String,
+    tx.AliasedKey(['scaling_group', 'scalingGroup'], default=None): t.Null | t.String,
+    tx.AliasedKey(['cluster_size', 'clusterSize'], default=None): t.Null | t.Int[1:],
+    tx.AliasedKey(['cluster_mode', 'clusterMode'], default='single-node'): tx.Enum(ClusterMode),
+    tx.AliasedKey(['starts_at', 'startsAt'], default=None): t.Null | t.String,
+}).allow_extra('*')
 
 
 def sub(d, old, new):
@@ -252,7 +258,9 @@ def drop(d, dropval):
     newd = {}
     for k, v in d.items():
         if isinstance(v, Mapping) or isinstance(v, dict):
-            newd[k] = drop(v, dropval)
+            newval = drop(v, dropval)
+            if len(newval.keys()) > 0:  # exclude empty dict always
+                newd[k] = newval
         elif v != dropval:
             newd[k] = v
     return newd
@@ -364,7 +372,7 @@ async def _query_userinfo(
     return owner_uuid, group_id, resource_policy
 
 
-async def _create(request: web.Request, params: Any, db) -> web.Response:
+async def _create(request: web.Request, params: Any) -> web.Response:
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
     scopes_param = {
@@ -405,7 +413,7 @@ async def _create(request: web.Request, params: Any, db) -> web.Response:
     try:
         requested_image_ref = \
             await ImageRef.resolve_alias(params['image'], root_ctx.shared_config.etcd)
-        async with db.begin() as conn:
+        async with root_ctx.db.begin() as conn:
             query = (sa.select([domains.c.allowed_docker_registries])
                        .select_from(domains)
                        .where(domains.c.name == params['domain']))
@@ -462,7 +470,7 @@ async def _create(request: web.Request, params: Any, db) -> web.Response:
     session_creation_tracker = app_ctx.session_creation_tracker
     session_creation_tracker[session_creation_id] = start_event
 
-    async with db.begin() as conn:
+    async with root_ctx.db.begin_readonly() as conn:
         owner_uuid, group_id, resource_policy = await _query_userinfo(request, params, conn)
 
         # Use keypair bootstrap_script if it is not delivered as a parameter
@@ -518,7 +526,7 @@ async def _create(request: web.Request, params: Any, db) -> web.Response:
                 resp['status'] = 'TIMEOUT'
             else:
                 await asyncio.sleep(0.5)
-                async with root_ctx.db.begin() as conn:
+                async with root_ctx.db.begin_readonly() as conn:
                     query = (
                         sa.select([
                             kernels.c.status,
@@ -575,10 +583,12 @@ async def _create(request: web.Request, params: Any, db) -> web.Response:
         tx.AliasedKey(['image', 'lang'], default=undefined): UndefChecker | t.Null | t.String,
         tx.AliasedKey(['type', 'sessionType'], default='interactive') >> 'session_type':
             tx.Enum(SessionTypes),
-        tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
-        tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
+        tx.AliasedKey(['group', 'groupName', 'group_name'], default=undefined):
+            UndefChecker | t.Null | t.String,
+        tx.AliasedKey(['domain', 'domainName', 'domain_name'], default=undefined):
+            UndefChecker | t.Null | t.String,
         tx.AliasedKey(['cluster_size', 'clusterSize'], default=1):
-            t.ToInt[1:],             # new in APIv6
+            t.ToInt[1:],           # new in APIv6
         tx.AliasedKey(['cluster_mode', 'clusterMode'], default='single-node'):
             tx.Enum(ClusterMode),  # new in APIv6
         t.Key('config', default=dict): t.Mapping(t.String, t.Any),
@@ -595,6 +605,8 @@ async def _create(request: web.Request, params: Any, db) -> web.Response:
     }
 ), loads=_json_loads)
 async def create_from_template(request: web.Request, params: Any) -> web.Response:
+    # TODO: we need to refactor session_template model to load the template configs
+    #       by one batch. Currently, we need to set every template configs one by one.
     root_ctx: RootContext = request.app['_root.context']
 
     if params['image'] is None and params['template_id'] is None:
@@ -614,22 +626,38 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
                                    extra_data=e.as_dict())
     async with root_ctx.db.begin() as conn:
         query = (
-                    sa.select([session_templates.c.template])
-                      .select_from(session_templates)
-                      .where((session_templates.c.id == params['template_id']) &
-                                session_templates.c.is_active)
-                )
-        template = await conn.scalar(query)
+            sa.select([session_templates])
+            .select_from(session_templates)
+            .where((session_templates.c.id == params['template_id']) &
+                   session_templates.c.is_active)
+        )
+        result = await conn.execute(query)
+        template_info = result.fetchone()
+        template = template_info['template']
         if not template:
             raise TaskTemplateNotFound
 
-    template = json.loads(template)
+        group_name = None
+        if template_info['domain_name'] and template_info['group_id']:
+            query = (
+                sa.select([groups.c.name])
+                .select_from(groups)
+                .where((groups.c.domain_name == template_info['domain_name']) &
+                       (groups.c.id == template_info['group_id']))
+            )
+            group_name = await conn.scalar(query)
+
+    if isinstance(template, str):
+        template = json.loads(template)
     log.debug('Template: {0}', template)
 
     param_from_template = {
         'image': template['spec']['kernel']['image'],
     }
-
+    if 'domain_name' in template_info:
+        param_from_template['domain'] = template_info['domain_name']
+    if group_name:
+        param_from_template['group'] = group_name
     if template['spec']['session_type'] == 'interactive':
         param_from_template['session_type'] = SessionTypes.INTERACTIVE
     elif template['spec']['session_type'] == 'batch':
@@ -648,6 +676,8 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
             param_from_template['startup_command'] = startup
 
     config_from_template: MutableMapping[Any, Any] = {}
+    if scaling_group := template['spec'].get('scaling_group'):  # noqa
+        config_from_template['scaling_group'] = scaling_group
     if mounts := template['spec'].get('mounts'):  # noqa
         config_from_template['mounts'] = list(mounts.keys())
         config_from_template['mount_map'] = {
@@ -668,9 +698,10 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
 
     log.debug('Override config: {0}', override_config)
     log.debug('Override params: {0}', override_params)
-    config_from_template.update(override_config)
-    param_from_template.update(override_params)
-
+    if override_config:
+        config_from_template.update(override_config)
+    if override_params:
+        param_from_template.update(override_params)
     try:
         params = overwritten_param_check.check(param_from_template)
     except RuntimeError as e1:
@@ -708,7 +739,7 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
         bootstrap += '\n'
         bootstrap += cmd_builder
         params['bootstrap_script'] = base64.b64encode(bootstrap.encode()).decode()
-    return await _create(request, params, root_ctx.db)
+    return await _create(request, params)
 
 
 @server_status_required(ALL_ALLOWED)
@@ -740,8 +771,6 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
 async def create_from_params(request: web.Request, params: Any) -> web.Response:
     if params['session_name'] in ['from-template']:
         raise InvalidAPIParameters(f'Requested session ID {params["session_name"]} is reserved word')
-
-    root_ctx: RootContext = request.app['_root.context']
     api_version = request['api_version']
     if 6 <= api_version[0]:
         creation_config = creation_config_v5.check(params['config'])
@@ -756,8 +785,7 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
     else:
         raise InvalidAPIParameters('API version not supported')
     params['config'] = creation_config
-
-    return await _create(request, params, root_ctx.db)
+    return await _create(request, params)
 
 
 @server_status_required(ALL_ALLOWED)
@@ -1024,7 +1052,8 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
 async def handle_kernel_creation_lifecycle(
     app: web.Application,
     source: AgentId,
-    event: KernelPreparingEvent | KernelPullingEvent | KernelCreatingEvent | KernelStartedEvent,
+    event: (KernelPreparingEvent | KernelPullingEvent | KernelCreatingEvent |
+            KernelStartedEvent | KernelCancelledEvent),
 ) -> None:
     """
     Update the database and perform post_create_kernel() upon
@@ -1036,19 +1065,25 @@ async def handle_kernel_creation_lifecycle(
     generated when initiating the create_kernels() agent RPC call.
     """
     root_ctx: RootContext = app['_root.context']
-    ck_id = (event.creation_id, event.kernel_id)
+    # ck_id = (event.creation_id, event.kernel_id)
+    ck_id = event.kernel_id
     if ck_id not in root_ctx.registry.kernel_creation_tracker:
         return
     log.debug('handle_kernel_creation_lifecycle: ev:{} k:{}', event.name, event.kernel_id)
     if event.name == 'kernel_preparing':
-        await root_ctx.registry.set_kernel_status(event.kernel_id, KernelStatus.PREPARING, event.reason)
+        # State transition is done by the DoPrepareEvent handler inside the scheduler-distpacher object.
+        pass
     elif event.name == 'kernel_pulling':
         await root_ctx.registry.set_kernel_status(event.kernel_id, KernelStatus.PULLING, event.reason)
     elif event.name == 'kernel_creating':
         await root_ctx.registry.set_kernel_status(event.kernel_id, KernelStatus.PREPARING, event.reason)
     elif event.name == 'kernel_started':
         # post_create_kernel() coroutines are waiting for the creation tracker events to be set.
-        root_ctx.registry.kernel_creation_tracker[ck_id].set()
+        if tracker := root_ctx.registry.kernel_creation_tracker.get(ck_id):
+            tracker.set_result(None)
+    elif event.name == 'kernel_cancelled':
+        if tracker := root_ctx.registry.kernel_creation_tracker.get(ck_id):
+            tracker.cancel()
 
 
 async def handle_kernel_termination_lifecycle(
@@ -1079,9 +1114,11 @@ async def handle_session_creation_lifecycle(
         return
     log.debug('handle_session_creation_lifecycle: ev:{} s:{}', event.name, event.session_id)
     if event.name == 'session_started':
-        app_ctx.session_creation_tracker[event.creation_id].set()
+        if tracker := app_ctx.session_creation_tracker.get(event.creation_id):
+            tracker.set()
     elif event.name == 'session_cancelled':
-        app_ctx.session_creation_tracker[event.creation_id].set()
+        if tracker := app_ctx.session_creation_tracker.get(event.creation_id):
+            tracker.set()
 
 
 async def handle_session_termination_lifecycle(
@@ -1226,11 +1263,18 @@ async def handle_kernel_log(
             chunk = await redis.execute_with_retries(lambda: redis_conn.lpop(log_key))
             log_buffer.write(chunk)
         try:
-            async with root_ctx.db.begin() as conn:
-                query = (sa.update(kernels)
-                           .values(container_log=log_buffer.getvalue())
-                           .where(kernels.c.id == event.kernel_id))
-                await conn.execute(query)
+            log_data = log_buffer.getvalue()
+
+            async def _update_log() -> None:
+                async with root_ctx.db.begin() as conn:
+                    query = (
+                        sa.update(kernels)
+                        .values(container_log=log_data)
+                        .where(kernels.c.id == event.kernel_id)
+                    )
+                    await conn.execute(query)
+
+            await execute_with_retry(_update_log)
         finally:
             # Clear the log data from Redis when done.
             await redis.execute_with_retries(
@@ -1303,6 +1347,7 @@ async def stats_report_timer(root_ctx: RootContext):
 @check_api_params(
     t.Dict({
         t.Key('forced', default='false'): t.ToBool(),
+        t.Key('owner_access_key', default=None): t.Null | t.String,
     }))
 async def destroy(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
@@ -1867,15 +1912,26 @@ async def init(app: web.Application) -> None:
 
     # passive events
     evd = root_ctx.event_dispatcher
-    evd.subscribe(KernelPreparingEvent, app, handle_kernel_creation_lifecycle)
-    evd.subscribe(KernelPullingEvent, app, handle_kernel_creation_lifecycle)
-    evd.subscribe(KernelCreatingEvent, app, handle_kernel_creation_lifecycle)
-    evd.subscribe(KernelStartedEvent, app, handle_kernel_creation_lifecycle)
-    evd.subscribe(SessionStartedEvent, app, handle_session_creation_lifecycle)
-    evd.subscribe(SessionCancelledEvent, app, handle_session_creation_lifecycle)
-    evd.consume(KernelTerminatingEvent, app, handle_kernel_termination_lifecycle)
-    evd.consume(KernelTerminatedEvent, app, handle_kernel_termination_lifecycle)
-    evd.consume(SessionTerminatedEvent, app, handle_session_termination_lifecycle)
+    evd.subscribe(KernelPreparingEvent, app, handle_kernel_creation_lifecycle, name="api.session.kprep")
+    evd.subscribe(KernelPullingEvent, app, handle_kernel_creation_lifecycle, name="api.session.kpull")
+    evd.subscribe(KernelCreatingEvent, app, handle_kernel_creation_lifecycle, name="api.session.kcreat")
+    evd.subscribe(KernelStartedEvent, app, handle_kernel_creation_lifecycle, name="api.session.kstart")
+    evd.subscribe(KernelCancelledEvent, app, handle_kernel_creation_lifecycle, name="api.session.kstart")
+    evd.subscribe(
+        SessionStartedEvent, app, handle_session_creation_lifecycle, name="api.session.sstart",
+    )
+    evd.subscribe(
+        SessionCancelledEvent, app, handle_session_creation_lifecycle, name="api.session.scancel",
+    )
+    evd.consume(
+        KernelTerminatingEvent, app, handle_kernel_termination_lifecycle, name="api.session.kterming",
+    )
+    evd.consume(
+        KernelTerminatedEvent, app, handle_kernel_termination_lifecycle, name="api.session.kterm",
+    )
+    evd.consume(
+        SessionTerminatedEvent, app, handle_session_termination_lifecycle, name="api.session.sterm",
+    )
     evd.consume(SessionSuccessEvent, app, handle_batch_result)
     evd.consume(SessionFailureEvent, app, handle_batch_result)
     evd.consume(AgentStartedEvent, app, handle_agent_lifecycle)
@@ -1883,9 +1939,9 @@ async def init(app: web.Application) -> None:
     evd.consume(AgentHeartbeatEvent, app, handle_agent_heartbeat)
 
     # action-trigerring events
-    evd.consume(DoSyncKernelStatsEvent, app, handle_kernel_stat_sync)
-    evd.consume(DoSyncKernelLogsEvent, app, handle_kernel_log)
-    evd.consume(DoTerminateSessionEvent, app, handle_destroy_session)
+    evd.consume(DoSyncKernelStatsEvent, app, handle_kernel_stat_sync, name="api.session.synckstat")
+    evd.consume(DoSyncKernelLogsEvent, app, handle_kernel_log, name="api.session.syncklog")
+    evd.consume(DoTerminateSessionEvent, app, handle_destroy_session, name="api.session.doterm")
 
     app_ctx.pending_waits = set()
 
@@ -1903,19 +1959,13 @@ async def shutdown(app: web.Application) -> None:
     app_ctx.stats_task.cancel()
     await app_ctx.stats_task
 
-    checked_tasks = ('kernel_agent_event_collector', 'kernel_ddtimer')
-    for tname in checked_tasks:
-        t = app.get(tname, None)
-        if t and not t.done():
-            t.cancel()
-            await t
-
     for task in {*app_ctx.pending_waits}:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:

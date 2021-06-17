@@ -53,7 +53,7 @@ from ..models import (
     vfolder_permissions,
     vfolders,
 )
-from .auth import auth_required, superadmin_required
+from .auth import admin_required, auth_required, superadmin_required
 from .exceptions import (
     BackendAgentError,
     GenericForbidden,
@@ -1484,6 +1484,162 @@ async def delete_invitation(request: web.Request, params: Any) -> web.Response:
     return web.json_response({})
 
 
+@atomic
+@admin_required
+@server_status_required(ALL_ALLOWED)
+@check_api_params(
+    t.Dict({
+        t.Key('permission', default='rw'): VFolderPermissionValidator,
+        t.Key('emails'): t.List(t.String),
+    })
+)
+async def share(request: web.Request, params: Any) -> web.Response:
+    """
+    Share a group folder to users with overriding permission.
+
+    This will create vfolder_permission(s) relation directly without
+    creating invitation(s). Only group-type vfolders are allowed to
+    be shared directly.
+    """
+    root_ctx: RootContext = request.app['_root.context']
+    access_key = request['keypair']['access_key']
+    folder_name = request.match_info['name']
+    log.info('VFOLDER.SHARE (ak:{}, vf:{}, perm:{}, users:{})',
+             access_key, folder_name, params['permission'], ','.join(params['emails']))
+    async with root_ctx.db.begin() as conn:
+        from ..models import association_groups_users as agus
+
+        # Get the group-type virtual folder.
+        query = (
+            sa.select([vfolders.c.id, vfolders.c.ownership_type, vfolders.c.group])
+            .select_from(vfolders)
+            .where(
+                (vfolders.c.ownership_type == VFolderOwnershipType.GROUP) &
+                (vfolders.c.name == folder_name)
+            )
+        )
+        result = await conn.execute(query)
+        vf_infos = result.fetchall()
+        if len(vf_infos) < 1:
+            raise VFolderNotFound('Only project folders are directly sharable.')
+        if len(vf_infos) > 1:
+            raise InternalServerError(f'Multiple project folders found: {folder_name}')
+        vf_info = vf_infos[0]
+
+        # Convert users' emails to uuids and check if user belong to the group of vfolder.
+        j = users.join(agus, users.c.uuid == agus.c.user_id)
+        query = (
+            sa.select([users.c.uuid, users.c.email])
+            .select_from(j)
+            .where(
+                (users.c.email.in_(params['emails'])) &
+                (users.c.email != request['user']['email']) &
+                (agus.c.group_id == vf_info['group'])
+            )
+        )
+        result = await conn.execute(query)
+        user_info = result.fetchall()
+        users_to_share = [u['uuid'] for u in user_info]
+        emails_to_share = [u['email'] for u in user_info]
+        if len(user_info) < 1:
+            raise GenericNotFound('No users to share.')
+        if len(user_info) < len(params['emails']):
+            users_not_in_vfolder_group = list(set(params['emails']) - set(emails_to_share))
+            raise GenericNotFound('Some user does not belong to folder\'s group: '
+                                  ','.join(users_not_in_vfolder_group))
+
+        # Do not share to users who have already been shared the folder.
+        query = (
+            sa.select([vfolder_permissions.c.user])
+            .select_from(vfolder_permissions)
+            .where(
+                (vfolder_permissions.c.user.in_(users_to_share)) &
+                (vfolder_permissions.c.vfolder == vf_info['id'])
+            )
+        )
+        result = await conn.execute(query)
+        users_not_to_share = [u.user for u in result.fetchall()]
+        users_to_share = list(set(users_to_share) - set(users_not_to_share))
+
+        # Create vfolder_permission(s).
+        for _user in users_to_share:
+            query = (sa.insert(vfolder_permissions, {
+                'permission': params['permission'],
+                'vfolder': vf_info['id'],
+                'user': _user,
+            }))
+            await conn.execute(query)
+        # Update existing vfolder_permission(s).
+        for _user in users_not_to_share:
+            query = (
+                sa.update(vfolder_permissions)
+                .values(permission=params['permission'])
+                .where(vfolder_permissions.c.vfolder == vf_info['id'])
+                .where(vfolder_permissions.c.user == _user)
+            )
+            await conn.execute(query)
+
+        return web.json_response({'shared_emails': emails_to_share}, status=201)
+
+
+@atomic
+@admin_required
+@server_status_required(ALL_ALLOWED)
+@check_api_params(
+    t.Dict({
+        t.Key('emails'): t.List(t.String),
+    })
+)
+async def unshare(request: web.Request, params: Any) -> web.Response:
+    """
+    Unshare a group folder from users.
+    """
+    root_ctx: RootContext = request.app['_root.context']
+    access_key = request['keypair']['access_key']
+    folder_name = request.match_info['name']
+    log.info('VFOLDER.UNSHARE (ak:{}, vf:{}, users:{})',
+             access_key, folder_name, ','.join(params['emails']))
+    async with root_ctx.db.begin() as conn:
+        # Get the group-type virtual folder.
+        query = (
+            sa.select([vfolders.c.id])
+            .select_from(vfolders)
+            .where(
+                (vfolders.c.ownership_type == VFolderOwnershipType.GROUP) &
+                (vfolders.c.name == folder_name)
+            )
+        )
+        result = await conn.execute(query)
+        vf_infos = result.fetchall()
+        if len(vf_infos) < 1:
+            raise VFolderNotFound('Only project folders are directly unsharable.')
+        if len(vf_infos) > 1:
+            raise InternalServerError(f'Multiple project folders found: {folder_name}')
+        vf_info = vf_infos[0]
+
+        # Convert users' emails to uuids.
+        query = (
+            sa.select([users.c.uuid])
+            .select_from(users)
+            .where(users.c.email.in_(params['emails']))
+        )
+        result = await conn.execute(query)
+        users_to_unshare = [u['uuid'] for u in result.fetchall()]
+        if len(users_to_unshare) < 1:
+            raise GenericNotFound('No users to unshare.')
+
+        # Delete vfolder_permission(s).
+        query = (
+            sa.delete(vfolder_permissions)
+            .where(
+                (vfolder_permissions.c.vfolder == vf_info['id']) &
+                (vfolder_permissions.c.user.in_(users_to_unshare))
+            )
+        )
+        await conn.execute(query)
+        return web.json_response({'unshared_emails': params['emails']}, status=200)
+
+
 @auth_required
 @server_status_required(ALL_ALLOWED)
 async def delete(request: web.Request) -> web.Response:
@@ -1783,15 +1939,14 @@ async def list_shared_vfolders(request: web.Request, params: Any) -> web.Respons
     target_vfid = params["vfolder_id"]
     log.info("VFOLDER.LIST_SHARED_VFOLDERS (ak:{})", access_key)
     async with root_ctx.db.begin() as conn:
-        j = vfolder_permissions.join(
-            vfolders, vfolders.c.id == vfolder_permissions.c.vfolder
-        ).join(users, users.c.uuid == vfolder_permissions.c.user)
+        j = (
+            vfolder_permissions
+            .join(vfolders, vfolders.c.id == vfolder_permissions.c.vfolder)
+            .join(users, users.c.uuid == vfolder_permissions.c.user)
+        )
         query = (
-            sa.select(
-                [vfolder_permissions, vfolders.c.id, vfolders.c.name, users.c.email]
-            )
+            sa.select([vfolder_permissions, vfolders.c.id, vfolders.c.name, users.c.email])
             .select_from(j)
-            .where((vfolders.c.user == request["user"]["uuid"]))
         )
         if target_vfid is not None:
             query = query.where(vfolders.c.id == target_vfid)
@@ -2302,48 +2457,44 @@ def create_app(default_cors_options):
     app.on_shutdown.append(shutdown)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     add_route = app.router.add_route
-    root_resource = cors.add(app.router.add_resource(r""))
-    cors.add(root_resource.add_route("POST", create))
-    cors.add(root_resource.add_route("GET", list_folders))
-    cors.add(root_resource.add_route("DELETE", delete_by_id))
-    vfolder_resource = cors.add(app.router.add_resource(r"/{name}"))
-    cors.add(vfolder_resource.add_route("GET", get_info))
-    cors.add(vfolder_resource.add_route("DELETE", delete))
-    cors.add(add_route("GET", r"/_/hosts", list_hosts))
-    cors.add(add_route("GET", r"/_/all-hosts", list_all_hosts))
-    cors.add(add_route("GET", r"/_/allowed-types", list_allowed_types))
-    cors.add(add_route("GET", r"/_/all_hosts", list_all_hosts))  # legacy underbar
-    cors.add(
-        add_route("GET", r"/_/allowed_types", list_allowed_types)
-    )  # legacy underbar
-    cors.add(add_route("GET", r"/_/perf-metric", get_volume_perf_metric))
-    cors.add(add_route("POST", r"/{name}/rename", rename_vfolder))
-    cors.add(add_route("POST", r"/{name}/update-options", update_vfolder_options))
-    cors.add(add_route("POST", r"/{name}/mkdir", mkdir))
-    cors.add(add_route("POST", r"/{name}/request-upload", create_upload_session))
-    cors.add(add_route("POST", r"/{name}/request-download", create_download_session))
-    cors.add(add_route("POST", r"/{name}/rename-file", rename_file))
-    cors.add(add_route("DELETE", r"/{name}/delete-files", delete_files))
-    cors.add(add_route("POST", r"/{name}/rename_file", rename_file))  # legacy underbar
-    cors.add(
-        add_route("DELETE", r"/{name}/delete_files", delete_files)
-    )  # legacy underbar
-    cors.add(add_route("GET", r"/{name}/files", list_files))
-    cors.add(add_route("POST", r"/{name}/invite", invite))
-    cors.add(add_route("POST", r"/{name}/leave", leave))
-    cors.add(add_route("POST", r"/{name}/clone", clone))
-    cors.add(add_route("GET", r"/invitations/list-sent", list_sent_invitations))
-    cors.add(
-        add_route("GET", r"/invitations/list_sent", list_sent_invitations)
-    )  # legacy underbar
-    cors.add(add_route("POST", r"/invitations/update/{inv_id}", update_invitation))
-    cors.add(add_route("GET", r"/invitations/list", invitations))
-    cors.add(add_route("POST", r"/invitations/accept", accept_invitation))
-    cors.add(add_route("DELETE", r"/invitations/delete", delete_invitation))
-    cors.add(add_route("GET", r"/_/shared", list_shared_vfolders))
-    cors.add(add_route("POST", r"/_/shared", update_shared_vfolder))
-    cors.add(add_route("GET", r"/_/fstab", get_fstab_contents))
-    cors.add(add_route("GET", r"/_/mounts", list_mounts))
-    cors.add(add_route("POST", r"/_/mounts", mount_host))
-    cors.add(add_route("DELETE", r"/_/mounts", umount_host))
+    root_resource = cors.add(app.router.add_resource(r''))
+    cors.add(root_resource.add_route('POST', create))
+    cors.add(root_resource.add_route('GET',  list_folders))
+    cors.add(root_resource.add_route('DELETE',  delete_by_id))
+    vfolder_resource = cors.add(app.router.add_resource(r'/{name}'))
+    cors.add(vfolder_resource.add_route('GET',    get_info))
+    cors.add(vfolder_resource.add_route('DELETE', delete))
+    cors.add(add_route('GET',    r'/_/hosts', list_hosts))
+    cors.add(add_route('GET',    r'/_/all-hosts', list_all_hosts))
+    cors.add(add_route('GET',    r'/_/allowed-types', list_allowed_types))
+    cors.add(add_route('GET',    r'/_/all_hosts', list_all_hosts))          # legacy underbar
+    cors.add(add_route('GET',    r'/_/allowed_types', list_allowed_types))  # legacy underbar
+    cors.add(add_route('GET',    r'/_/perf-metric', get_volume_perf_metric))
+    cors.add(add_route('POST',   r'/{name}/rename', rename_vfolder))
+    cors.add(add_route('POST',   r'/{name}/update-options', update_vfolder_options))
+    cors.add(add_route('POST',   r'/{name}/mkdir', mkdir))
+    cors.add(add_route('POST',   r'/{name}/request-upload', create_upload_session))
+    cors.add(add_route('POST',   r'/{name}/request-download', create_download_session))
+    cors.add(add_route('POST',   r'/{name}/rename-file', rename_file))
+    cors.add(add_route('DELETE', r'/{name}/delete-files', delete_files))
+    cors.add(add_route('POST',   r'/{name}/rename_file', rename_file))    # legacy underbar
+    cors.add(add_route('DELETE', r'/{name}/delete_files', delete_files))  # legacy underbar
+    cors.add(add_route('GET',    r'/{name}/files', list_files))
+    cors.add(add_route('POST',   r'/{name}/invite', invite))
+    cors.add(add_route('POST',   r'/{name}/leave', leave))
+    cors.add(add_route('POST',   r'/{name}/share', share))
+    cors.add(add_route('DELETE', r'/{name}/unshare', unshare))
+    cors.add(add_route('POST',   r'/{name}/clone', clone))
+    cors.add(add_route('GET',    r'/invitations/list-sent', list_sent_invitations))
+    cors.add(add_route('GET',    r'/invitations/list_sent', list_sent_invitations))  # legacy underbar
+    cors.add(add_route('POST',   r'/invitations/update/{inv_id}', update_invitation))
+    cors.add(add_route('GET',    r'/invitations/list', invitations))
+    cors.add(add_route('POST',   r'/invitations/accept', accept_invitation))
+    cors.add(add_route('DELETE', r'/invitations/delete', delete_invitation))
+    cors.add(add_route('GET',    r'/_/shared', list_shared_vfolders))
+    cors.add(add_route('POST',   r'/_/shared', update_shared_vfolder))
+    cors.add(add_route('GET',    r'/_/fstab', get_fstab_contents))
+    cors.add(add_route('GET',    r'/_/mounts', list_mounts))
+    cors.add(add_route('POST',   r'/_/mounts', mount_host))
+    cors.add(add_route('DELETE', r'/_/mounts', umount_host))
     return app, []

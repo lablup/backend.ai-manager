@@ -7,6 +7,7 @@ import functools
 import logging
 from typing import (
     Any,
+    Awaitable,
     Callable,
     ClassVar,
     Dict,
@@ -33,6 +34,7 @@ from graphene.types import Scalar
 from graphql.language import ast
 from graphene.types.scalars import MIN_INT, MAX_INT
 import sqlalchemy as sa
+from sqlalchemy.engine.result import Result
 from sqlalchemy.engine.row import Row
 from sqlalchemy.ext.asyncio import (
     AsyncConnection as SAConnection,
@@ -52,6 +54,8 @@ from ai.backend.common.types import (
     ResourceSlot,
     SessionId,
 )
+
+from ai.backend.manager.models.utils import execute_with_retry
 
 from .. import models
 from ..api.exceptions import (
@@ -97,6 +101,7 @@ class EnumType(TypeDecorator, SchemaType):
     """
 
     impl = ENUM
+    cache_ok = True
 
     def __init__(self, enum_cls, **opts):
         assert issubclass(enum_cls, enum.Enum)
@@ -130,6 +135,7 @@ class EnumValueType(TypeDecorator, SchemaType):
     """
 
     impl = ENUM
+    cache_ok = True
 
     def __init__(self, enum_cls, **opts):
         assert issubclass(enum_cls, enum.Enum)
@@ -160,6 +166,7 @@ class ResourceSlotColumn(TypeDecorator):
     """
 
     impl = JSONB
+    cache_ok = True
 
     def process_bind_param(self, value: Union[Mapping, ResourceSlot], dialect):
         if isinstance(value, Mapping) and not isinstance(value, ResourceSlot):
@@ -193,6 +200,7 @@ class GUID(TypeDecorator, Generic[UUID_SubType]):
     """
     impl = CHAR
     uuid_subtype_func: ClassVar[Callable[[Any], UUID_SubType]] = lambda v: v
+    cache_ok = True
 
     def load_dialect_impl(self, dialect):
         if dialect.name == 'postgresql':
@@ -568,44 +576,101 @@ ItemType = TypeVar('ItemType', bound=graphene.ObjectType)
 async def simple_db_mutate(
     result_cls: Type[ResultType],
     graph_ctx: GraphQueryContext,
-    mutation_query: sa.sql.Update | sa.sql.Insert,
+    mutation_query: sa.sql.Update | sa.sql.Insert | Callable[[], sa.sql.Update | sa.sql.Insert],
+    *,
+    pre_func: Callable[[SAConnection], Awaitable[None]] | None = None,
+    post_func: Callable[[SAConnection, Result], Awaitable[None]] | None = None,
 ) -> ResultType:
-    try:
-        result = await graph_ctx.db_conn.execute(mutation_query)
+    """
+    Performs a database mutation based on the given
+    :class:`sqlalchemy.sql.Update` or :class:`sqlalchemy.sql.Insert` query,
+    and return the wrapped result as the GraphQL object type given as **result_cls**.
+    **result_cls** should have two initialization arguments: success (bool)
+    and message (str).
+
+    See details about the arguments in :func:`simple_db_mutate_returning_item`.
+    """
+
+    async def _do_mutate() -> ResultType:
+        async with graph_ctx.db.begin() as conn:
+            if pre_func:
+                await pre_func(conn)
+            _query = mutation_query() if callable(mutation_query) else mutation_query
+            result = await conn.execute(_query)
+            if post_func:
+                await post_func(conn, result)
         if result.rowcount > 0:
-            return result_cls(True, 'success')
+            return result_cls(True, "success")
         else:
-            return result_cls(False, 'no matching record')
+            return result_cls(False, f"no matching {result_cls.__name__.lower()}")
+
+    try:
+        return await execute_with_retry(_do_mutate)
     except sa.exc.IntegrityError as e:
-        return result_cls(False, f'integrity error: {e}')
+        return result_cls(False, f"integrity error: {e}")
     except (asyncio.CancelledError, asyncio.TimeoutError):
         raise
     except Exception as e:
-        return result_cls(False, f'unexpected error: {e}')
+        return result_cls(False, f"unexpected error: {e}")
 
 
 async def simple_db_mutate_returning_item(
     result_cls: Type[ResultType],
     graph_ctx: GraphQueryContext,
-    mutation_query: sa.sql.Update | sa.sql.Insert,
+    mutation_query: sa.sql.Update | sa.sql.Insert | Callable[[], sa.sql.Update | sa.sql.Insert],
     *,
-    item_query: sa.sql.Select,
     item_cls: Type[ItemType],
+    pre_func: Callable[[SAConnection], Awaitable[None]] | None = None,
+    post_func: Callable[[SAConnection, Result], Awaitable[Row]] | None = None,
 ) -> ResultType:
+    """
+    Performs a database mutation based on the given
+    :class:`sqlalchemy.sql.Update` or :class:`sqlalchemy.sql.Insert` query,
+    and return the wrapped result as the GraphQL object type given as **result_cls**
+    and the inserted/updated row wrapped as its 3rd argument in **item_cls**.
+
+    If mutation_query uses external variable updated by pre_func, you should wrap the query
+    with lambda so that its parameters are re-evaluated when the transaction is retried.
+
+    :param result_cls: The GraphQL Object Type used to wrap the result.
+        It should have two initialization arguments: success (bool),
+        message (str), and the item (ItemType).
+    :param graph_ctx: The common context that provides the reference to the database engine
+        and other stuffs required to resolve the GraphQL query.
+    :param mutation_query: A SQLAlchemy query object.
+    :param item_cls: The GraphQL Object Type used to wrap the returned row from the mutation query.
+    :param pre_func: An extra function that is executed before the mutation query, where the caller
+        may perform additional database queries.
+    :param post_func: An extra function that is executed after the mutation query, where the caller
+        may perform additional database queries.  Note that it **MUST return the returned row
+        from the given mutation result**, because the result object could be fetched only one
+        time due to its cursor-like nature.
+    """
+
+    async def _do_mutate() -> ResultType:
+        async with graph_ctx.db.begin() as conn:
+            if pre_func:
+                await pre_func(conn)
+            _query = mutation_query() if callable(mutation_query) else mutation_query
+            _query = _query.returning(_query.table)
+            result = await conn.execute(_query)
+            if post_func:
+                row = await post_func(conn, result)
+            else:
+                row = result.first()
+            if result.rowcount > 0:
+                return result_cls(True, "success", item_cls.from_row(graph_ctx, row))
+            else:
+                return result_cls(False, f"no matching {result_cls.__name__.lower()}", None)
+
     try:
-        result = await graph_ctx.db_conn.execute(mutation_query)
-        if result.rowcount > 0:
-            result = await graph_ctx.db_conn.execute(item_query)
-            item = result.first()
-            return result_cls(True, 'success', item_cls.from_row(graph_ctx, item))
-        else:
-            return result_cls(False, 'no matching record', None)
+        return await execute_with_retry(_do_mutate)
     except sa.exc.IntegrityError as e:
-        return result_cls(False, f'integrity error: {e}', None)
+        return result_cls(False, f"integrity error: {e}", None)
     except (asyncio.CancelledError, asyncio.TimeoutError):
         raise
     except Exception as e:
-        return result_cls(False, f'unexpected error: {e}', None)
+        return result_cls(False, f"unexpected error: {e}", None)
 
 
 def set_if_set(src: object, target: MutableMapping[str, Any], name: str, *, clean_func=None) -> None:

@@ -196,8 +196,9 @@ class Agent(graphene.ObjectType):
         if raw_status is not None:
             status = AgentStatus[raw_status]
             query = query.where(agents.c.status == status)
-        result = await graph_ctx.db_conn.execute(query)
-        return result.scalar()
+        async with graph_ctx.db.begin_readonly() as conn:
+            result = await conn.execute(query)
+            return result.scalar()
 
     @classmethod
     async def load_slice(
@@ -227,10 +228,11 @@ class Agent(graphene.ObjectType):
         if raw_status is not None:
             status = AgentStatus[raw_status]
             query = query.where(agents.c.status == status)
-        return [
-            cls.from_row(graph_ctx, row)
-            async for row in (await graph_ctx.db_conn.stream(query))
-        ]
+        async with graph_ctx.db.begin_readonly() as conn:
+            return [
+                cls.from_row(graph_ctx, row)
+                async for row in (await conn.stream(query))
+            ]
 
     @classmethod
     async def load_all(
@@ -248,10 +250,11 @@ class Agent(graphene.ObjectType):
         if raw_status is not None:
             status = AgentStatus[raw_status]
             query = query.where(agents.c.status == status)
-        return [
-            cls.from_row(graph_ctx, row)
-            async for row in (await graph_ctx.db_conn.stream(query))
-        ]
+        async with graph_ctx.db.begin_readonly() as conn:
+            return [
+                cls.from_row(graph_ctx, row)
+                async for row in (await conn.stream(query))
+            ]
 
     @classmethod
     async def batch_load(
@@ -271,10 +274,11 @@ class Agent(graphene.ObjectType):
         if raw_status is not None:
             status = AgentStatus[raw_status]
             query = query.where(agents.c.status == status)
-        return await batch_result(
-            graph_ctx, graph_ctx.db_conn, query, cls,
-            agent_ids, lambda row: row['id'],
-        )
+        async with graph_ctx.db.begin_readonly() as conn:
+            return await batch_result(
+                graph_ctx, conn, query, cls,
+                agent_ids, lambda row: row['id'],
+            )
 
 
 class AgentList(graphene.ObjectType):

@@ -68,7 +68,7 @@ async def list_presets(request: web.Request) -> web.Response:
     log.info('LIST_PRESETS (ak:{})', request['keypair']['access_key'])
     root_ctx: RootContext = request.app['_root.context']
     await root_ctx.shared_config.get_resource_slots()
-    async with root_ctx.db.begin() as conn:
+    async with root_ctx.db.begin_readonly() as conn:
         query = (
             sa.select([resource_presets])
             .select_from(resource_presets)
@@ -124,7 +124,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
     log.info('CHECK_PRESETS (ak:{}, g:{}, sg:{})',
              request['keypair']['access_key'], params['group'], params['scaling_group'])
 
-    async with root_ctx.db.begin() as conn:
+    async with root_ctx.db.begin_readonly() as conn:
         # Check keypair resource limit.
         keypair_limits = ResourceSlot.from_policy(resource_policy, known_slot_types)
         keypair_occupied = await root_ctx.registry.get_keypair_occupancy(access_key, conn=conn)
@@ -293,7 +293,7 @@ async def recalculate_usage(request: web.Request) -> web.Response:
 
 async def get_container_stats_for_period(request: web.Request, start_date, end_date, group_ids=None):
     root_ctx: RootContext = request.app['_root.context']
-    async with root_ctx.db.begin() as conn:
+    async with root_ctx.db.begin_readonly(deferrable=True) as conn:
         j = (
             kernels
             .join(groups, groups.c.id == kernels.c.group_id)
