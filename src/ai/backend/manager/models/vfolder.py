@@ -353,18 +353,6 @@ async def query_accessible_vfolders(
         await _append_entries(query)
 
         # Scan vfolders shared with me.
-        j = (
-            vfolders.join(
-                vfolder_permissions,
-                vfolders.c.id == vfolder_permissions.c.vfolder,
-                isouter=True,
-            )
-            .join(
-                users,
-                vfolders.c.user == users.c.uuid,
-                isouter=True,
-            )
-        # Scan vfolders shared with me.
         j = vfolders.join(
             vfolder_permissions,
             vfolders.c.id == vfolder_permissions.c.vfolder,
