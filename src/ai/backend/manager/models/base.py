@@ -575,8 +575,8 @@ ItemType = TypeVar('ItemType', bound=graphene.ObjectType)
 async def simple_db_mutate(
     result_cls: Type[ResultType],
     graph_ctx: GraphQueryContext,
-    mutation_query: sa.sql.Update | sa.sql.Insert | sa.sql.Delete |
-                    Callable[[], sa.sql.Update | sa.sql.Insert | sa.sql.Delete],
+    mutation_query: sa.sql.Update | sa.sql.Insert | sa.sql.Delete
+                    | Callable[[], sa.sql.Update | sa.sql.Insert | sa.sql.Delete],
     *,
     pre_func: Callable[[SAConnection], Awaitable[None]] | None = None,
     post_func: Callable[[SAConnection, Result], Awaitable[None]] | None = None,
@@ -617,8 +617,8 @@ async def simple_db_mutate(
 async def simple_db_mutate_returning_item(
     result_cls: Type[ResultType],
     graph_ctx: GraphQueryContext,
-    mutation_query: sa.sql.Update | sa.sql.Insert | sa.sql.Delete |
-                    Callable[[], sa.sql.Update | sa.sql.Insert | sa.sql.Delete],
+    mutation_query: sa.sql.Update | sa.sql.Insert | sa.sql.Delete
+                    | Callable[[], sa.sql.Update | sa.sql.Insert | sa.sql.Delete],
     *,
     item_cls: Type[ItemType],
     pre_func: Callable[[SAConnection], Awaitable[None]] | None = None,
