@@ -16,6 +16,16 @@ Changes
 
 .. towncrier release notes start
 
+21.03.9 (2021-06-18)
+--------------------
+
+### Features
+* A new idle timeout checker to support utilization-based garbage collection of sessions. ([#432](https://github.com/lablup/backend.ai-manager/issues/432))
+
+### Fixes
+* Handle missing root context gracefully with explicit warning during initialization of the intrinsic error monitor plugin ([#439](https://github.com/lablup/backend.ai-manager/issues/439))
+
+
 21.03.8 (2021-06-14)
 --------------------
 
