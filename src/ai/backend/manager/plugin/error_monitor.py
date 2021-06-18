@@ -24,13 +24,23 @@ log = BraceStyleAdapter(logging.getLogger(__name__))
 class ErrorMonitor(AbstractErrorReporterPlugin):
 
     async def init(self, context: Any = None) -> None:
+        if context is None:
+            log.warning(
+                "manager.plugin.error_monitor is initialized without the root context. "
+                "The plugin is disabled."
+            )
+            self.enabled = False
+            return
+        else:
+            self.enabled = True
         root_ctx: RootContext = context['_root.context']  # type: ignore
         self.event_dispatcher = root_ctx.event_dispatcher
         self._evh = self.event_dispatcher.consume(AgentErrorEvent, None, self.handle_agent_error)
         self.db = root_ctx.db
 
     async def cleanup(self) -> None:
-        self.event_dispatcher.unconsume(self._evh)
+        if self.enabled:
+            self.event_dispatcher.unconsume(self._evh)
 
     async def update_plugin_config(self, plugin_config: Mapping[str, Any]) -> None:
         pass
@@ -43,6 +53,8 @@ class ErrorMonitor(AbstractErrorReporterPlugin):
         exc_instance: Exception = None,
         context: Mapping[str, Any] = None,
     ) -> None:
+        if not self.enabled:
+            return
         if exc_instance:
             tb = exc_instance.__traceback__
         else:
@@ -65,19 +77,23 @@ class ErrorMonitor(AbstractErrorReporterPlugin):
             user = None
         else:
             user = context['user']
+        message = ''.join(traceback.format_exception_only(exc_type, exc_instance)).strip()
 
         async with self.db.begin() as conn:
             query = error_logs.insert().values({
                 'severity': severity,
                 'source': 'manager',
                 'user': user,
-                'message': ''.join(traceback.format_exception_only(exc_type, exc_instance)).strip(),
+                'message': message,
                 'context_lang': 'python',
                 'context_env': context,
                 'traceback': ''.join(traceback.format_tb(tb)).strip()
             })
             await conn.execute(query)
-        log.debug('Manager log collected: {}', str(exc_instance))
+        log.debug(
+            "collected an error log [{}] \"{}\" from manager",
+            severity.name, message,
+        )
 
     async def handle_agent_error(
         self,
@@ -85,6 +101,8 @@ class ErrorMonitor(AbstractErrorReporterPlugin):
         source: AgentId,
         event: AgentErrorEvent,
     ) -> None:
+        if not self.enabled:
+            return
         async with self.db.begin() as conn:
             query = error_logs.insert().values({
                 'severity': event.severity,
@@ -97,6 +115,6 @@ class ErrorMonitor(AbstractErrorReporterPlugin):
             })
             await conn.execute(query)
         log.debug(
-            'collected AgentErrorEvent: [{}:{}] {}',
-            source, event.severity, event.message,
+            "collected an error log [{}] \"{}\" from agent:{}",
+            event.severity.name, event.message, source,
         )
