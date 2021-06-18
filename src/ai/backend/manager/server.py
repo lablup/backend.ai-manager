@@ -144,7 +144,6 @@ async def hello(request: web.Request) -> web.Response:
     """
     Returns the API version number.
     """
-    raise ZeroDivisionError("ooops")
     return web.json_response({
         'version': LATEST_API_VERSION,
         'manager': __version__,
