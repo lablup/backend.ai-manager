@@ -16,6 +16,18 @@ Changes
 
 .. towncrier release notes start
 
+20.09.19 (2021-06-18)
+---------------------
+
+### Features
+* Add an internal warning logs for excessive number of concurrent DB transactions ([#435](https://github.com/lablup/backend.ai-manager/issues/435))
+* Add a common session environment variable `BACKENDAI_SESSION_NAME` for improved prompts and user acquaintance of which container they use ([#443](https://github.com/lablup/backend.ai-manager/issues/443))
+
+### Fixes
+* Rewrite internal database connection and transaction management for GraphQL query and mutation processing, which improves overall stability and performance ([#436](https://github.com/lablup/backend.ai-manager/issues/436))
+* Handle missing root context gracefully with explicit warning during initialization of the intrinsic error monitor plugin ([#439](https://github.com/lablup/backend.ai-manager/issues/439))
+
+
 20.09.18 (2021-05-17)
 ---------------------
 
