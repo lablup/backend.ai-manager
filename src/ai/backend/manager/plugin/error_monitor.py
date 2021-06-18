@@ -77,19 +77,23 @@ class ErrorMonitor(AbstractErrorReporterPlugin):
             user = None
         else:
             user = context['user']
+        message = ''.join(traceback.format_exception_only(exc_type, exc_instance)).strip()
 
         async with self.db.begin() as conn:
             query = error_logs.insert().values({
                 'severity': severity,
                 'source': 'manager',
                 'user': user,
-                'message': ''.join(traceback.format_exception_only(exc_type, exc_instance)).strip(),
+                'message': message,
                 'context_lang': 'python',
                 'context_env': context,
                 'traceback': ''.join(traceback.format_tb(tb)).strip()
             })
             await conn.execute(query)
-        log.debug('collected an error log for: {}', str(exc_instance))
+        log.debug(
+            "collected an error log [{}] \"{}\" from manager",
+            severity.name, message,
+        )
 
     async def handle_agent_error(
         self,
@@ -111,6 +115,6 @@ class ErrorMonitor(AbstractErrorReporterPlugin):
             })
             await conn.execute(query)
         log.debug(
-            'collected AgentErrorEvent: [{}:{}] {}',
-            source, event.severity, event.message,
+            "collected an error log [{}] \"{}\" from agent:{}",
+            event.severity.name, event.message, source,
         )
