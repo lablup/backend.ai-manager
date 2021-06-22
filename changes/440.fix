@@ -1,0 +1,1 @@
+Fix the aioredlock redis error. The case of Redis server restart and inability for Manager to connect to Redis server.
