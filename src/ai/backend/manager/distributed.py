@@ -1,11 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import (
-    Callable,
-    Final,
-    TYPE_CHECKING,
-)
+from typing import TYPE_CHECKING, Callable, Final
 
 from aioredis import Redis
 from aioredlock import Aioredlock, LockError
@@ -41,16 +37,20 @@ class GlobalTimer:
         self.interval = interval
         self.initial_delay = initial_delay
 
-    async def generate_tick(self) -> None:  
+    async def generate_tick(self) -> None:
         try:
             await asyncio.sleep(self.initial_delay)
             while True:
                 try:
                     async with (
-                        await self._lock_manager.lock(self.lock_key, lock_timeout=self.interval)
+                        await self._lock_manager.lock(
+                            self.lock_key, lock_timeout=self.interval
+                        )
                     ) as lock:
                         await self._event_producer.produce_event(self._event_factory())
-                        await self._lock_manager.extend(lock, lock_timeout=self.interval)
+                        await self._lock_manager.extend(
+                            lock, lock_timeout=self.interval
+                        )
                         await asyncio.sleep(self.interval)
                 except AioredlockError:
                     await self._lock_manager.destroy()
