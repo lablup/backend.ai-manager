@@ -53,6 +53,7 @@ class GlobalTimer:
                         )
                         await asyncio.sleep(self.interval)
                 except AioredlockError:
+                    await asyncio.sleep(self.interval)
                     await self._lock_manager.destroy()
                 except LockError:
                     pass
