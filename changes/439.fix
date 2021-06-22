@@ -1,0 +1,1 @@
+Handle missing root context gracefully with explicit warning during initialization of the intrinsic error monitor plugin
