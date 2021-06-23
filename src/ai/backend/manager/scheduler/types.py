@@ -226,8 +226,16 @@ class PendingSession:
             kernels.c.internal_data,
             kernels.c.resource_opts,
             kernels.c.environ,
-            kernels.c.mounts,
-            kernels.c.mount_map,
+            # kernels.c.mounts,
+            # kernels.c.mount_map,
+            (
+                vfolder_attachment.c.vfolder,
+                vfolder_attachment.c.kernel,
+                vfolder_attachment.c.host,
+                vfolder_attachment.c.permission,
+                vfolder_attachment.c.mountspec,
+            ),
+            vfolder_attachment.c.mount_map,
             kernels.c.bootstrap_script,
             kernels.c.startup_command,
             kernels.c.preopen_ports,
@@ -235,14 +243,19 @@ class PendingSession:
 
     @classmethod
     def base_query(cls) -> Select:
+        j = sa.join(
+                kernels, keypairs,
+                keypairs.c.access_key == kernels.c.access_key
+            ).join(
+                kernels, vfolder_attachment,
+                vfolder_attachment.c.kernel == kernels.c.id,
+                isouter=True,
+        )
         return (
             sa.select(
                 list(cls.db_cols() | KernelInfo.db_cols())
             )
-            .select_from(sa.join(
-                kernels, keypairs,
-                keypairs.c.access_key == kernels.c.access_key
-            ))
+            .select_from(j)
             .order_by(kernels.c.created_at)
         )
 

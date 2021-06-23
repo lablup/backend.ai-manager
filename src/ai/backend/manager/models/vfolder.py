@@ -17,6 +17,7 @@ import graphene
 import sqlalchemy as sa
 import trafaret as t
 from graphene.types.datetime import DateTime as GQLDateTime
+from sqlalchemy.dialects import postgresql as pgsql
 from sqlalchemy.engine.row import Row
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
@@ -172,6 +173,15 @@ vfolder_attachment = sa.Table(
         sa.ForeignKey("kernels.id", onupdate="CASCADE", ondelete="CASCADE"),
         nullable=False,
     ),
+    sa.Column("host", sa.String(length=128), nullable=False,),
+    sa.Column(
+        "permission",
+        EnumValueType(VFolderPermission),
+        default=VFolderPermission.READ_WRITE,
+        nullable=False
+    ),
+    sa.Column("mountspec", sa.String(length=512), nullable=False,),
+    sa.Column("mount_map", pgsql.JSONB(), nullable=True, default={},),
     sa.PrimaryKeyConstraint("vfolder", "kernel"),
 )
 

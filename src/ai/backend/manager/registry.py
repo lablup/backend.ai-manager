@@ -860,22 +860,24 @@ class AgentRegistry:
                     # the server may respond with error if the directory already exists
                     pass
                 matched_mounts.add(item['name'])
-                determined_mounts.append((
-                    item['name'],
-                    item['host'],
-                    f"{mount_path}/{user_uuid.hex}",
-                    item['permission'].value,
-                    ''
-                ))
+                determined_mounts.append({
+                    #item['name'],
+                    'vfolder': str(item['id']),
+                    'host': item['host'],
+                    'permission': item['permission'].value,
+                    'mountspec': f"{mount_path}/{user_uuid.hex}",
+                    'mount_map': mount_map
+                })
             else:
                 matched_mounts.add(item['name'])
-                determined_mounts.append((
-                    item['name'],
-                    item['host'],
-                    mount_path,
-                    item['permission'].value,
-                    item['unmanaged_path'] if item['unmanaged_path'] else '',
-                ))
+                determined_mounts.append({
+                    #item['name'],
+                    'vfolder': item['host'],
+                    'host': str(item['id']),
+                    'permission': item['permission'].value,
+                    'mountspec': item['unmanaged_path'] if item['unmanaged_path'] else mount_path,
+                    'mount_map': mount_map
+                })
         if mounts and set(mounts) > matched_mounts:
             raise VFolderNotFound
         mounts = determined_mounts
@@ -1155,8 +1157,8 @@ class AgentRegistry:
                         'occupied_shares': {},
                         'resource_opts': resource_opts,
                         'environ': [f'{k}={v}' for k, v in environ.items()],
-                        'mounts': [list(mount) for mount in mounts],  # postgres save tuple as str
-                        'mount_map': mount_map,
+                        # 'mounts': [list(mount) for mount in mounts],  # postgres save tuple as str
+                        # 'mount_map': mount_map,
                         'bootstrap_script': kernel.get('bootstrap_script'),
                         'repl_in_port': 0,
                         'repl_out_port': 0,
@@ -1169,10 +1171,12 @@ class AgentRegistry:
 
             await execute_with_retry(_enqueue)
 
-            mounts_id_list = [
-                dict(item, kernel=kernel_id) for item in mounts_id_list
-            ]
-            await conn.execute(vfolder_attachment.insert(), mounts_id_list)
+            async with self.db.begin() as conn:
+                mounts_id_list = [
+                    dict(mount, kernel=kernel_id) for mount in mounts
+                ]
+                await conn.execute(vfolder_attachment.insert(), mounts)
+
 
         await self.hook_plugin_ctx.notify(
             "POST_ENQUEUE_SESSION",

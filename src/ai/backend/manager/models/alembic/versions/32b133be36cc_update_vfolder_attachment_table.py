@@ -10,7 +10,8 @@ import re
 import textwrap
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
+from sqlalchemy.dialects import postgresql as pgsql
+from ai.backend.manager.models import VFolderPermission
 from ai.backend.manager.models.base import (
     convention, EnumValueType, IDColumn, GUID
 )
@@ -35,10 +36,18 @@ def upgrade():
         sa.PrimaryKeyConstraint('vfolder', 'kernel'),
     )
 
+    op.add_column('vfolder_attachment', sa.Column("host", sa.String(length=128), nullable=False,))
+    op.add_column('vfolder_attachment', sa.Column("permission",
+                EnumValueType(VFolderPermission),
+                default=VFolderPermission.READ_WRITE,
+                nullable=False,
+            ))
+    op.add_column('vfolder_attachment', sa.Column("mountspec", sa.String(length=512), nullable=False,))
+    op.add_column('vfolder_attachment', sa.Column("mount_map", pgsql.JSONB(), nullable=True, default={},))
 
     # insert kernels not in 'TERMINATED' or 'CANCELLED' status with mounts info.
     query = """
-    SELECT id, mounts
+    SELECT id, mounts, mount_map
     FROM kernels
     WHERE status NOT IN ('TERMINATED', 'CANCELLED')
     """
@@ -48,23 +57,26 @@ def upgrade():
     results = connection.execute(query)
     mounts_info = []
     for row in results:
-        mounts_id_list = [mount[2] for mount in row['mounts']]
         kernel_id = row['id']
-        
-        for mounts_id in mounts_id_list:
+        mount_map = row['mount_map']
+        for mount in row['mounts']:
+            host, vfolder, permission, mountspec = mount[1:]
             # if mounts id contains slash('/') then refine it
-            if '/' in mounts_id:
-                legacy_path = mounts.split('/')
-                path_list = legacy_path[-3:] # path rule
-                legacy_path = ''.join(path_list)
-                mounts_id = uuid.UUID(legacy_path)    
-            if len(mounts_id) > 0 : # if kernel mounts at least one vfolder
-                mounts_info.append(
-                    {
-                        'vfolder': mounts_id,
-                        'kernel': kernel_id
-                    }
-                )
+            if '/' in vfolder:
+                # apply mountspec if value of mountspec is empty
+                mountspec = mountspec if mountspec else vfolder
+                legacy_path = ''.join(vfolder.split('/')[-3:])
+                vfolder = uuid.UUID(legacy_path)
+            mounts_info.append(
+                {
+                    'vfolder': vfolder,
+                    'kernel': kernel_id,
+                    'host': host,
+                    'permission': permission,
+                    'mountspec': mountspec,
+                    'mount_map': mount_map
+                }
+            )
         if not mounts_info:
             connection.execute(vfolder_attachment.insert(), mounts_info)
 
@@ -90,5 +102,8 @@ def upgrade():
 
 
 def downgrade():
-    pass
+    op.drop_column('vfolder_attachment', 'host')
+    op.drop_column('vfolder_attachment', 'permission')
+    op.drop_column('vfolder_attachment', 'mountspec')
+    op.drop_column('vfolder_attachment', 'mount_map')
     # ### end Alembic commands ###
