@@ -18,6 +18,7 @@ import uuid
 
 import attr
 import sqlalchemy as sa
+from sqlalchemy.orm import column_property
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 from sqlalchemy.sql import Select, ColumnElement
 from sqlalchemy.engine.row import Row
@@ -41,7 +42,7 @@ from ai.backend.common.types import (
 
 from ..defs import DEFAULT_ROLE
 from ..models import (
-    kernels, keypairs,
+    kernels, keypairs, vfolder_attachment
 )
 from ..registry import AgentRegistry
 
@@ -228,7 +229,7 @@ class PendingSession:
             kernels.c.environ,
             # kernels.c.mounts,
             # kernels.c.mount_map,
-            (
+            column_property(
                 vfolder_attachment.c.vfolder,
                 vfolder_attachment.c.kernel,
                 vfolder_attachment.c.host,
@@ -243,13 +244,10 @@ class PendingSession:
 
     @classmethod
     def base_query(cls) -> Select:
-        j = sa.join(
-                kernels, keypairs,
-                keypairs.c.access_key == kernels.c.access_key
-            ).join(
-                kernels, vfolder_attachment,
-                vfolder_attachment.c.kernel == kernels.c.id,
-                isouter=True,
+        j = (
+            kernels
+            .join(keypairs, keypairs.c.access_key == kernels.c.access_key)
+            .join(vfolder_attachment, vfolder_attachment.c.kernel == kernels.c.id)
         )
         return (
             sa.select(
