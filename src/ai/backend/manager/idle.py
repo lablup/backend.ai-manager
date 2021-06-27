@@ -424,7 +424,6 @@ class UtilizationIdleChecker(BaseIdleChecker):
         util_last_updated_key = f"session.{session_id}.util_last_updated"
 
         # Wait until the time "interval" is passed after the last udpated time.
-        from icecream import ic
         t = await self._redis.time()
         raw_util_last_updated = await self._redis.get(util_last_updated_key)
         util_last_updated = float(raw_util_last_updated) if raw_util_last_updated else 0
