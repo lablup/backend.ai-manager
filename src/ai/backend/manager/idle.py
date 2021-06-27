@@ -420,6 +420,17 @@ class UtilizationIdleChecker(BaseIdleChecker):
         occupied_slots = session["occupied_slots"]
         unavailable_resources: Set[str] = set()
 
+        util_series_key = f"session.{session_id}.util_series"
+        util_last_updated_key = f"session.{session_id}.util_last_updated"
+
+        # Wait until the time "interval" is passed after the last udpated time.
+        from icecream import ic
+        t = await self._redis.time()
+        raw_util_last_updated = await self._redis.get(util_last_updated_key)
+        util_last_updated = float(raw_util_last_updated) if raw_util_last_updated else 0
+        if t - util_last_updated < interval:
+            return True
+
         # Respect initial grace period (no termination of the session)
         now = datetime.now(tzutc())
         if now - session["created_at"] <= self.initial_grace_period:
@@ -487,7 +498,6 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
         # Update utilization time-series data.
         not_enough_data = False
-        util_series_key = f"session.{session_id}.util_series"
         raw_util_series = await self._redis.get(util_series_key, encoding=None)
 
         try:
@@ -504,6 +514,11 @@ class UtilizationIdleChecker(BaseIdleChecker):
         await self._redis.set(
             util_series_key,
             msgpack.packb(util_series),
+            expire=max(86400, int(self.time_window.total_seconds() * 2)),
+        )
+        await self._redis.set(
+            util_last_updated_key,
+            f"{t:.06f}",
             expire=max(86400, int(self.time_window.total_seconds() * 2)),
         )
         if not_enough_data:
