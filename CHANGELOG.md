@@ -16,6 +16,13 @@ Changes
 
 .. towncrier release notes start
 
+21.03.10 (2021-06-28)
+---------------------
+
+### Fixes
+* Do not collect the data for utilization idle checker when the current time does not exceed the sum of the last collect time and the interval of the checker. ([#441](https://github.com/lablup/backend.ai-manager/issues/441))
+
+
 21.03.9 (2021-06-18)
 --------------------
 
