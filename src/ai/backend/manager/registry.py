@@ -2304,7 +2304,10 @@ class AgentRegistry:
                     else:
                         log.error('should not reach here! {0}', type(row['status']))
 
-            await execute_with_retry(_update)
+            try:
+                await execute_with_retry(_update)
+            except sa.exc.IntegrityError:
+                log.error(f'Scaling group named [{sgroup}] does not exist.')
 
             if instance_rejoin:
                 await self.event_producer.produce_event(
