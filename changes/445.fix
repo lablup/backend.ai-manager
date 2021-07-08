@@ -1,0 +1,1 @@
+Handle missing kernel log gracefully by adding a message about unavailability instead of panicking
