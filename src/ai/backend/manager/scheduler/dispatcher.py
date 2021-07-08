@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextvars import ContextVar
 from datetime import datetime
 import logging
@@ -221,28 +222,35 @@ class SchedulerDispatcher(aobject):
         # We use short transaction blocks to prevent deadlock timeouts under heavy loads
         # because this scheduling handler will be executed by only one process.
         # It is executed under a globally exclusive context using aioredlock.
-        async with self.db.advisory_lock(AdvisoryLock.LOCKID_SCHEDULE):
-            async with self.db.begin_readonly() as conn:
-                query = (
-                    sa.select([agents.c.scaling_group])
-                    .select_from(agents)
-                    .where(agents.c.status == AgentStatus.ALIVE)
-                    .group_by(agents.c.scaling_group)
-                )
-                result = await conn.execute(query)
-                schedulable_scaling_groups = [
-                    row.scaling_group for row in result.fetchall()
-                ]
-            for sgroup_name in schedulable_scaling_groups:
-                try:
-                    await self._schedule_in_sgroup(
-                        sched_ctx, sgroup_name,
+        try:
+            async with self.db.advisory_lock(AdvisoryLock.LOCKID_SCHEDULE):
+                async with self.db.begin_readonly() as conn:
+                    query = (
+                        sa.select([agents.c.scaling_group])
+                        .select_from(agents)
+                        .where(agents.c.status == AgentStatus.ALIVE)
+                        .group_by(agents.c.scaling_group)
                     )
-                except InstanceNotAvailable:
-                    # Proceed to the next scaling group and come back later.
-                    log.debug('schedule({}): instance not available', sgroup_name)
-                except Exception as e:
-                    log.exception('schedule({}): scheduling error!\n{}', sgroup_name, repr(e))
+                    result = await conn.execute(query)
+                    schedulable_scaling_groups = [
+                        row.scaling_group for row in result.fetchall()
+                    ]
+                for sgroup_name in schedulable_scaling_groups:
+                    try:
+                        await self._schedule_in_sgroup(
+                            sched_ctx, sgroup_name,
+                        )
+                    except InstanceNotAvailable:
+                        # Proceed to the next scaling group and come back later.
+                        log.debug('schedule({}): instance not available', sgroup_name)
+                    except Exception as e:
+                        log.exception('schedule({}): scheduling error!\n{}', sgroup_name, repr(e))
+        except DBAPIError as e:
+            if getattr(e.orig, 'pgcode', None) == '55P03':
+                log.info("schedule(): cancelled due to advisory lock timeout; "
+                         "maybe another schedule() call is still running")
+                raise asyncio.CancelledError()
+            raise
 
     async def _load_scheduler(
         self,
@@ -651,51 +659,58 @@ class SchedulerDispatcher(aobject):
             self.registry,
             known_slot_types,
         )
-        async with self.db.advisory_lock(AdvisoryLock.LOCKID_PREPARE):
-            now = datetime.now(tzutc())
+        try:
+            async with self.db.advisory_lock(AdvisoryLock.LOCKID_PREPARE):
+                now = datetime.now(tzutc())
 
-            async def _transition() -> Sequence[PendingSession]:
-                async with self.db.begin() as conn:
-                    update_query = (
-                        sa.update(kernels)
-                        .values({
-                            'status': KernelStatus.PREPARING,
-                            'status_changed': now,
-                            'status_info': "",
-                            'status_data': {},
-                        })
-                        .where(
-                            (kernels.c.status == KernelStatus.SCHEDULED)
+                async def _transition() -> Sequence[PendingSession]:
+                    async with self.db.begin() as conn:
+                        update_query = (
+                            sa.update(kernels)
+                            .values({
+                                'status': KernelStatus.PREPARING,
+                                'status_changed': now,
+                                'status_info': "",
+                                'status_data': {},
+                            })
+                            .where(
+                                (kernels.c.status == KernelStatus.SCHEDULED)
+                            )
+                            .returning(kernels.c.id)
                         )
-                        .returning(kernels.c.id)
-                    )
-                    rows = (await conn.execute(update_query)).fetchall()
-                    if len(rows) == 0:
-                        return []
-                    target_kernel_ids = [r['id'] for r in rows]
-                    select_query = (
-                        PendingSession.base_query()
-                        .where(
-                            kernels.c.id.in_(target_kernel_ids)
+                        rows = (await conn.execute(update_query)).fetchall()
+                        if len(rows) == 0:
+                            return []
+                        target_kernel_ids = [r['id'] for r in rows]
+                        select_query = (
+                            PendingSession.base_query()
+                            .where(
+                                kernels.c.id.in_(target_kernel_ids)
+                            )
                         )
-                    )
-                    rows = (await conn.execute(select_query)).fetchall()
-                    return PendingSession.from_rows(rows)
+                        rows = (await conn.execute(select_query)).fetchall()
+                        return PendingSession.from_rows(rows)
 
-            scheduled_sessions = await execute_with_retry(_transition)
-            log.debug("prepare(): preparing {} session(s)", len(scheduled_sessions))
-            async with aiotools.TaskGroup() as tg:
-                for scheduled_session in scheduled_sessions:
-                    await self.registry.event_producer.produce_event(
-                        SessionPreparingEvent(
-                            scheduled_session.session_id,
-                            scheduled_session.session_creation_id,
+                scheduled_sessions = await execute_with_retry(_transition)
+                log.debug("prepare(): preparing {} session(s)", len(scheduled_sessions))
+                async with aiotools.TaskGroup() as tg:
+                    for scheduled_session in scheduled_sessions:
+                        await self.registry.event_producer.produce_event(
+                            SessionPreparingEvent(
+                                scheduled_session.session_id,
+                                scheduled_session.session_creation_id,
+                            )
                         )
-                    )
-                    tg.create_task(self.start_session(
-                        sched_ctx,
-                        scheduled_session,
-                    ))
+                        tg.create_task(self.start_session(
+                            sched_ctx,
+                            scheduled_session,
+                        ))
+        except DBAPIError as e:
+            if getattr(e.orig, 'pgcode', None) == '55P03':
+                log.info("prepare(): cancelled due to advisory lock timeout; "
+                         "maybe another prepare() call is still running")
+                raise asyncio.CancelledError()
+            raise
 
     async def start_session(
         self,

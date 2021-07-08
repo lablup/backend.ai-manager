@@ -1,0 +1,1 @@
+Handle failure of acquiring postgres advisory locks in the scheduler gracefully, by translating them as logged cancellations
