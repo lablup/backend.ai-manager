@@ -1,0 +1,1 @@
+Make a error message when raise IntegrityError due to missing scaling groups.
