@@ -1,0 +1,1 @@
+Add API to get available resources 
