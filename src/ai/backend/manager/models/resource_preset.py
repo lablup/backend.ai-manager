@@ -15,7 +15,7 @@ from decimal import Decimal
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ResourceSlot
-from .exceptions import (
+from ..api.exceptions import (
     InvalidAPIParameters,
 )
 from .base import (
