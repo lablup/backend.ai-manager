@@ -1,1 +1,1 @@
-Make a error message when raise IntegrityError due to missing scaling groups.
+Make an explicit error message upon `IntegrityError` due to missing scaling groups when handling agent heartbeats.
