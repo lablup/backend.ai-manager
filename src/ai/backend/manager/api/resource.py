@@ -34,12 +34,11 @@ from ai.backend.common.utils import nmget
 from ai.backend.common.types import DefaultForUnspecified, ResourceSlot
 
 from ..models import (
-    agents, resource_presets,
+    resource_presets,
     domains, groups, kernels, users,
-    AgentStatus,
-    association_groups_users,
-    query_allowed_sgroups,
-    AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
+    get_row,
+    get_scaling_groups_resources,
+    get_group_resource_status,
     RESOURCE_USAGE_KERNEL_STATUSES, LIVE_STATUS,
 )
 from .auth import auth_required, superadmin_required
@@ -130,21 +129,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
         keypair_remaining = keypair_limits - keypair_occupied
 
         # Check group resource limit and get group_id.
-        j = sa.join(
-            groups, association_groups_users,
-            association_groups_users.c.group_id == groups.c.id,
-        )
-        query = (
-            sa.select([groups.c.id, groups.c.total_resource_slots])
-            .select_from(j)
-            .where(
-                (association_groups_users.c.user_id == request['user']['uuid']) &
-                (groups.c.name == params['group']) &
-                (domains.c.name == domain_name)
-            )
-        )
-        result = await conn.execute(query)
-        row = result.first()
+        row = await get_row(conn, request, params, domain_name)
         group_id = row['id']
         group_resource_slots = row['total_resource_slots']
         if group_id is None:
@@ -178,50 +163,12 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
                 domain_remaining[slot],
             )
 
-        # Prepare per scaling group resource.
-        sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
-        sgroup_names = [sg.name for sg in sgroups]
-        if params['scaling_group'] is not None:
-            if params['scaling_group'] not in sgroup_names:
-                raise InvalidAPIParameters('Unknown scaling group')
-            sgroup_names = [params['scaling_group']]
-        per_sgroup = {
-            sgname: {
-                'using': ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()}),
-                'remaining': ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()}),
-            } for sgname in sgroup_names
-        }
-
-        # Per scaling group resource using from resource occupying kernels.
-        query = (
-            sa.select([kernels.c.occupied_slots, kernels.c.scaling_group])
-            .select_from(kernels)
-            .where(
-                (kernels.c.user_uuid == request['user']['uuid']) &
-                (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)) &
-                (kernels.c.scaling_group.in_(sgroup_names))
-            )
+        # Take resources per sgroup.
+        per_sgroup, sgroup_remaining, agent_slots = await get_scaling_groups_resources(
+            conn, request, params,
+            domain_name, group_id,
+            access_key, known_slot_types
         )
-        async for row in (await conn.stream(query)):
-            per_sgroup[row['scaling_group']]['using'] += row['occupied_slots']
-
-        # Per scaling group resource remaining from agents stats.
-        sgroup_remaining = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
-        query = (
-            sa.select([agents.c.available_slots, agents.c.occupied_slots, agents.c.scaling_group])
-            .select_from(agents)
-            .where(
-                (agents.c.status == AgentStatus.ALIVE) &
-                (agents.c.scaling_group.in_(sgroup_names))
-            )
-        )
-        agent_slots = []
-        async for row in (await conn.stream(query)):
-            remaining = row['available_slots'] - row['occupied_slots']
-            remaining += ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
-            sgroup_remaining += remaining
-            agent_slots.append(remaining)
-            per_sgroup[row['scaling_group']]['remaining'] += remaining
 
         # Take maximum allocatable resources per sgroup.
         for sgname, sgfields in per_sgroup.items():
@@ -255,13 +202,9 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             })
 
         # Return group resource status as NaN if not allowed.
-        group_resource_visibility = \
-            await root_ctx.shared_config.get_raw('config/api/resources/group_resource_visibility')
-        group_resource_visibility = t.ToBool().check(group_resource_visibility)
-        if not group_resource_visibility:
-            group_limits = ResourceSlot({k: Decimal('NaN') for k in known_slot_types.keys()})
-            group_occupied = ResourceSlot({k: Decimal('NaN') for k in known_slot_types.keys()})
-            group_remaining = ResourceSlot({k: Decimal('NaN') for k in known_slot_types.keys()})
+        group_limits, group_occupied, group_remaining = await get_group_resource_status(
+            root_ctx, t, known_slot_types
+        )
 
         resp['keypair_limits'] = keypair_limits.to_json()
         resp['keypair_using'] = keypair_occupied.to_json()
@@ -308,75 +251,38 @@ async def get_available_resources(request: web.Request, params: Any) -> web.Resp
 
     async with root_ctx.db.begin_readonly() as conn:
         # Check group resource limit and get group_id.
-        j = sa.join(
-            groups, association_groups_users,
-            association_groups_users.c.group_id == groups.c.id,
-        )
-        query = (
-            sa.select([groups.c.id, groups.c.total_resource_slots])
-            .select_from(j)
-            .where(
-                (association_groups_users.c.user_id == request['user']['uuid']) &
-                (groups.c.name == params['group']) &
-                (domains.c.name == domain_name)
-            )
-        )
-        result = await conn.execute(query)
-        row = result.first()
+        row = await get_row(conn, request, params, domain_name)
         group_id = row['id']
+        group_resource_slots = row['total_resource_slots']
         if group_id is None:
             raise InvalidAPIParameters('Unknown user group')
-
-        # Prepare per scaling group resource.
-        sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
-        sgroup_names = [sg.name for sg in sgroups]
-        if params['scaling_group'] is not None:
-            if params['scaling_group'] not in sgroup_names:
-                raise InvalidAPIParameters('Unknown scaling group')
-            sgroup_names = [params['scaling_group']]
-        per_sgroup = {
-            sgname: {
-                'using': ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()}),
-                'remaining': ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()}),
-            } for sgname in sgroup_names
+        group_resource_policy = {
+            'total_resource_slots': group_resource_slots,
+            'default_for_unspecified': DefaultForUnspecified.UNLIMITED
         }
+        group_limits = ResourceSlot.from_policy(group_resource_policy, known_slot_types)
+        group_occupied = await root_ctx.registry.get_group_occupancy(group_id, conn=conn)
+        group_remaining = group_limits - group_occupied
 
-        # Per scaling group resource using from resource occupying kernels.
-        query = (
-            sa.select([kernels.c.occupied_slots, kernels.c.scaling_group])
-            .select_from(kernels)
-            .where(
-                (kernels.c.user_uuid == request['user']['uuid']) &
-                (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)) &
-                (kernels.c.scaling_group.in_(sgroup_names))
-            )
+        per_sgroup, sgroup_remaining, _ = await get_scaling_groups_resources(
+            conn, request, params,
+            domain_name, group_id,
+            access_key, known_slot_types
         )
-        async for row in (await conn.stream(query)):
-            per_sgroup[row['scaling_group']]['using'] += row['occupied_slots']
-
-        # Per scaling group resource remaining from agents stats.
-        sgroup_remaining = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
-        query = (
-            sa.select([agents.c.available_slots, agents.c.occupied_slots, agents.c.scaling_group])
-            .select_from(agents)
-            .where(
-                (agents.c.status == AgentStatus.ALIVE) &
-                (agents.c.scaling_group.in_(sgroup_names))
-            )
-        )
-        agent_slots = []
-        async for row in (await conn.stream(query)):
-            remaining = row['available_slots'] - row['occupied_slots']
-            remaining += ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
-            sgroup_remaining += remaining
-            agent_slots.append(remaining)
-            per_sgroup[row['scaling_group']]['remaining'] += remaining
 
         # Take maximum allocatable resources per sgroup.
         for sgname, sgfields in per_sgroup.items():
             for rtype, slots in sgfields.items():
                 per_sgroup[sgname][rtype] = slots.to_json()  # type: ignore  # it's serialization
 
+        # Return group resource status as NaN if not allowed.
+        group_limits, group_occupied, group_remaining = await get_group_resource_status(
+            root_ctx, t, known_slot_types
+        )
+
+        resp['group_limits'] = group_limits.to_json()
+        resp['group_using'] = group_occupied.to_json()
+        resp['group_remaining'] = group_remaining.to_json()
         resp['scaling_group_remaining'] = sgroup_remaining.to_json()
         resp['scaling_groups'] = per_sgroup
     return web.json_response(resp, status=200)
@@ -856,7 +762,7 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     add_route = app.router.add_route
     cors.add(add_route('GET',  '/presets', list_presets))
     cors.add(add_route('POST', '/check-presets', check_presets))
-    cors.add(add_route('GET', '/get-resources', get_available_resources))
+    cors.add(add_route('GET', '/available-resources', get_available_resources))
     cors.add(add_route('POST', '/recalculate-usage', recalculate_usage))
     cors.add(add_route('GET',  '/usage/month', usage_per_month))
     cors.add(add_route('GET',  '/usage/period', usage_per_period))
