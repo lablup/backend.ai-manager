@@ -1261,6 +1261,9 @@ async def handle_kernel_log(
         for _ in range(list_size):
             # Read chunk-by-chunk to allow interleaving with other Redis operations.
             chunk = await redis.execute_with_retries(lambda: redis_conn.lpop(log_key))
+            if chunk is None:  # maybe missing
+                log_buffer.write(b"(container log unavailable)\n")
+                break
             log_buffer.write(chunk)
         try:
             log_data = log_buffer.getvalue()
