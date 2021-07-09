@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from datetime import datetime, timezone
 from typing import (
     Any,
     Mapping,
@@ -91,6 +92,7 @@ async def test_handle_heartbeat(mocker) -> None:
         'version': '19.12.0',
         'compute_plugins': [],
         'images': image_data,
+        'time': datetime.now(timezone.utc).timestamp(),
     })
     mock_shared_config.update_resource_slots.assert_awaited_once()
     q = mock_dbconn.execute.await_args_list[1].args[0]
@@ -115,6 +117,7 @@ async def test_handle_heartbeat(mocker) -> None:
         'version': '19.12.0',
         'compute_plugins': [],
         'images': image_data,
+        'time': datetime.now(timezone.utc).timestamp(),
     })
     mock_shared_config.update_resource_slots.assert_awaited_once()
     q = mock_dbconn.execute.await_args_list[1].args[0]
@@ -143,6 +146,7 @@ async def test_handle_heartbeat(mocker) -> None:
         'version': '19.12.0',
         'compute_plugins': [],
         'images': image_data,
+        'time': datetime.now(timezone.utc).timestamp(),
     })
     mock_shared_config.update_resource_slots.assert_awaited_once()
     q = mock_dbconn.execute.await_args_list[1].args[0]
