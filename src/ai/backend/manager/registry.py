@@ -2215,7 +2215,7 @@ class AgentRegistry:
             agent_info['resource_slots'].items()})
         current_addr = agent_info['addr']
         sgroup = agent_info.get('scaling_group', 'default')
-
+        sent_time = agent_info['time']
         async with self.heartbeat_lock:
 
             instance_rejoin = False
@@ -2307,8 +2307,9 @@ class AgentRegistry:
             try:
                 await execute_with_retry(_update)
             except sa.exc.IntegrityError:
-                log.error(f'Scaling group named [{sgroup}] does not exist.')
-                await asyncio.sleep(5.0)
+                # Log only recent heartbeat in 3 seconds.
+                if now.timestamp() - sent_time < 3.0:
+                    log.error(f'Scaling group named [{sgroup}] does not exist.')
 
             if instance_rejoin:
                 await self.event_producer.produce_event(
