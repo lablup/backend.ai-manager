@@ -16,6 +16,7 @@ from aiojobs.aiohttp import atomic
 import attr
 import graphene
 from graphql.execution.executors.asyncio import AsyncioExecutor
+from graphql.execution import ExecutionResult
 from graphql.error import GraphQLError, format_error
 import trafaret as t
 
@@ -54,15 +55,7 @@ class GQLLoggingMiddleware:
         return next(root, info, **args)
 
 
-@atomic
-@auth_required
-@check_api_params(
-    t.Dict({
-        t.Key('query'): t.String,
-        t.Key('variables', default=None): t.Null | t.Mapping(t.String, t.Any),
-        tx.AliasedKey(['operation_name', 'operationName'], default=None): t.Null | t.String,
-    }))
-async def handle_gql(request: web.Request, params: Any) -> web.Response:
+async def _handle_gql_common(request: web.Request, params: Any) -> ExecutionResult:
     root_ctx: RootContext = request.app['_root.context']
     app_ctx: PrivateContext = request.app['admin.context']
     manager_status = await root_ctx.shared_config.get_manager_status()
@@ -99,6 +92,33 @@ async def handle_gql(request: web.Request, params: Any) -> web.Response:
         return_promise=True)
     if inspect.isawaitable(result):
         result = await result
+    return result
+
+
+@atomic
+@auth_required
+@check_api_params(
+    t.Dict({
+        t.Key('query'): t.String,
+        t.Key('variables', default=None): t.Null | t.Mapping(t.String, t.Any),
+        tx.AliasedKey(['operation_name', 'operationName'], default=None): t.Null | t.String,
+    }))
+async def handle_gql(request: web.Request, params: Any) -> web.Response:
+    result = await _handle_gql_common(request, params)
+    return web.json_response(result.to_dict(), status=200)
+
+
+@atomic
+@auth_required
+@check_api_params(
+    t.Dict({
+        t.Key('query'): t.String,
+        t.Key('variables', default=None): t.Null | t.Mapping(t.String, t.Any),
+        tx.AliasedKey(['operation_name', 'operationName'], default=None): t.Null | t.String,
+    }))
+async def handle_gql_legacy(request: web.Request, params: Any) -> web.Response:
+    # FIXME: remove in v21.09
+    result = await _handle_gql_common(request, params)
     if result.errors:
         errors = []
         for e in result.errors:
@@ -140,7 +160,8 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     app['api_versions'] = (2, 3, 4)
     app['admin.context'] = PrivateContext()
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
-    cors.add(app.router.add_route('POST', r'/graphql', handle_gql))
+    cors.add(app.router.add_route('POST', r'/graphql', handle_gql_legacy))
+    cors.add(app.router.add_route('POST', r'/gql', handle_gql))
     return app, []
 
 
