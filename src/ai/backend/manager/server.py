@@ -104,6 +104,10 @@ VALID_VERSIONS: Final = frozenset([
 
     # rewrote vfolder upload/download APIs to migrate to external storage proxies
     'v6.20200815',
+
+    # added standard-compliant /admin/gql endpoint
+    # deprecated /admin/graphql endpoint
+    'v6.20210815',
 ])
 LATEST_REV_DATES: Final = {
     1: '20160915',
@@ -111,9 +115,9 @@ LATEST_REV_DATES: Final = {
     3: '20181215',
     4: '20190615',
     5: '20191215',
-    6: '20200815',
+    6: '20210815',
 }
-LATEST_API_VERSION: Final = 'v6.20200815'
+LATEST_API_VERSION: Final = 'v6.20210815'
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 
