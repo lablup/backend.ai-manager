@@ -157,7 +157,6 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     app = web.Application()
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
-    app['api_versions'] = (2, 3, 4)
     app['admin.context'] = PrivateContext()
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     cors.add(app.router.add_route('POST', r'/graphql', handle_gql_legacy))

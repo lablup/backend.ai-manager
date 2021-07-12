@@ -220,7 +220,7 @@ async def exception_middleware(request: web.Request,
         await stats_monitor.report_metric(INCREMENT, 'ai.backend.manager.api.failures')
         await stats_monitor.report_metric(INCREMENT, f'ai.backend.manager.api.status.{ex.status_code}')
         if ex.status_code == 404:
-            raise GenericNotFound
+            raise GenericNotFound(f"Unknown URL path: {request.path}")
         if ex.status_code == 405:
             concrete_ex = cast(web.HTTPMethodNotAllowed, ex)
             raise MethodNotAllowed(concrete_ex.method, concrete_ex.allowed_methods)
