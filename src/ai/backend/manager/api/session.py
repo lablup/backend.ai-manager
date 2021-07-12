@@ -80,7 +80,6 @@ from ai.backend.common.types import (
     KernelId,
     ClusterMode,
     KernelEnqueueingConfig,
-    SessionId,
     SessionTypes,
     check_typed_dict,
 )
@@ -506,7 +505,6 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             session_tag=params['tag'],
             starts_at=starts_at,
         ))
-        session_id = cast(SessionId, kernel_id)  # the main kernel's ID is the session ID
         resp['sessionId'] = str(kernel_id)  # changed since API v5
         resp['sessionName'] = str(params['session_name'])
         resp['status'] = 'PENDING'
