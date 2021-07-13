@@ -74,13 +74,12 @@ from ai.backend.common.events import (
     SessionTerminatedEvent,
 )
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.utils import str_to_timedelta
+from ai.backend.common.utils import cancel_tasks, str_to_timedelta
 from ai.backend.common.types import (
     AgentId,
     KernelId,
     ClusterMode,
     KernelEnqueueingConfig,
-    SessionId,
     SessionTypes,
     check_typed_dict,
 )
@@ -506,7 +505,6 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             session_tag=params['tag'],
             starts_at=starts_at,
         ))
-        session_id = cast(SessionId, kernel_id)  # the main kernel's ID is the session ID
         resp['sessionId'] = str(kernel_id)  # changed since API v5
         resp['sessionName'] = str(params['session_name'])
         resp['status'] = 'PENDING'
@@ -552,8 +550,6 @@ async def _create(request: web.Request, params: Any) -> web.Response:
                         if 'allowed_envs' in item.keys():
                             response_dict['allowed_envs'] = item['allowed_envs']
                         resp['servicePorts'].append(response_dict)
-                    # TODO: handle shutdown of dangling tasks
-                    asyncio.create_task(root_ctx.registry.execute_batch(session_id))
                 else:
                     resp['status'] = row['status'].name
     except asyncio.CancelledError:
@@ -1027,8 +1023,6 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
                         if 'allowed_envs' in item.keys():
                             response_dict['allowed_envs'] = item['allowed_envs']
                         resp['servicePorts'].append(response_dict)
-                    # TODO: handle shutdown of dangling tasks
-                    asyncio.create_task(root_ctx.registry.execute_batch(session_id))
                 else:
                     resp['status'] = row['status'].name
 
@@ -1962,13 +1956,7 @@ async def shutdown(app: web.Application) -> None:
     app_ctx.stats_task.cancel()
     await app_ctx.stats_task
 
-    for task in {*app_ctx.pending_waits}:
-        if not task.done():
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+    await cancel_tasks(app_ctx.pending_waits)
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:

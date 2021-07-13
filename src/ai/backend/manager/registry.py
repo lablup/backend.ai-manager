@@ -2005,38 +2005,6 @@ class AgentRegistry:
                     flush_timeout,
                 )
 
-    async def execute_batch(
-        self,
-        session_id: SessionId,
-    ) -> None:
-        async with self.db.begin() as conn:
-            query = (
-                sa.select([
-                    kernels.c.id,
-                    kernels.c.status,
-                    kernels.c.agent_addr,
-                    kernels.c.startup_command,
-                ])
-                .select_from(kernels)
-                .where(
-                    (kernels.c.session_id == session_id) &
-                    (kernels.c.session_type == SessionTypes.BATCH) &
-                    (kernels.c.status == KernelStatus.RUNNING) &
-                    (kernels.c.cluster_role == DEFAULT_ROLE)
-                )
-            )
-            result = await conn.execute(query)
-            kernel = result.first()
-            if kernel is None:
-                return
-            async with RPCContext(
-                kernel['agent'],
-                kernel['agent_addr'],
-                30,
-                order_key=str(session_id),
-            ) as rpc:
-                return await rpc.call.execute_batch(str(kernel['id']), kernel['startup_command'])
-
     async def interrupt_session(
         self,
         session_name_or_id: Union[str, SessionId],
