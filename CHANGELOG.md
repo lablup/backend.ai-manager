@@ -16,6 +16,15 @@ Changes
 
 .. towncrier release notes start
 
+20.09.20 (2021-07-13)
+---------------------
+
+### Fixes
+* Handle failure of acquiring postgres advisory locks in the scheduler gracefully, by translating them as logged cancellations ([#444](https://github.com/lablup/backend.ai-manager/issues/444))
+* Handle missing kernel log gracefully by adding a message about unavailability instead of panicking ([#445](https://github.com/lablup/backend.ai-manager/issues/445))
+* Fix the regression of batch-type sessions by moving `startup_command` invocation to agents ([#447](https://github.com/lablup/backend.ai-manager/issues/447))
+
+
 20.09.19 (2021-06-18)
 ---------------------
 

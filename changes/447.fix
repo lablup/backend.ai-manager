@@ -1,1 +1,0 @@
-Fix the regression of batch-type sessions by moving `startup_command` invocation to agents
