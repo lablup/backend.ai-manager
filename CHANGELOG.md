@@ -16,6 +16,13 @@ Changes
 
 .. towncrier release notes start
 
+20.09.21 (2021-07-13)
+---------------------
+
+### Fixes
+* Add a new GQL endpoint `/admin/gql` (in addition to existing `/admin/graphql`) which uses the standard-compliant response format ([#448](https://github.com/lablup/backend.ai-manager/issues/448))
+
+
 20.09.20 (2021-07-13)
 ---------------------
 
