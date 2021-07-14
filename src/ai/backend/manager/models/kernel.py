@@ -57,6 +57,7 @@ from .base import (
     metadata,
 )
 from .group import groups
+from .minilang.queryfilter import QueryFilterParser
 from .user import users
 from .keypair import keypairs
 if TYPE_CHECKING:
@@ -582,6 +583,7 @@ class ComputeContainer(graphene.ObjectType):
         domain_name: str = None,
         group_id: uuid.UUID = None,
         access_key: str = None,
+        filter: str = None,
     ) -> int:
         query = (
             sa.select([sa.func.count(kernels.c.id)])
@@ -596,6 +598,9 @@ class ComputeContainer(graphene.ObjectType):
             query = query.where(kernels.c.group_id == group_id)
         if access_key is not None:
             query = query.where(kernels.c.access_key == access_key)
+        if filter is not None:
+            parser = QueryFilterParser()
+            query = parser.append_filter(query, filter)
         async with ctx.db.begin_readonly() as conn:
             result = await conn.execute(query)
             return result.scalar()
@@ -614,6 +619,7 @@ class ComputeContainer(graphene.ObjectType):
         access_key: AccessKey = None,
         order_key: str = None,
         order_asc: bool = True,
+        filter: str = None,
     ) -> Sequence[Optional[ComputeContainer]]:
         if order_key is None:
             _ordering = DEFAULT_SESSION_ORDERING
@@ -636,6 +642,9 @@ class ComputeContainer(graphene.ObjectType):
             query = query.where(kernels.c.group_id == group_id)
         if access_key is not None:
             query = query.where(kernels.c.access_key == access_key)
+        if filter is not None:
+            parser = QueryFilterParser()
+            query = parser.append_filter(query, filter)
         async with ctx.db.begin_readonly() as conn:
             return [cls.from_row(ctx, r) async for r in (await conn.stream(query))]
 
@@ -839,6 +848,7 @@ class ComputeSession(graphene.ObjectType):
         group_id: uuid.UUID = None,
         access_key: str = None,
         status: str = None,
+        filter: str = None,
     ) -> int:
         if isinstance(status, str):
             status_list = [KernelStatus[s] for s in status.split(',')]
@@ -857,6 +867,9 @@ class ComputeSession(graphene.ObjectType):
             query = query.where(kernels.c.access_key == access_key)
         if status is not None:
             query = query.where(kernels.c.status.in_(status_list))
+        if filter is not None:
+            parser = QueryFilterParser()
+            query = parser.append_filter(query, filter)
         async with ctx.db.begin_readonly() as conn:
             result = await conn.execute(query)
             return result.scalar()
@@ -874,6 +887,7 @@ class ComputeSession(graphene.ObjectType):
         status: str = None,
         order_key: str = None,
         order_asc: bool = True,
+        filter: str = None,
     ) -> Sequence[ComputeSession | None]:
         if isinstance(status, str):
             status_list = [KernelStatus[s] for s in status.split(',')]
@@ -909,6 +923,9 @@ class ComputeSession(graphene.ObjectType):
             query = query.where(kernels.c.access_key == access_key)
         if status is not None:
             query = query.where(kernels.c.status.in_(status_list))
+        if filter is not None:
+            parser = QueryFilterParser()
+            query = parser.append_filter(query, filter)
         async with ctx.db.begin_readonly() as conn:
             return [cls.from_row(ctx, r) async for r in (await conn.stream(query))]
 

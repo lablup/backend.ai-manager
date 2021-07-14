@@ -31,6 +31,7 @@ from .base import (
     EnumType, Item, PaginatedList,
     ResourceSlotColumn,
 )
+from .minilang.queryfilter import QueryFilterParser
 if TYPE_CHECKING:
     from ai.backend.manager.models.gql import GraphQueryContext
 
@@ -186,6 +187,7 @@ class Agent(graphene.ObjectType):
         graph_ctx: GraphQueryContext, *,
         scaling_group: str = None,
         raw_status: str = None,
+        filter: str = None,
     ) -> int:
         query = (
             sa.select([sa.func.count(agents.c.id)])
@@ -196,6 +198,9 @@ class Agent(graphene.ObjectType):
         if raw_status is not None:
             status = AgentStatus[raw_status]
             query = query.where(agents.c.status == status)
+        if filter is not None:
+            parser = QueryFilterParser()
+            query = parser.append_filter(query, filter)
         async with graph_ctx.db.begin_readonly() as conn:
             result = await conn.execute(query)
             return result.scalar()
@@ -209,6 +214,7 @@ class Agent(graphene.ObjectType):
         raw_status: str = None,
         order_key: str = None,
         order_asc: bool = True,
+        filter: str = None,
     ) -> Sequence[Agent]:
         # TODO: optimization for pagination using subquery, join
         if order_key is None:
@@ -228,6 +234,9 @@ class Agent(graphene.ObjectType):
         if raw_status is not None:
             status = AgentStatus[raw_status]
             query = query.where(agents.c.status == status)
+        if filter is not None:
+            parser = QueryFilterParser()
+            query = parser.append_filter(query, filter)
         async with graph_ctx.db.begin_readonly() as conn:
             return [
                 cls.from_row(graph_ctx, row)

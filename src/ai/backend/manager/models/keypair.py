@@ -44,6 +44,7 @@ from .base import (
     simple_db_mutate,
     simple_db_mutate_returning_item,
 )
+from .minilang.queryfilter import QueryFilterParser
 from .user import ModifyUserInput, UserRole
 from ..defs import RESERVED_DOTFILES
 
@@ -247,6 +248,7 @@ class KeyPair(graphene.ObjectType):
         domain_name: str = None,
         email: str = None,
         is_active: bool = None,
+        filter: str = None,
     ) -> int:
         from .user import users
         j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
@@ -260,6 +262,9 @@ class KeyPair(graphene.ObjectType):
             query = query.where(keypairs.c.user_id == email)
         if is_active is not None:
             query = query.where(keypairs.c.is_active == is_active)
+        if filter is not None:
+            parser = QueryFilterParser()
+            query = parser.append_filter(query, filter)
         async with graph_ctx.db.begin_readonly() as conn:
             result = await conn.execute(query)
             return result.scalar()
@@ -276,6 +281,7 @@ class KeyPair(graphene.ObjectType):
         is_active: bool = None,
         order_key: str = None,
         order_asc: bool = True,
+        filter: str = None,
     ) -> Sequence[KeyPair]:
         from .user import users
         if order_key is None:
@@ -297,6 +303,9 @@ class KeyPair(graphene.ObjectType):
             query = query.where(keypairs.c.user_id == email)
         if is_active is not None:
             query = query.where(keypairs.c.is_active == is_active)
+        if filter is not None:
+            parser = QueryFilterParser()
+            query = parser.append_filter(query, filter)
         async with graph_ctx.db.begin_readonly() as conn:
             return [
                 obj async for row in (await conn.stream(query))

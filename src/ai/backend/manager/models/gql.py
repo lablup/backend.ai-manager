@@ -216,6 +216,8 @@ class Queries(graphene.ObjectType):
         AgentList,
         limit=graphene.Int(required=True),
         offset=graphene.Int(required=True),
+        # generic filter
+        filter=graphene.String(),
         # ordering customization
         order_key=graphene.String(),
         order_asc=graphene.Boolean(),
@@ -279,6 +281,8 @@ class Queries(graphene.ObjectType):
         UserList,
         limit=graphene.Int(required=True),
         offset=graphene.Int(required=True),
+        # generic filter
+        filter=graphene.String(),
         # ordering customization
         order_key=graphene.String(),
         order_asc=graphene.Boolean(),
@@ -303,6 +307,8 @@ class Queries(graphene.ObjectType):
         KeyPairList,
         limit=graphene.Int(required=True),
         offset=graphene.Int(required=True),
+        # generic filter
+        filter=graphene.String(),
         # ordering customization
         order_key=graphene.String(),
         order_asc=graphene.Boolean(),
@@ -373,6 +379,8 @@ class Queries(graphene.ObjectType):
         VirtualFolderList,
         limit=graphene.Int(required=True),
         offset=graphene.Int(required=True),
+        # generic filter
+        filter=graphene.String(),
         # ordering customization
         order_key=graphene.String(),
         order_asc=graphene.Boolean(),
@@ -401,6 +409,8 @@ class Queries(graphene.ObjectType):
         ComputeSessionList,
         limit=graphene.Int(required=True),
         offset=graphene.Int(required=True),
+        # generic filter
+        filter=graphene.String(),
         # ordering customization
         order_key=graphene.String(),
         order_asc=graphene.Boolean(),
@@ -415,6 +425,8 @@ class Queries(graphene.ObjectType):
         ComputeContainerList,
         limit=graphene.Int(required=True),
         offset=graphene.Int(required=True),
+        # generic filter
+        filter=graphene.String(),
         # ordering customization
         order_key=graphene.String(),
         order_asc=graphene.Boolean(),
@@ -478,6 +490,7 @@ class Queries(graphene.ObjectType):
         limit: int,
         offset: int,
         *,
+        filter: str = None,
         scaling_group: str = None,
         status: str = None,
         order_key: str = None,
@@ -487,6 +500,7 @@ class Queries(graphene.ObjectType):
             info.context,
             scaling_group=scaling_group,
             raw_status=status,
+            filter=filter,
         )
         agent_list = await Agent.load_slice(
             info.context, limit, offset,
@@ -494,6 +508,7 @@ class Queries(graphene.ObjectType):
             raw_status=status,
             order_key=order_key,
             order_asc=order_asc,
+            filter=filter,
         )
         return AgentList(agent_list, total_count)
 
@@ -693,6 +708,7 @@ class Queries(graphene.ObjectType):
         limit: int,
         offset: int,
         *,
+        filter: str = None,
         domain_name: str = None,
         group_id: uuid.UUID = None,
         is_active: bool = None,
@@ -721,6 +737,7 @@ class Queries(graphene.ObjectType):
             group_id=group_id,
             is_active=is_active,
             status=status,
+            filter=filter,
         )
         user_list = await User.load_slice(
             info.context,
@@ -732,6 +749,7 @@ class Queries(graphene.ObjectType):
             status=status,
             order_key=order_key,
             order_asc=order_asc,
+            filter=filter,
         )
         return UserList(user_list, total_count)
 
@@ -787,6 +805,7 @@ class Queries(graphene.ObjectType):
         limit: int,
         offset: int,
         *,
+        filter: str = None,
         domain_name: str = None,
         email: str = None,
         is_active: bool = None,
@@ -959,6 +978,7 @@ class Queries(graphene.ObjectType):
         user_id: uuid.UUID = None,
         order_key: str = None,
         order_asc: bool = True,
+        filter: str = None,
     ) -> VirtualFolderList:
         # TODO: adopt the generic queryfilter language
         total_count = await VirtualFolder.load_count(
@@ -966,6 +986,7 @@ class Queries(graphene.ObjectType):
             domain_name=domain_name,  # scope
             group_id=group_id,        # scope
             user_id=user_id,          # scope
+            filter=filter,
         )
         items = await VirtualFolder.load_slice(
             info.context,
@@ -976,6 +997,7 @@ class Queries(graphene.ObjectType):
             user_id=user_id,          # scope
             order_key=order_key,      # order
             order_asc=order_asc,      # order
+            filter=filter,
         )
         return VirtualFolderList(items, total_count)
 
@@ -988,6 +1010,7 @@ class Queries(graphene.ObjectType):
         offset: int,
         *,
         session_id: SessionId,
+        filter: str = None,
         role: UserRole = None,
         domain_name: str = None,
         group_id: uuid.UUID = None,
@@ -1003,6 +1026,7 @@ class Queries(graphene.ObjectType):
             domain_name=domain_name,  # scope
             group_id=group_id,        # scope
             access_key=access_key,    # scope
+            filter=filter,
         )
         items = await ComputeContainer.load_slice(
             info.context,
@@ -1014,6 +1038,7 @@ class Queries(graphene.ObjectType):
             access_key=access_key,    # scope
             order_key=order_key,      # order
             order_asc=order_asc,      # order
+            filter=filter,
         )
         return ComputeContainerList(items, total_count)
 
@@ -1040,6 +1065,7 @@ class Queries(graphene.ObjectType):
         limit: int,
         offset: int,
         *,
+        filter: str = None,
         domain_name: str = None,
         group_id: uuid.UUID = None,
         access_key: AccessKey = None,

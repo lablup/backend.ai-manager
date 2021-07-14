@@ -25,6 +25,7 @@ from .base import (
     Item, PaginatedList, BigInt,
     batch_multiresult,
 )
+from .minilang.queryfilter import QueryFilterParser
 from .user import UserRole
 if TYPE_CHECKING:
     from .gql import GraphQueryContext
@@ -507,6 +508,7 @@ class VirtualFolder(graphene.ObjectType):
         domain_name: str = None,
         group_id: uuid.UUID = None,
         user_id: uuid.UUID = None,
+        filter: str = None,
     ) -> int:
         from .user import users
         j = sa.join(vfolders, users, vfolders.c.user == users.c.uuid)
@@ -520,6 +522,9 @@ class VirtualFolder(graphene.ObjectType):
             query = query.where(vfolders.c.group == group_id)
         if user_id is not None:
             query = query.where(vfolders.c.user == user_id)
+        if filter is not None:
+            parser = QueryFilterParser()
+            query = parser.append_filter(query, filter)
         async with graph_ctx.db.begin_readonly() as conn:
             result = await conn.execute(query)
             return result.scalar()
@@ -535,7 +540,8 @@ class VirtualFolder(graphene.ObjectType):
         group_id: uuid.UUID = None,
         user_id: uuid.UUID = None,
         order_key: str = None,
-        order_asc: bool = True
+        order_asc: bool = True,
+        filter: str = None,
     ) -> Sequence[VirtualFolder]:
         from .user import users
         if order_key is None:
@@ -557,6 +563,9 @@ class VirtualFolder(graphene.ObjectType):
             query = query.where(vfolders.c.group == group_id)
         if user_id is not None:
             query = query.where(vfolders.c.user == user_id)
+        if filter is not None:
+            parser = QueryFilterParser()
+            query = parser.append_filter(query, filter)
         async with graph_ctx.db.begin_readonly() as conn:
             return [
                 obj async for r in (await conn.stream(query))

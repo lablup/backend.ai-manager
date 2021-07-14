@@ -41,6 +41,7 @@ from .base import (
     simple_db_mutate,
     simple_db_mutate_returning_item,
 )
+from .minilang.queryfilter import QueryFilterParser
 from .storage import StorageSessionManager
 
 if TYPE_CHECKING:
@@ -254,6 +255,7 @@ class User(graphene.ObjectType):
         group_id: UUID = None,
         is_active: bool = None,
         status: str = None,
+        filter: str = None,
     ) -> int:
         if group_id is not None:
             from .group import association_groups_users as agus
@@ -275,6 +277,9 @@ class User(graphene.ObjectType):
         elif is_active is not None:  # consider is_active field only if status is empty
             _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
             query = query.where(users.c.status.in_(_statuses))
+        if filter is not None:
+            parser = QueryFilterParser()
+            query = parser.append_filter(query, filter)
         async with ctx.db.begin_readonly() as conn:
             result = await conn.execute(query)
         return result.scalar()
@@ -292,6 +297,7 @@ class User(graphene.ObjectType):
         status: str = None,
         order_key: str = None,
         order_asc: bool = True,
+        filter: str = None,
     ) -> Sequence[User]:
         if order_key is None:
             _ordering = sa.desc(users.c.created_at)
@@ -324,6 +330,9 @@ class User(graphene.ObjectType):
         elif is_active is not None:  # consider is_active field only if status is empty
             _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
             query = query.where(users.c.status.in_(_statuses))
+        if filter is not None:
+            parser = QueryFilterParser()
+            query = parser.append_filter(query, filter)
         async with ctx.db.begin_readonly() as conn:
             return [
                 cls.from_row(ctx, row) async for row in (await conn.stream(query))
