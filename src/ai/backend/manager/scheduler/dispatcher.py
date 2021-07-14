@@ -461,13 +461,31 @@ class SchedulerDispatcher(aobject):
         log_fmt = _log_fmt.get()
         log_args = _log_args.get()
         try:
-            agent_id = scheduler.assign_agent_for_session(candidate_agents, sess_ctx)
-            if agent_id is None:
-                raise InstanceNotAvailable
+            #OP.1415 if configured sess_ctx.agent_id is existed, skip assin_agent_for_session
+            agent_id = None
+            if sess_ctx.agent_id is not None:
+                agent_id = sess_ctx.agent_id
+            else:
+                agent_id = scheduler.assign_agent_for_session(candidate_agents, sess_ctx)
+                
             async with self.db.begin() as agent_db_conn:
-                agent_alloc_ctx = await _reserve_agent(
-                    sched_ctx, agent_db_conn, sgroup_name, agent_id, sess_ctx.requested_slots,
+                query = (
+                    sa.select([agents.c.available_slots])
+                    .select_from(agents)
+                    .where(agents.c.id == agent_id)
                 )
+                # load available agent by executing query
+                available_agent_slots = await agent_db_conn.execute(query).scalar()
+                    
+                # if pass the available test
+                if available_agent >= sess_ctx.requested_slots:    
+                    agent_alloc_ctx = await _reserve_agent(
+                        sched_ctx, agent_db_conn, sgroup_name, agent_id, sess_ctx.requested_slots,
+                    )
+                # if does not pass the available test
+                else:
+                    raise InstanceNotAvailable
+                
         except InstanceNotAvailable:
             log.debug(log_fmt + 'no-available-instances', *log_args)
 
@@ -551,22 +569,35 @@ class SchedulerDispatcher(aobject):
             for kernel in sess_ctx.kernels:
                 try:
                     agent_alloc_ctx: AgentAllocationContext
-                    agent_id = scheduler.assign_agent_for_kernel(candidate_agents, kernel)
-                    if agent_id is None:
+                    agent_id = None
+                    if kernel.agent_id is not None:
+                        agent_id = kernel.agent_id
+                    else:
+                        agent_id = scheduler.assign_agent_for_kernel(candidate_agents, kernel)
+                        
+                    query = (
+                        sa.select([agents.c.available_slots])
+                        .select_from(agents)
+                        .where(agents.c.id == agent_id)
+                    )
+                    available_agent_slots = await agent_db_conn.execute(query).scalar()
+            
+                    if available_agent_slots >= kernel.requested_slots:
+                        async def _reserve() -> None:
+                            nonlocal agent_alloc_ctx, candidate_agents
+                            #assert agent_id is not None
+                            async with agent_db_conn.begin_nested():
+                                agent_alloc_ctx = await _reserve_agent(
+                                    sched_ctx, agent_db_conn,
+                                    sgroup_name, agent_id, kernel.requested_slots,
+                                    extra_conds=agent_query_extra_conds,
+                                )
+                                candidate_agents = await _list_agents_by_sgroup(agent_db_conn, sgroup_name)
+                                    
+                        await execute_with_retry(_reserve)
+                    else:
                         raise InstanceNotAvailable
-
-                    async def _reserve() -> None:
-                        nonlocal agent_alloc_ctx, candidate_agents
-                        assert agent_id is not None
-                        async with agent_db_conn.begin_nested():
-                            agent_alloc_ctx = await _reserve_agent(
-                                sched_ctx, agent_db_conn,
-                                sgroup_name, agent_id, kernel.requested_slots,
-                                extra_conds=agent_query_extra_conds,
-                            )
-                            candidate_agents = await _list_agents_by_sgroup(agent_db_conn, sgroup_name)
-
-                    await execute_with_retry(_reserve)
+                                        
                 except InstanceNotAvailable:
                     log.debug(log_fmt + 'no-available-instances', *log_args)
 
