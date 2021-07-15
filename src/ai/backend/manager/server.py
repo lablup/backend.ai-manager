@@ -634,13 +634,13 @@ async def server_main(loop: asyncio.AbstractEventLoop,
                 str(root_ctx.local_config['manager']['ssl-cert']),
                 str(root_ctx.local_config['manager']['ssl-privkey']),
             )
-        
+
         # Start aiomonitor.
         # Port is set by config (default=50001).
         m = aiomonitor.Monitor(loop, port=root_ctx.local_config['manager']['aiomonitor-port'])
         m.prompt = "monitor (manager) >>> "
         m.start()
-        
+
         runner = web.AppRunner(root_app)
         await runner.setup()
         service_addr = root_ctx.local_config['manager']['service-addr']
