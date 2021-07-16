@@ -876,7 +876,7 @@ class Queries(graphene.ObjectType):
     ) -> ScalingGroup:
         ctx: GraphQueryContext = info.context
         loader = ctx.dataloader_manager.get_loader(
-            ctx, 'ScalingGroup.by_name'
+            ctx, 'ScalingGroup.by_name',
         )
         return await loader.load(name)
 
