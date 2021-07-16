@@ -5,6 +5,8 @@ from typing import (
     Any,
     Dict,
     Sequence,
+    Mapping,
+    Tuple,
     TYPE_CHECKING,
 )
 import uuid
@@ -252,8 +254,8 @@ async def get_scaling_groups_resources(
     domain_name: str,
     group_id: uuid.UUID,
     access_key: str,
-    known_slot_types: dict
-) -> tuple:
+    known_slot_types: Mapping
+) -> Tuple:
     """
     Returns scaling group resource, scaling group resource using from resource occupying kernels,
     and scaling group resource remaining from agents stats as tuple.
@@ -306,7 +308,7 @@ async def get_scaling_groups_resources(
     return per_sgroup, sgroup_remaining, agent_slots
 
 
-async def get_group_resource_status(root_ctx, t, known_slot_types: dict) -> tuple:
+async def get_group_resource_status(root_ctx, t, known_slot_types: Mapping) -> Tuple:
     """
     Returns limits, occupied, and remaining status of groups resource as tuple.
     """
