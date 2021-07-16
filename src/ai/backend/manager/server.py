@@ -637,7 +637,11 @@ async def server_main(loop: asyncio.AbstractEventLoop,
 
         # Start aiomonitor.
         # Port is set by config (default=50001).
-        m = aiomonitor.Monitor(loop, port=root_ctx.local_config['manager']['aiomonitor-port'], console_enabled=False)
+        m = aiomonitor.Monitor(
+            loop,
+            port=root_ctx.local_config['manager']['aiomonitor-port'],
+            console_enabled=False
+        )
         m.prompt = "monitor (manager) >>> "
         m.start()
 
