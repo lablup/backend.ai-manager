@@ -7,10 +7,13 @@ from typing import (
     Sequence,
     TYPE_CHECKING,
 )
+import uuid
 
+from aiohttp import web
 import graphene
 import sqlalchemy as sa
 from sqlalchemy.engine.row import Row
+from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 from decimal import Decimal
 
 from ai.backend.common.logging import BraceStyleAdapter
@@ -50,7 +53,7 @@ __all__: Sequence[str] = (
     'CreateResourcePreset',
     'ModifyResourcePreset',
     'DeleteResourcePreset',
-    'get_row',
+    'get_groups_info_by_row',
     'get_scaling_groups_resources',
     'get_group_resource_status',
 )
@@ -214,7 +217,15 @@ class DeleteResourcePreset(graphene.Mutation):
         return await simple_db_mutate(cls, info.context, delete_query)
 
 
-async def get_row(conn, request, params, domain_name):
+async def get_groups_info_by_row(
+    conn: SAConnection,
+    request: web.Request,
+    params: Any,
+    domain_name: str
+) -> Row:
+    """
+    Returns row that has id and total resource slots in group.
+    """
     j = sa.join(
         groups, association_groups_users,
         association_groups_users.c.group_id == groups.c.id,
@@ -235,10 +246,18 @@ async def get_row(conn, request, params, domain_name):
 
 
 async def get_scaling_groups_resources(
-    conn, request, params,
-    domain_name, group_id,
-    access_key, known_slot_types
-):
+    conn: SAConnection,
+    request: web.Request,
+    params: Any,
+    domain_name: str,
+    group_id: uuid.UUID,
+    access_key: str,
+    known_slot_types: dict
+) -> tuple:
+    """
+    Returns scaling group resource, scaling group resource using from resource occupying kernels,
+    and scaling group resource remaining from agents stats as tuple.
+    """
     # Prepare per scaling group resource.
     sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
     sgroup_names = [sg.name for sg in sgroups]
@@ -287,7 +306,10 @@ async def get_scaling_groups_resources(
     return per_sgroup, sgroup_remaining, agent_slots
 
 
-async def get_group_resource_status(root_ctx, t, known_slot_types):
+async def get_group_resource_status(root_ctx, t, known_slot_types: dict) -> tuple:
+    """
+    Returns limits, occupied, and remaining status of groups resource as tuple.
+    """
     group_resource_visibility = \
         await root_ctx.shared_config.get_raw('config/api/resources/group_resource_visibility')
     group_resource_visibility = t.ToBool().check(group_resource_visibility)

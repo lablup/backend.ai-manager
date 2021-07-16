@@ -36,7 +36,7 @@ from ai.backend.common.types import DefaultForUnspecified, ResourceSlot
 from ..models import (
     resource_presets,
     domains, groups, kernels, users,
-    get_row,
+    get_groups_info_by_row,
     get_scaling_groups_resources,
     get_group_resource_status,
     RESOURCE_USAGE_KERNEL_STATUSES, LIVE_STATUS,
@@ -129,7 +129,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
         keypair_remaining = keypair_limits - keypair_occupied
 
         # Check group resource limit and get group_id.
-        row = await get_row(conn, request, params, domain_name)
+        row = await get_groups_info_by_row(conn, request, params, domain_name)
         group_id = row['id']
         group_resource_slots = row['total_resource_slots']
         if group_id is None:
@@ -251,7 +251,7 @@ async def get_available_resources(request: web.Request, params: Any) -> web.Resp
 
     async with root_ctx.db.begin_readonly() as conn:
         # Check group resource limit and get group_id.
-        row = await get_row(conn, request, params, domain_name)
+        row = await get_groups_info_by_row(conn, request, params, domain_name)
         group_id = row['id']
         group_resource_slots = row['total_resource_slots']
         if group_id is None:
