@@ -159,9 +159,11 @@ class Group(graphene.ObjectType):
         )
 
     async def resolve_scaling_groups(self, info: graphene.ResolveInfo) -> Sequence[ScalingGroup]:
-        from .scaling_group import ScalingGroup
         graph_ctx: GraphQueryContext = info.context
-        sgroups = await ScalingGroup.load_by_group(graph_ctx, self.id)
+        loader = graph_ctx.dataloader_manager.get_loader(
+            graph_ctx, "ScalingGroup.by_group",
+        )
+        sgroups = await loader.load(self.id)
         return [sg.name for sg in sgroups]
 
     @classmethod
