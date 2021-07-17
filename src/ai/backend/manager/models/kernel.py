@@ -843,6 +843,7 @@ class ComputeSession(graphene.ObjectType):
     _queryfilter_fieldspec = {
         "type": ("kernels_session_type", lambda s: SessionTypes[s]),
         "name": ("kernels_session_name", None),
+        "image": ("kernels_image", None),
         "domain_name": ("kernels_domain_name", None),
         "group_name": ("groups_group_name", None),
         "user_email": ("users_email", None),
@@ -850,12 +851,15 @@ class ComputeSession(graphene.ObjectType):
         "scaling_group": ("kernels_scaling_groups_name", None),
         "cluster_mode": ("kernels_cluster_mode", lambda s: ClusterMode[s]),
         "cluster_template": ("kernels_cluster_template", None),
+        "cluster_size": ("kernels_cluster_size", None),
         "status": ("kernels_status", lambda s: KernelStatus[s]),
         "status_info": ("kernels_status_info", None),
         "result": ("kernels_result", lambda s: SessionResult[s]),
         "created_at": ("kernels_created_at", dtparse),
         "status_changed": ("kernels_status_changed", dtparse),
         "terminated_at": ("kernels_terminated_at", dtparse),
+        "starts_at": ("kernels_starts_at", dtparse),
+        "startup_command": ("kernels_startup_command", None),
     }
 
     @classmethod
