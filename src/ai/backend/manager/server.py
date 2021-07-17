@@ -107,6 +107,7 @@ VALID_VERSIONS: Final = frozenset([
     'v6.20200815',
 
     # added standard-compliant /admin/gql endpoint
+    # added /resources/available-resources API
     # deprecated /admin/graphql endpoint
     'v6.20210815',
 ])

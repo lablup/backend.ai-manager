@@ -5,15 +5,24 @@ from typing import (
     Any,
     Dict,
     Sequence,
+    Mapping,
+    Tuple,
     TYPE_CHECKING,
 )
+import uuid
 
+from aiohttp import web
 import graphene
 import sqlalchemy as sa
 from sqlalchemy.engine.row import Row
+from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
+from decimal import Decimal
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ResourceSlot
+from ..api.exceptions import (
+    InvalidAPIParameters,
+)
 from .base import (
     metadata, BigInt, BinarySize, ResourceSlotColumn,
     simple_db_mutate,
@@ -21,8 +30,20 @@ from .base import (
     set_if_set,
     batch_result,
 )
+from .agent import (
+    agents, AgentStatus,
+)
 from .user import UserRole
-
+from .group import (
+    groups,
+    association_groups_users,
+)
+from .scaling_group import query_allowed_sgroups
+from .kernel import (
+    AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
+    kernels,
+)
+from .domain import domains
 if TYPE_CHECKING:
     from .gql import GraphQueryContext
 
@@ -34,6 +55,9 @@ __all__: Sequence[str] = (
     'CreateResourcePreset',
     'ModifyResourcePreset',
     'DeleteResourcePreset',
+    'get_groups_info_by_row',
+    'check_scaling_group_resource',
+    'check_group_resource',
 )
 
 
@@ -193,3 +217,100 @@ class DeleteResourcePreset(graphene.Mutation):
             .where(resource_presets.c.name == name)
         )
         return await simple_db_mutate(cls, info.context, delete_query)
+
+
+async def get_groups_info_by_row(
+    conn: SAConnection,
+    request: web.Request,
+    params: Any,
+    domain_name: str
+) -> Row:
+    """
+    Returns row that has id and total resource slots in group.
+    """
+    j = sa.join(
+        groups, association_groups_users,
+        association_groups_users.c.group_id == groups.c.id,
+    )
+    query = (
+        sa.select([groups.c.id, groups.c.total_resource_slots])
+        .select_from(j)
+        .where(
+            (association_groups_users.c.user_id == request['user']['uuid']) &
+            (groups.c.name == params['group']) &
+            (domains.c.name == domain_name)
+        )
+    )
+    result = await conn.execute(query)
+    row = result.first()
+
+    return row
+
+
+async def check_scaling_group_resource(
+    conn: SAConnection,
+    sgroup_name: str,
+    known_slot_types: Mapping[str, str],
+) -> Tuple[ResourceSlot, ResourceSlot]:
+    """
+    Returns scaling group resource, scaling group resource using from resource occupying kernels,
+    and scaling group resource remaining from agents stats as tuple.
+    """
+    sgroup_capacity = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
+    sgroup_remaining = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
+    query = (
+        sa.select([agents.c.available_slots, agents.c.occupied_slots])
+        .select_from(agents)
+        .where(
+            (agents.c.status == AgentStatus.ALIVE) &
+            (agents.c.scaling_group == sgroup_name)
+        )
+    )
+    async for row in (await conn.stream(query)):
+        sgroup_capacity += row['available_slots']
+        sgroup_remaining += row['available_slots'] - row['occupied_slots']
+    return sgroup_capacity, sgroup_remaining
+
+
+async def check_group_resource(
+    conn: SAConnection,
+    group: Row,  # TODO: refactor as ORM-based Group
+    known_slot_types: Mapping,
+    *,
+    group_resource_visibility: bool = True,
+) -> Tuple:
+    """
+    Returns limits, occupied, and remaining status of groups resource as tuple.
+    """
+
+    # TODO: work-in-progress
+
+    group_resource_slots = group.total_resource_slots
+    if not group_resource_visibility:
+        # Hide the group resource config.
+        group_limits = ResourceSlot({k: Decimal('NaN') for k in known_slot_types.keys()})
+        group_occupied = ResourceSlot({k: Decimal('NaN') for k in known_slot_types.keys()})
+        group_remaining = ResourceSlot({k: Decimal('NaN') for k in known_slot_types.keys()})
+    else:
+        group_resource_policy = {
+            'total_resource_slots': group_resource_slots,
+            'default_for_unspecified': DefaultForUnspecified.UNLIMITED
+        }
+        group_limits = ResourceSlot.from_policy(group_resource_policy, known_slot_types)
+        group_occupied = await root_ctx.registry.get_group_occupancy(group.id, conn=conn)
+        group_remaining = group_limits - group_occupied
+
+    # Per scaling group resource using from resource occupying kernels.
+    query = (
+        sa.select([kernels.c.occupied_slots, kernels.c.scaling_group])
+        .select_from(kernels)
+        .where(
+            (kernels.c.user_uuid == request['user']['uuid']) &
+            (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)) &
+            (kernels.c.scaling_group.in_(sgroup_names))
+        )
+    )
+    async for row in (await conn.stream(query)):
+        per_sgroup[row['scaling_group']]['using'] += row['occupied_slots']
+
+    return group_limits, group_occupied, group_remaining
