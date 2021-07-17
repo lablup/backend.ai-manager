@@ -56,8 +56,8 @@ __all__: Sequence[str] = (
     'ModifyResourcePreset',
     'DeleteResourcePreset',
     'get_groups_info_by_row',
-    'get_scaling_groups_resources',
-    'get_group_resource_status',
+    'check_scaling_group_resource',
+    'check_group_resource',
 )
 
 
@@ -247,32 +247,58 @@ async def get_groups_info_by_row(
     return row
 
 
-async def get_scaling_groups_resources(
+async def check_scaling_group_resource(
     conn: SAConnection,
-    request: web.Request,
-    params: Any,
-    domain_name: str,
-    group_id: uuid.UUID,
-    access_key: str,
-    known_slot_types: Mapping
-) -> Tuple:
+    sgroup_name: str,
+    known_slot_types: Mapping[str, str],
+) -> Tuple[ResourceSlot, ResourceSlot]:
     """
     Returns scaling group resource, scaling group resource using from resource occupying kernels,
     and scaling group resource remaining from agents stats as tuple.
     """
-    # Prepare per scaling group resource.
-    sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
-    sgroup_names = [sg.name for sg in sgroups]
-    if params['scaling_group'] is not None:
-        if params['scaling_group'] not in sgroup_names:
-            raise InvalidAPIParameters('Unknown scaling group')
-        sgroup_names = [params['scaling_group']]
-    per_sgroup = {
-        sgname: {
-            'using': ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()}),
-            'remaining': ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()}),
-        } for sgname in sgroup_names
-    }
+    sgroup_capacity = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
+    sgroup_remaining = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
+    query = (
+        sa.select([agents.c.available_slots, agents.c.occupied_slots])
+        .select_from(agents)
+        .where(
+            (agents.c.status == AgentStatus.ALIVE) &
+            (agents.c.scaling_group == sgroup_name)
+        )
+    )
+    async for row in (await conn.stream(query)):
+        sgroup_capacity += row['available_slots']
+        sgroup_remaining += row['available_slots'] - row['occupied_slots']
+    return sgroup_capacity, sgroup_remaining
+
+
+async def check_group_resource(
+    conn: SAConnection,
+    group: Row,  # TODO: refactor as ORM-based Group
+    known_slot_types: Mapping,
+    *,
+    group_resource_visibility: bool = True,
+) -> Tuple:
+    """
+    Returns limits, occupied, and remaining status of groups resource as tuple.
+    """
+
+    # TODO: work-in-progress
+
+    group_resource_slots = group.total_resource_slots
+    if not group_resource_visibility:
+        # Hide the group resource config.
+        group_limits = ResourceSlot({k: Decimal('NaN') for k in known_slot_types.keys()})
+        group_occupied = ResourceSlot({k: Decimal('NaN') for k in known_slot_types.keys()})
+        group_remaining = ResourceSlot({k: Decimal('NaN') for k in known_slot_types.keys()})
+    else:
+        group_resource_policy = {
+            'total_resource_slots': group_resource_slots,
+            'default_for_unspecified': DefaultForUnspecified.UNLIMITED
+        }
+        group_limits = ResourceSlot.from_policy(group_resource_policy, known_slot_types)
+        group_occupied = await root_ctx.registry.get_group_occupancy(group.id, conn=conn)
+        group_remaining = group_limits - group_occupied
 
     # Per scaling group resource using from resource occupying kernels.
     query = (
@@ -286,38 +312,5 @@ async def get_scaling_groups_resources(
     )
     async for row in (await conn.stream(query)):
         per_sgroup[row['scaling_group']]['using'] += row['occupied_slots']
-
-    # Per scaling group resource remaining from agents stats.
-    sgroup_remaining = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
-    query = (
-        sa.select([agents.c.available_slots, agents.c.occupied_slots, agents.c.scaling_group])
-        .select_from(agents)
-        .where(
-            (agents.c.status == AgentStatus.ALIVE) &
-            (agents.c.scaling_group.in_(sgroup_names))
-        )
-    )
-    agent_slots = []
-    async for row in (await conn.stream(query)):
-        remaining = row['available_slots'] - row['occupied_slots']
-        remaining += ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
-        sgroup_remaining += remaining
-        agent_slots.append(remaining)
-        per_sgroup[row['scaling_group']]['remaining'] += remaining
-
-    return per_sgroup, sgroup_remaining, agent_slots
-
-
-async def get_group_resource_status(root_ctx, t, known_slot_types: Mapping) -> Tuple:
-    """
-    Returns limits, occupied, and remaining status of groups resource as tuple.
-    """
-    group_resource_visibility = \
-        await root_ctx.shared_config.get_raw('config/api/resources/group_resource_visibility')
-    group_resource_visibility = t.ToBool().check(group_resource_visibility)
-    if not group_resource_visibility:
-        group_limits = ResourceSlot({k: Decimal('NaN') for k in known_slot_types.keys()})
-        group_occupied = ResourceSlot({k: Decimal('NaN') for k in known_slot_types.keys()})
-        group_remaining = ResourceSlot({k: Decimal('NaN') for k in known_slot_types.keys()})
 
     return group_limits, group_occupied, group_remaining
