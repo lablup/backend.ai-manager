@@ -32,6 +32,7 @@ import click
 from pathlib import Path
 from setproctitle import setproctitle
 import sqlalchemy as sa
+import aiomonitor
 
 from ai.backend.common import redis
 from ai.backend.common.cli import LazyGroup
@@ -633,6 +634,17 @@ async def server_main(loop: asyncio.AbstractEventLoop,
                 str(root_ctx.local_config['manager']['ssl-cert']),
                 str(root_ctx.local_config['manager']['ssl-privkey']),
             )
+
+        # Start aiomonitor.
+        # Port is set by config (default=50001).
+        m = aiomonitor.Monitor(
+            loop,
+            port=root_ctx.local_config['manager']['aiomonitor-port'],
+            console_enabled=False
+        )
+        m.prompt = "monitor (manager) >>> "
+        m.start()
+
         runner = web.AppRunner(root_app)
         await runner.setup()
         service_addr = root_ctx.local_config['manager']['service-addr']
@@ -661,6 +673,7 @@ async def server_main(loop: asyncio.AbstractEventLoop,
         try:
             yield
         finally:
+            m.close()
             log.info('shutting down...')
             await runner.cleanup()
 
@@ -706,7 +719,6 @@ def main(ctx: click.Context, config_path: Path, debug: bool) -> None:
                 log.info('runtime: {0}', env_info())
                 log_config = logging.getLogger('ai.backend.manager.config')
                 log_config.debug('debug mode enabled.')
-
                 if cfg['manager']['event-loop'] == 'uvloop':
                     import uvloop
                     uvloop.install()
