@@ -2183,7 +2183,6 @@ class AgentRegistry:
             agent_info['resource_slots'].items()})
         current_addr = agent_info['addr']
         sgroup = agent_info.get('scaling_group', 'default')
-
         async with self.heartbeat_lock:
 
             instance_rejoin = False
@@ -2272,7 +2271,10 @@ class AgentRegistry:
                     else:
                         log.error('should not reach here! {0}', type(row['status']))
 
-            await execute_with_retry(_update)
+            try:
+                await execute_with_retry(_update)
+            except sa.exc.IntegrityError:
+                log.error(f'Scaling group named [{sgroup}] does not exist.')
 
             if instance_rejoin:
                 await self.event_producer.produce_event(
