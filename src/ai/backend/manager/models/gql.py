@@ -241,19 +241,24 @@ class Queries(graphene.ObjectType):
 
     group = graphene.Field(
         Group,
-        id=graphene.UUID(required=True))
+        id=graphene.UUID(required=True),
+        domain_name=graphene.String(),
+    )
 
     # Within a single domain, this will always return nothing or a single item,
     # but if queried across all domains by superadmins, it may return multiple results
     # because the group name is unique only inside each domain.
     group_by_name = graphene.List(
         Group,
-        name=graphene.String(required=True))
+        name=graphene.String(required=True),
+        domain_name=graphene.String(),
+    )
 
     groups = graphene.List(
         Group,
         domain_name=graphene.String(),
-        is_active=graphene.Boolean())
+        is_active=graphene.Boolean(),
+    )
 
     image = graphene.Field(
         Image,
