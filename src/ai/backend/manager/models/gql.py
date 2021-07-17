@@ -243,6 +243,13 @@ class Queries(graphene.ObjectType):
         Group,
         id=graphene.UUID(required=True))
 
+    # Within a single domain, this will always return nothing or a single item,
+    # but if queried across all domains by superadmins, it may return multiple results
+    # because the group name is unique only inside each domain.
+    group_by_name = graphene.List(
+        Group,
+        name=graphene.String(required=True))
+
     groups = graphene.List(
         Group,
         domain_name=graphene.String(),
@@ -527,25 +534,82 @@ class Queries(graphene.ObjectType):
         executor: AsyncioExecutor,
         info: graphene.ResolveInfo,
         id: uuid.UUID,
+        *,
+        domain_name: str = None,
     ) -> Group:
         ctx: GraphQueryContext = info.context
         client_role = ctx.user['role']
         client_domain = ctx.user['domain_name']
         client_user_id = ctx.user['uuid']
-        loader = ctx.dataloader_manager.get_loader(ctx, 'Group.by_id')
-        group = await loader.load(id)
         if client_role == UserRole.SUPERADMIN:
-            pass
+            loader = ctx.dataloader_manager.get_loader(
+                ctx, 'Group.by_id', domain_name=domain_name,
+            )
+            group = await loader.load(id)
         elif client_role == UserRole.ADMIN:
-            if group.domain_name != client_domain:
+            if domain_name is not None and domain_name != client_domain:
                 raise InsufficientPrivilege
+            loader = ctx.dataloader_manager.get_loader(
+                ctx, 'Group.by_id', domain_name=client_domain,
+            )
+            group = await loader.load(id)
         elif client_role == UserRole.USER:
-            client_groups = await Group.get_groups_for_user(info.context, client_user_id)
+            if domain_name is not None and domain_name != client_domain:
+                raise InsufficientPrivilege
+            loader = ctx.dataloader_manager.get_loader(
+                ctx, 'Group.by_id', domain_name=client_domain,
+            )
+            group = await loader.load(id)
+            loader = ctx.dataloader_manager.get_loader(
+                ctx, 'Group.by_user',
+            )
+            client_groups = await loader.load(client_user_id)
             if group.id not in (g.id for g in client_groups):
                 raise InsufficientPrivilege
         else:
             raise InvalidAPIParameters('Unknown client role')
         return group
+
+    @staticmethod
+    async def resolve_group_by_name(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        name: str,
+        *,
+        domain_name: str = None,
+    ) -> Sequence[Group]:
+        ctx: GraphQueryContext = info.context
+        client_role = ctx.user['role']
+        client_domain = ctx.user['domain_name']
+        client_user_id = ctx.user['uuid']
+        if client_role == UserRole.SUPERADMIN:
+            loader = ctx.dataloader_manager.get_loader(
+                ctx, 'Group.by_name', domain_name=domain_name,
+            )
+            groups = await loader.load(name)
+        elif client_role == UserRole.ADMIN:
+            if domain_name is not None and domain_name != client_domain:
+                raise InsufficientPrivilege
+            loader = ctx.dataloader_manager.get_loader(
+                ctx, 'Group.by_name', domain_name=client_domain,
+            )
+            groups = await loader.load(name)
+        elif client_role == UserRole.USER:
+            if domain_name is not None and domain_name != client_domain:
+                raise InsufficientPrivilege
+            loader = ctx.dataloader_manager.get_loader(
+                ctx, 'Group.by_name', domain_name=client_domain,
+            )
+            groups = await loader.load(name)
+            loader = ctx.dataloader_manager.get_loader(
+                ctx, 'Group.by_user',
+            )
+            client_groups = await loader.load(client_user_id)
+            client_group_ids = set(g.id for g in client_groups)
+            groups = filter(lambda g: g.id in client_group_ids, groups)
+        else:
+            raise InvalidAPIParameters('Unknown client role')
+        return groups
 
     @staticmethod
     async def resolve_groups(
@@ -566,7 +630,11 @@ class Queries(graphene.ObjectType):
                 raise InsufficientPrivilege
             domain_name = client_domain
         elif client_role == UserRole.USER:
-            return await Group.get_groups_for_user(info.context, client_user_id)
+            loader = ctx.dataloader_manager.get_loader(
+                ctx, 'Group.by_user',
+            )
+            client_groups = await loader.load(client_user_id)
+            return client_groups
         else:
             raise InvalidAPIParameters('Unknown client role')
         return await Group.load_all(
