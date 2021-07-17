@@ -22,6 +22,7 @@ from uuid import UUID
 import uuid
 
 from aioredis import Redis
+from dateutil.parser import parse as dtparse
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
@@ -850,8 +851,13 @@ class ComputeSession(graphene.ObjectType):
             "access_key": ("kernels_access_key", None),
             "scaling_group": ("kernels_scaling_groups_name", None),
             "cluster_mode": ("kernels_cluster_mode", lambda s: ClusterMode[s]),
+            "cluster_template": ("kernels_cluster_template", None),
             "status": ("kernels_status", lambda s: KernelStatus[s]),
+            "status_info": ("kernels_status_info", None),
             "result": ("kernels_result", lambda s: SessionResult[s]),
+            "created_at": ("kernels_created_at", dtparse),
+            "status_changed": ("kernels_status_changed", dtparse),
+            "terminated_at": ("kernels_terminated_at", dtparse),
         }
 
     @classmethod
