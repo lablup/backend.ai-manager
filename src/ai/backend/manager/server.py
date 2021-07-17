@@ -107,6 +107,8 @@ VALID_VERSIONS: Final = frozenset([
     'v6.20200815',
 
     # added standard-compliant /admin/gql endpoint
+    # added "groups_by_name" GQL query
+    # added "filter" arg to all paginated list GQL queries with its own expression mini-language
     # deprecated /admin/graphql endpoint
     'v6.20210815',
 ])
