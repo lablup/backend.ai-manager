@@ -4,17 +4,8 @@ import sqlalchemy as sa
 import pytest
 from ai.backend.manager.models.minilang.queryfilter import QueryFilterParser
 
-example_filter_with_underbar = "eq:{full_name:\'tester1\'}"
-example_filter_with_single_queotes = "eq:{name:\'test\"er\'}"
-example_filter_with_double_queotes = "eq:{name:\"test\'er\"}"
-example_filter_with_special_character = "and:{eq:{name:\"tester ♪\"}, eq:{name:\'tester ♪\'}}"
-example_filter_with_not_exist_column = "eq:{middle_name:\"test\"}"
-deep_example_filter = "or:{eq:{full_name:\"tester1\"}, or:{eq:{name:\"tester ♪\"}, gt:{age:20}}}"
 
-parser = QueryFilterParser()
-
-
-@pytest.fixture(scope="module")
+@pytest.fixture
 def virtual_user_db():
     engine = sa.engine.create_engine('sqlite:///:memory:', echo=False)
     base = declarative_base()
@@ -30,73 +21,126 @@ def virtual_user_db():
     with engine.connect() as conn:
         conn.execute(users.insert(), [
             {'name': 'tester', 'full_name': 'tester1', 'age': 30},
-            {'name': 'test\"er', 'full_name': 'tester2', 'age': 30},
-            {'name': 'test\'er', 'full_name': 'tester3', 'age': 30},
+            {'name': 'test\"er', 'full_name': 'tester2', 'age': 40},
+            {'name': 'test\'er', 'full_name': 'tester3', 'age': 50},
             {'name': 'tester ♪', 'full_name': 'tester4', 'age': 20}
         ])
         yield conn, users
     engine.dispose()
 
 
-def test_example_filter_with_underbar(virtual_user_db):
+def test_select_queries(virtual_user_db) -> None:
     conn, users = virtual_user_db
-    sa_query = sa.select([users.c.name, users.c.age]).select_from(users)
-    sa_query = parser.append_filter(sa_query, example_filter_with_underbar)
-    ret = list(conn.execute(sa_query))
+    parser = QueryFilterParser()
+
+    sa_query = parser.append_filter(
+        sa.select([users.c.name, users.c.age]).select_from(users),
+        "full_name == \"tester1\"",
+    )
+    actual_ret = list(conn.execute(sa_query))
     test_ret = [("tester", 30)]
-    assert test_ret == ret
+    assert test_ret == actual_ret
 
+    sa_query = parser.append_filter(
+        sa.select([users.c.name, users.c.age]).select_from(users),
+        "(full_name == \"tester1\")",
+    )
+    actual_ret = list(conn.execute(sa_query))
+    test_ret = [("tester", 30)]
+    assert test_ret == actual_ret
 
-def test_example_filter_with_single_queotes(virtual_user_db):
-    conn, users = virtual_user_db
-    sa_query = sa.select([users.c.name, users.c.age]).select_from(users)
-    sa_query = parser.append_filter(sa_query, example_filter_with_single_queotes)
-    ret = list(conn.execute(sa_query))
-    test_ret = [("test\"er", 30)]
-    assert test_ret == ret
+    sa_query = parser.append_filter(
+        sa.select([users.c.name, users.c.age]).select_from(users),
+        "full_name == \"tester1\" & age == 20",
+    )
+    actual_ret = list(conn.execute(sa_query))
+    test_ret = []
+    assert test_ret == actual_ret
 
+    sa_query = parser.append_filter(
+        sa.select([users.c.name, users.c.age]).select_from(users),
+        "(full_name == \"tester1\") & (age == 20)",
+    )
+    actual_ret = list(conn.execute(sa_query))
+    test_ret = []
+    assert test_ret == actual_ret
 
-def test_example_filter_with_double_queotes(virtual_user_db):
-    conn, users = virtual_user_db
-    sa_query = sa.select([users.c.name, users.c.age]).select_from(users)
-    sa_query = parser.append_filter(sa_query, example_filter_with_double_queotes)
-    ret = list(conn.execute(sa_query))
-    test_ret = [("test\'er", 30)]
-    assert test_ret == ret
+    sa_query = parser.append_filter(
+        sa.select([users.c.name, users.c.age]).select_from(users),
+        "(full_name == \"tester1\") | (age == 20)",
+    )
+    actual_ret = list(conn.execute(sa_query))
+    test_ret = [("tester", 30), ("tester ♪", 20)]
+    assert test_ret == actual_ret
 
+    sa_query = parser.append_filter(
+        sa.select([users.c.name, users.c.age]).select_from(users),
+        "(name contains \"test\") & (age > 30)",
+    )
+    actual_ret = list(conn.execute(sa_query))
+    test_ret = [("test\"er", 40), ("test\'er", 50)]
+    assert test_ret == actual_ret
 
-def test_example_filter_with_special_character(virtual_user_db):
-    conn, users = virtual_user_db
-    sa_query = sa.select([users.c.name, users.c.age]).select_from(users)
-    sa_query = parser.append_filter(sa_query, example_filter_with_special_character)
-    ret = list(conn.execute(sa_query))
-    test_ret = [("tester ♪", 20)]
-    assert test_ret == ret
-
-
-def test_example_filter_with_not_exist_column(virtual_user_db):
-    _, users = virtual_user_db
-    sa_query = sa.select([users.c.name, users.c.age]).select_from(users)
+    # invalid syntax
     with pytest.raises(ValueError):
-        sa_query = parser.append_filter(sa_query, example_filter_with_not_exist_column)
+        parser.append_filter(
+            sa.select([users.c.name, users.c.age]).select_from(users),
+            "!!!",
+        )
+
+    # non-existent column
+    with pytest.raises(ValueError):
+        parser.append_filter(
+            sa.select([users.c.name, users.c.age]).select_from(users),
+            "xyz == 123",
+        )
 
 
-def test_deep_example_filter(virtual_user_db):
+def test_modification_queries(virtual_user_db) -> None:
     conn, users = virtual_user_db
-    sa_query = sa.select([users.c.name, users.c.age]).select_from(users)
-    sa_query = parser.append_filter(sa_query, deep_example_filter)
-    ret = list(conn.execute(sa_query))
-    test_ret = [("tester", 30), ("test\"er", 30), ("test\'er", 30), ("tester ♪", 20)]
-    assert test_ret == ret
+    parser = QueryFilterParser()
 
-
-def test_modification_queries(virtual_user_db):
-    conn, users = virtual_user_db
-    sa_query = sa.update(users).values({'name': 'hello'})
-    sa_query = parser.append_filter(sa_query, "eq:{full_name:'tester1'}")
+    sa_query = parser.append_filter(
+        sa.update(users).values({'name': 'hello'}),
+        "full_name == \"tester1\"",
+    )
     result = conn.execute(sa_query)
     assert result.rowcount == 1
-    sa_query = sa.delete(users)
-    sa_query = parser.append_filter(sa_query, "eq:{full_name:'tester1'}")
+
+    sa_query = parser.append_filter(
+        sa.delete(users),
+        "full_name like \"tester%\"",
+    )
     result = conn.execute(sa_query)
-    assert result.rowcount == 1
+    assert result.rowcount == 4
+
+
+def test_fieldspec(virtual_user_db) -> None:
+    conn, users = virtual_user_db
+    parser = QueryFilterParser({
+        "n1": ("name", None),
+        "n2": ("full_name", lambda s: s.lower()),
+    })
+
+    sa_query = parser.append_filter(
+        sa.select([users.c.name, users.c.age]).select_from(users),
+        "n1 == \"tester\"",
+    )
+    actual_ret = list(conn.execute(sa_query))
+    test_ret = [("tester", 30)]
+    assert test_ret == actual_ret
+
+    sa_query = parser.append_filter(
+        sa.select([users.c.name, users.c.age]).select_from(users),
+        "n2 == \"TESTER1\"",
+    )
+    actual_ret = list(conn.execute(sa_query))
+    test_ret = [("tester", 30)]
+    assert test_ret == actual_ret
+
+    # non-existent column in fieldspec
+    with pytest.raises(ValueError):
+        parser.append_filter(
+            sa.select([users.c.name, users.c.age]).select_from(users),
+            "full_name == \"TESTER1\"",
+        )

@@ -840,6 +840,21 @@ class ComputeSession(graphene.ObjectType):
         return await loader.load(self.id)
 
     @classmethod
+    def _queryfilter_fieldspec(cls):
+        return {
+            "type": ("kernels_session_type", lambda s: SessionTypes[s]),
+            "name": ("kernels_session_name", None),
+            "domain_name": ("kernels_domain_name", None),
+            "group_name": ("groups_group_name", None),
+            "user_email": ("users_email", None),
+            "access_key": ("kernels_access_key", None),
+            "scaling_group": ("kernels_scaling_groups_name", None),
+            "cluster_mode": ("kernels_cluster_mode", lambda s: ClusterMode[s]),
+            "status": ("kernels_status", lambda s: KernelStatus[s]),
+            "result": ("kernels_result", lambda s: SessionResult[s]),
+        }
+
+    @classmethod
     async def load_count(
         cls,
         ctx: GraphQueryContext,
@@ -854,9 +869,14 @@ class ComputeSession(graphene.ObjectType):
             status_list = [KernelStatus[s] for s in status.split(',')]
         elif isinstance(status, KernelStatus):
             status_list = [status]
+        j = (
+            kernels
+            .join(groups, groups.c.id == kernels.c.group_id)
+            .join(users, users.c.uuid == kernels.c.user_uuid)
+        )
         query = (
             sa.select([sa.func.count(kernels.c.id)])
-            .select_from(kernels)
+            .select_from(j)
             .where(kernels.c.cluster_role == DEFAULT_ROLE)
         )
         if domain_name is not None:
@@ -868,7 +888,7 @@ class ComputeSession(graphene.ObjectType):
         if status is not None:
             query = query.where(kernels.c.status.in_(status_list))
         if filter is not None:
-            parser = QueryFilterParser()
+            parser = QueryFilterParser(cls._queryfilter_fieldspec())
             query = parser.append_filter(query, filter)
         async with ctx.db.begin_readonly() as conn:
             result = await conn.execute(query)
@@ -924,7 +944,7 @@ class ComputeSession(graphene.ObjectType):
         if status is not None:
             query = query.where(kernels.c.status.in_(status_list))
         if filter is not None:
-            parser = QueryFilterParser()
+            parser = QueryFilterParser(cls._queryfilter_fieldspec())
             query = parser.append_filter(query, filter)
         async with ctx.db.begin_readonly() as conn:
             return [cls.from_row(ctx, r) async for r in (await conn.stream(query))]
