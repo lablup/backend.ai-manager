@@ -840,25 +840,23 @@ class ComputeSession(graphene.ObjectType):
         loader = graph_ctx.dataloader_manager.get_loader(graph_ctx, 'ComputeSession.by_dependency')
         return await loader.load(self.id)
 
-    @classmethod
-    def _queryfilter_fieldspec(cls):
-        return {
-            "type": ("kernels_session_type", lambda s: SessionTypes[s]),
-            "name": ("kernels_session_name", None),
-            "domain_name": ("kernels_domain_name", None),
-            "group_name": ("groups_group_name", None),
-            "user_email": ("users_email", None),
-            "access_key": ("kernels_access_key", None),
-            "scaling_group": ("kernels_scaling_groups_name", None),
-            "cluster_mode": ("kernels_cluster_mode", lambda s: ClusterMode[s]),
-            "cluster_template": ("kernels_cluster_template", None),
-            "status": ("kernels_status", lambda s: KernelStatus[s]),
-            "status_info": ("kernels_status_info", None),
-            "result": ("kernels_result", lambda s: SessionResult[s]),
-            "created_at": ("kernels_created_at", dtparse),
-            "status_changed": ("kernels_status_changed", dtparse),
-            "terminated_at": ("kernels_terminated_at", dtparse),
-        }
+    _queryfilter_fieldspec = {
+        "type": ("kernels_session_type", lambda s: SessionTypes[s]),
+        "name": ("kernels_session_name", None),
+        "domain_name": ("kernels_domain_name", None),
+        "group_name": ("groups_group_name", None),
+        "user_email": ("users_email", None),
+        "access_key": ("kernels_access_key", None),
+        "scaling_group": ("kernels_scaling_groups_name", None),
+        "cluster_mode": ("kernels_cluster_mode", lambda s: ClusterMode[s]),
+        "cluster_template": ("kernels_cluster_template", None),
+        "status": ("kernels_status", lambda s: KernelStatus[s]),
+        "status_info": ("kernels_status_info", None),
+        "result": ("kernels_result", lambda s: SessionResult[s]),
+        "created_at": ("kernels_created_at", dtparse),
+        "status_changed": ("kernels_status_changed", dtparse),
+        "terminated_at": ("kernels_terminated_at", dtparse),
+    }
 
     @classmethod
     async def load_count(
@@ -894,7 +892,7 @@ class ComputeSession(graphene.ObjectType):
         if status is not None:
             query = query.where(kernels.c.status.in_(status_list))
         if filter is not None:
-            parser = QueryFilterParser(cls._queryfilter_fieldspec())
+            parser = QueryFilterParser(cls._queryfilter_fieldspec)
             query = parser.append_filter(query, filter)
         async with ctx.db.begin_readonly() as conn:
             result = await conn.execute(query)
@@ -950,7 +948,7 @@ class ComputeSession(graphene.ObjectType):
         if status is not None:
             query = query.where(kernels.c.status.in_(status_list))
         if filter is not None:
-            parser = QueryFilterParser(cls._queryfilter_fieldspec())
+            parser = QueryFilterParser(cls._queryfilter_fieldspec)
             query = parser.append_filter(query, filter)
         async with ctx.db.begin_readonly() as conn:
             return [cls.from_row(ctx, r) async for r in (await conn.stream(query))]
