@@ -890,6 +890,7 @@ class Queries(graphene.ObjectType):
             domain_name=domain_name,
             email=email,
             is_active=is_active,
+            filter=filter,
         )
         keypair_list = await KeyPair.load_slice(
             info.context,
@@ -900,6 +901,7 @@ class Queries(graphene.ObjectType):
             is_active=is_active,
             order_key=order_key,
             order_asc=order_asc,
+            filter=filter,
         )
         return KeyPairList(keypair_list, total_count)
 
@@ -1152,6 +1154,7 @@ class Queries(graphene.ObjectType):
             domain_name=domain_name,  # scope
             group_id=group_id,        # scope
             access_key=access_key,    # scope
+            filter=filter,
         )
         items = await ComputeSession.load_slice(
             info.context,
@@ -1162,6 +1165,7 @@ class Queries(graphene.ObjectType):
             access_key=access_key,    # scope
             order_key=order_key,      # order
             order_asc=order_asc,      # order
+            filter=filter,
         )
         return ComputeSessionList(items, total_count)
 
