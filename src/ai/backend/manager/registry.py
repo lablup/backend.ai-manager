@@ -2005,38 +2005,6 @@ class AgentRegistry:
                     flush_timeout,
                 )
 
-    async def execute_batch(
-        self,
-        session_id: SessionId,
-    ) -> None:
-        async with self.db.begin() as conn:
-            query = (
-                sa.select([
-                    kernels.c.id,
-                    kernels.c.status,
-                    kernels.c.agent_addr,
-                    kernels.c.startup_command,
-                ])
-                .select_from(kernels)
-                .where(
-                    (kernels.c.session_id == session_id) &
-                    (kernels.c.session_type == SessionTypes.BATCH) &
-                    (kernels.c.status == KernelStatus.RUNNING) &
-                    (kernels.c.cluster_role == DEFAULT_ROLE)
-                )
-            )
-            result = await conn.execute(query)
-            kernel = result.first()
-            if kernel is None:
-                return
-            async with RPCContext(
-                kernel['agent'],
-                kernel['agent_addr'],
-                30,
-                order_key=str(session_id),
-            ) as rpc:
-                return await rpc.call.execute_batch(str(kernel['id']), kernel['startup_command'])
-
     async def interrupt_session(
         self,
         session_name_or_id: Union[str, SessionId],
@@ -2215,7 +2183,6 @@ class AgentRegistry:
             agent_info['resource_slots'].items()})
         current_addr = agent_info['addr']
         sgroup = agent_info.get('scaling_group', 'default')
-
         async with self.heartbeat_lock:
 
             instance_rejoin = False
@@ -2304,7 +2271,10 @@ class AgentRegistry:
                     else:
                         log.error('should not reach here! {0}', type(row['status']))
 
-            await execute_with_retry(_update)
+            try:
+                await execute_with_retry(_update)
+            except sa.exc.IntegrityError:
+                log.error(f'Scaling group named [{sgroup}] does not exist.')
 
             if instance_rejoin:
                 await self.event_producer.produce_event(

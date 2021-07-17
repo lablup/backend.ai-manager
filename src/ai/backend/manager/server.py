@@ -32,6 +32,7 @@ import click
 from pathlib import Path
 from setproctitle import setproctitle
 import sqlalchemy as sa
+import aiomonitor
 
 from ai.backend.common import redis
 from ai.backend.common.cli import LazyGroup
@@ -104,6 +105,10 @@ VALID_VERSIONS: Final = frozenset([
 
     # rewrote vfolder upload/download APIs to migrate to external storage proxies
     'v6.20200815',
+
+    # added standard-compliant /admin/gql endpoint
+    # deprecated /admin/graphql endpoint
+    'v6.20210815',
 ])
 LATEST_REV_DATES: Final = {
     1: '20160915',
@@ -111,9 +116,9 @@ LATEST_REV_DATES: Final = {
     3: '20181215',
     4: '20190615',
     5: '20191215',
-    6: '20200815',
+    6: '20210815',
 }
-LATEST_API_VERSION: Final = 'v6.20200815'
+LATEST_API_VERSION: Final = 'v6.20210815'
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 
@@ -216,7 +221,7 @@ async def exception_middleware(request: web.Request,
         await stats_monitor.report_metric(INCREMENT, 'ai.backend.manager.api.failures')
         await stats_monitor.report_metric(INCREMENT, f'ai.backend.manager.api.status.{ex.status_code}')
         if ex.status_code == 404:
-            raise GenericNotFound
+            raise GenericNotFound(f"Unknown URL path: {request.path}")
         if ex.status_code == 405:
             concrete_ex = cast(web.HTTPMethodNotAllowed, ex)
             raise MethodNotAllowed(concrete_ex.method, concrete_ex.allowed_methods)
@@ -629,6 +634,17 @@ async def server_main(loop: asyncio.AbstractEventLoop,
                 str(root_ctx.local_config['manager']['ssl-cert']),
                 str(root_ctx.local_config['manager']['ssl-privkey']),
             )
+
+        # Start aiomonitor.
+        # Port is set by config (default=50001).
+        m = aiomonitor.Monitor(
+            loop,
+            port=root_ctx.local_config['manager']['aiomonitor-port'],
+            console_enabled=False
+        )
+        m.prompt = "monitor (manager) >>> "
+        m.start()
+
         runner = web.AppRunner(root_app)
         await runner.setup()
         service_addr = root_ctx.local_config['manager']['service-addr']
@@ -657,6 +673,7 @@ async def server_main(loop: asyncio.AbstractEventLoop,
         try:
             yield
         finally:
+            m.close()
             log.info('shutting down...')
             await runner.cleanup()
 
@@ -702,7 +719,6 @@ def main(ctx: click.Context, config_path: Path, debug: bool) -> None:
                 log.info('runtime: {0}', env_info())
                 log_config = logging.getLogger('ai.backend.manager.config')
                 log_config.debug('debug mode enabled.')
-
                 if cfg['manager']['event-loop'] == 'uvloop':
                     import uvloop
                     uvloop.install()
