@@ -248,7 +248,7 @@ class Queries(graphene.ObjectType):
     # Within a single domain, this will always return nothing or a single item,
     # but if queried across all domains by superadmins, it may return multiple results
     # because the group name is unique only inside each domain.
-    group_by_name = graphene.List(
+    groups_by_name = graphene.List(
         Group,
         name=graphene.String(required=True),
         domain_name=graphene.String(),
@@ -576,7 +576,7 @@ class Queries(graphene.ObjectType):
         return group
 
     @staticmethod
-    async def resolve_group_by_name(
+    async def resolve_groups_by_name(
         executor: AsyncioExecutor,
         info: graphene.ResolveInfo,
         name: str,
