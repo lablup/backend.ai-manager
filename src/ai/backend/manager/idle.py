@@ -537,6 +537,9 @@ class UtilizationIdleChecker(BaseIdleChecker):
             check_result = all(sufficiently_utilized.values())
         else:  # "and" operation is the default
             check_result = any(sufficiently_utilized.values())
+        if not check_result:
+            log.info("utilization timeout: {} ({}, {})",
+                     session_id, avg_utils, self.thresholds_check_operator)
         return check_result
 
     async def get_current_utilization(
