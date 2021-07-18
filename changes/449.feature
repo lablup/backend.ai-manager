@@ -1,1 +1,1 @@
-Now all paginated list GraphQL queries have an optional `filter` argument where the client may specify the filtering condition using a JSON-like mini-language expression
+Now all paginated list GraphQL queries have optional `filter` and `order` arguments where the client may specify the filtering/ordering conditions using a simple mini-language expression
