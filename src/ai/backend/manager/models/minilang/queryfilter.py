@@ -107,7 +107,7 @@ class QueryFilterTransformer(Transformer):
         if isinstance(children[2], Tree):
             val = self._transform_val(children[0].value, children[2].children[0])
         else:
-            val = children[2]
+            val = self._transform_val(children[0].value, children[2])
         if op == "==":
             return (col == val)
         elif op == "!=":
