@@ -1,7 +1,7 @@
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import Table, Column, Sequence, Integer, String
-import sqlalchemy as sa
 import pytest
+import sqlalchemy as sa
+from sqlalchemy.ext.declarative import declarative_base
+
 from ai.backend.manager.models.minilang.queryfilter import QueryFilterParser
 
 
@@ -10,20 +10,22 @@ def virtual_user_db():
     engine = sa.engine.create_engine('sqlite:///:memory:', echo=False)
     base = declarative_base()
     metadata = base.metadata
-    users = Table(
+    users = sa.Table(
         'users', metadata,
-        Column('id', Integer, Sequence('user_id_seq'), primary_key=True),
-        Column('name', String(50)),
-        Column('full_name', String(50)),
-        Column('age', Integer)
+        sa.Column('id', sa.Integer, sa.Sequence('user_id_seq'), primary_key=True),
+        sa.Column('name', sa.String(50)),
+        sa.Column('full_name', sa.String(50)),
+        sa.Column('age', sa.Integer),
+        sa.Column('is_active', sa.Boolean),
+        sa.Column('data', sa.Float, nullable=True),
     )
     metadata.create_all(engine)
     with engine.connect() as conn:
         conn.execute(users.insert(), [
-            {'name': 'tester', 'full_name': 'tester1', 'age': 30},
-            {'name': 'test\"er', 'full_name': 'tester2', 'age': 40},
-            {'name': 'test\'er', 'full_name': 'tester3', 'age': 50},
-            {'name': 'tester ♪', 'full_name': 'tester4', 'age': 20}
+            {'name': 'tester', 'full_name': 'tester1', 'age': 30, 'is_active': True, 'data': 10.5},
+            {'name': 'test\"er', 'full_name': 'tester2', 'age': 40, 'is_active': True, 'data': None},
+            {'name': 'test\'er', 'full_name': 'tester3', 'age': 50, 'is_active': False, 'data': 2.33},
+            {'name': 'tester ♪', 'full_name': 'tester4', 'age': 20, 'is_active': False, 'data': None}
         ])
         yield conn, users
     engine.dispose()
@@ -39,6 +41,22 @@ def test_select_queries(virtual_user_db) -> None:
     )
     actual_ret = list(conn.execute(sa_query))
     test_ret = [("tester", 30)]
+    assert test_ret == actual_ret
+
+    sa_query = parser.append_filter(
+        sa.select([users.c.name, users.c.age]).select_from(users),
+        "name == \"test'er\"",
+    )
+    actual_ret = list(conn.execute(sa_query))
+    test_ret = [("test'er", 50)]
+    assert test_ret == actual_ret
+
+    sa_query = parser.append_filter(
+        sa.select([users.c.name, users.c.age]).select_from(users),
+        "name == \"test\\\"er\"",
+    )
+    actual_ret = list(conn.execute(sa_query))
+    test_ret = [("test\"er", 40)]
     assert test_ret == actual_ret
 
     sa_query = parser.append_filter(
@@ -75,10 +93,34 @@ def test_select_queries(virtual_user_db) -> None:
 
     sa_query = parser.append_filter(
         sa.select([users.c.name, users.c.age]).select_from(users),
-        "(name contains \"test\") & (age > 30)",
+        "(name contains \"test\") & (age > 30) & (is_active is true)",
     )
     actual_ret = list(conn.execute(sa_query))
-    test_ret = [("test\"er", 40), ("test\'er", 50)]
+    test_ret = [("test\"er", 40)]
+    assert test_ret == actual_ret
+
+    sa_query = parser.append_filter(
+        sa.select([users.c.name, users.c.age]).select_from(users),
+        "data isnot null"
+    )
+    actual_ret = list(conn.execute(sa_query))
+    test_ret = [("tester", 30), ("test\'er", 50)]
+    assert test_ret == actual_ret
+
+    sa_query = parser.append_filter(
+        sa.select([users.c.name, users.c.age]).select_from(users),
+        "data is null"
+    )
+    actual_ret = list(conn.execute(sa_query))
+    test_ret = [("test\"er", 40), ("tester ♪", 20)]
+    assert test_ret == actual_ret
+
+    sa_query = parser.append_filter(
+        sa.select([users.c.name, users.c.age]).select_from(users),
+        "data < 9.4"
+    )
+    actual_ret = list(conn.execute(sa_query))
+    test_ret = [("test\'er", 50)]  # Note: null values are not matched
     assert test_ret == actual_ret
 
     # invalid syntax
@@ -87,6 +129,16 @@ def test_select_queries(virtual_user_db) -> None:
             sa.select([users.c.name, users.c.age]).select_from(users),
             "!!!",
         )
+
+    # invalid value type
+    # => This case is handled during the actual execution of SQL statements
+    #    in the database, not when preparing statements.
+    #    So it is the out of scope issue.
+    # with pytest.raises(ValueError):
+    #     parser.append_filter(
+    #         sa.select([users.c.name, users.c.age]).select_from(users),
+    #         "full_name == 123",
+    #     )
 
     # non-existent column
     with pytest.raises(ValueError):

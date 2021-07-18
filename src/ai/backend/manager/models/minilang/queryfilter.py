@@ -7,7 +7,7 @@ from typing import (
     Union,
 )
 
-from lark import Lark, LarkError, Transformer
+from lark import Lark, LarkError, Transformer, Tree
 import sqlalchemy as sa
 
 __all__ = (
@@ -24,12 +24,13 @@ FieldSpecItem = Tuple[str, Optional[Callable[[str], Any]]]
 _grammar = r"""
     ?start: expr
     value: string
-            | number
-            | array
-            | "null" | "true" | "false"
+           | number
+           | array
+           | ATOM -> atom
+    ATOM       : "null" | "true" | "false"
     COMBINE_OP : "&" | "|"
     UNARY_OP   : "!"
-    BINARY_OP  : "==" | "!=" | ">" | ">=" | "<" | "<=" | "contains" | "like"
+    BINARY_OP  : "==" | "!=" | ">" | ">=" | "<" | "<=" | "contains" | "in" | "isnot" | "is" | "like"
     expr: UNARY_OP expr         -> unary_expr
         | CNAME BINARY_OP value -> binary_expr
         | expr COMBINE_OP expr  -> combine_expr
@@ -59,7 +60,8 @@ class QueryFilterTransformer(Transformer):
 
     def string(self, s):
         (s,) = s
-        return s[1:-1]
+        # SQL-side escaping is handled by SQLAlchemy
+        return s[1:-1].replace("\\\"", '"')
 
     def number(self, n):
         (n,) = n
@@ -69,9 +71,14 @@ class QueryFilterTransformer(Transformer):
 
     array = list
 
-    null = lambda self, _: None
-    true = lambda self, _: True
-    false = lambda self, _: False
+    def atom(self, a):
+        (a,) = a
+        if a.value == "null":
+            return sa.null()
+        elif a.value == "true":
+            return sa.true()
+        elif a.value == "false":
+            return sa.false()
 
     def _get_col(self, col_name: str) -> sa.Column:
         try:
@@ -97,7 +104,10 @@ class QueryFilterTransformer(Transformer):
         children = args[0]
         col = self._get_col(children[0].value)
         op = children[1].value
-        val = self._transform_val(children[0].value, children[2].children[0])
+        if isinstance(children[2], Tree):
+            val = self._transform_val(children[0].value, children[2].children[0])
+        else:
+            val = children[2]
         if op == "==":
             return (col == val)
         elif op == "!=":
@@ -106,14 +116,18 @@ class QueryFilterTransformer(Transformer):
             return (col > val)
         elif op == ">=":
             return (col >= val)
-        elif op == ">":
+        elif op == "<":
             return (col < val)
-        elif op == ">=":
+        elif op == "<=":
             return (col <= val)
         elif op == "contains":
             return (col.contains(val))
         elif op == "in":
             return (col.in_(val))
+        elif op == "isnot":
+            return (col.isnot(val))
+        elif op == "is":
+            return (col.is_(val))
         elif op == "like":
             return (col.like(val))
         return args
@@ -169,5 +183,5 @@ class QueryFilterParser():
             ast = self._parser.parse(filter_expr)
             where_clause = QueryFilterTransformer(table, self._fieldspec).transform(ast)
         except LarkError as e:
-            raise ValueError(f"Query filter parsing/evaluation error: {e}")
+            raise ValueError(f"Query filter parsing error: {e}")
         return sa_query.where(where_clause)
