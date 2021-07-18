@@ -129,6 +129,21 @@ def test_select_queries(virtual_user_db) -> None:
             sa.select([users.c.name, users.c.age]).select_from(users),
             "!!!",
         )
+    with pytest.raises(ValueError):
+        parser.append_filter(
+            sa.select([users.c.name, users.c.age]).select_from(users),
+            "123"
+        )
+    with pytest.raises(ValueError):
+        parser.append_filter(
+            sa.select([users.c.name, users.c.age]).select_from(users),
+            "\"abc\""
+        )
+    with pytest.raises(ValueError):
+        parser.append_filter(
+            sa.select([users.c.name, users.c.age]).select_from(users),
+            "name"
+        )
 
     # invalid value type
     # => This case is handled during the actual execution of SQL statements
