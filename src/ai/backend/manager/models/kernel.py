@@ -22,6 +22,7 @@ from uuid import UUID
 import uuid
 
 from aioredis import Redis
+from dateutil.parser import parse as dtparse
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
@@ -57,6 +58,8 @@ from .base import (
     metadata,
 )
 from .group import groups
+from .minilang.queryfilter import QueryFilterParser
+from .minilang.ordering import QueryOrderParser
 from .user import users
 from .keypair import keypairs
 if TYPE_CHECKING:
@@ -572,6 +575,32 @@ class ComputeContainer(graphene.ObjectType):
         else:
             return self.last_stat
 
+    _queryfilter_fieldspec = {
+        "image": ("image", None),
+        "agent": ("agent", None),
+        "cluster_idx": ("cluster_idx", None),
+        "cluster_role": ("cluster_role", None),
+        "cluster_hostname": ("cluster_hostname", None),
+        "status": ("status", lambda s: KernelStatus[s]),
+        "status_info": ("status_info", None),
+        "created_at": ("created_at", dtparse),
+        "status_changed": ("status_changed", dtparse),
+        "terminated_at": ("terminated_at", dtparse),
+    }
+
+    _queryorder_colmap = {
+        "image": "image",
+        "agent": "agent",
+        "cluster_idx": "cluster_idx",
+        "cluster_role": "cluster_role",
+        "cluster_hostname": "cluster_hostname",
+        "status": "status",
+        "status_info": "status_info",
+        "status_changed": "status_info",
+        "created_at": "created_at",
+        "terminated_at": "terminated_at",
+    }
+
     @classmethod
     async def load_count(
         cls,
@@ -582,6 +611,7 @@ class ComputeContainer(graphene.ObjectType):
         domain_name: str = None,
         group_id: uuid.UUID = None,
         access_key: str = None,
+        filter: str = None,
     ) -> int:
         query = (
             sa.select([sa.func.count(kernels.c.id)])
@@ -596,6 +626,9 @@ class ComputeContainer(graphene.ObjectType):
             query = query.where(kernels.c.group_id == group_id)
         if access_key is not None:
             query = query.where(kernels.c.access_key == access_key)
+        if filter is not None:
+            qfparser = QueryFilterParser(cls._queryfilter_fieldspec)
+            query = qfparser.append_filter(query, filter)
         async with ctx.db.begin_readonly() as conn:
             result = await conn.execute(query)
             return result.scalar()
@@ -612,19 +645,13 @@ class ComputeContainer(graphene.ObjectType):
         domain_name: str = None,
         group_id: uuid.UUID = None,
         access_key: AccessKey = None,
-        order_key: str = None,
-        order_asc: bool = True,
+        filter: str = None,
+        order: str = None,
     ) -> Sequence[Optional[ComputeContainer]]:
-        if order_key is None:
-            _ordering = DEFAULT_SESSION_ORDERING
-        else:
-            _order_func = sa.asc if order_asc else sa.desc
-            _ordering = [_order_func(getattr(kernels.c, order_key))]
         query = (
             sa.select([kernels])
             .select_from(kernels)
             .where(kernels.c.session_id == session_id)
-            .order_by(*_ordering)
             .limit(limit)
             .offset(offset)
         )
@@ -636,6 +663,14 @@ class ComputeContainer(graphene.ObjectType):
             query = query.where(kernels.c.group_id == group_id)
         if access_key is not None:
             query = query.where(kernels.c.access_key == access_key)
+        if filter is not None:
+            qfparser = QueryFilterParser(cls._queryfilter_fieldspec)
+            query = qfparser.append_filter(query, filter)
+        if order is not None:
+            qoparser = QueryOrderParser(cls._queryorder_colmap)
+            query = qoparser.append_ordering(query, order)
+        else:
+            query = query.order_by(DEFAULT_SESSION_ORDERING)
         async with ctx.db.begin_readonly() as conn:
             return [cls.from_row(ctx, r) async for r in (await conn.stream(query))]
 
@@ -830,6 +865,49 @@ class ComputeSession(graphene.ObjectType):
         loader = graph_ctx.dataloader_manager.get_loader(graph_ctx, 'ComputeSession.by_dependency')
         return await loader.load(self.id)
 
+    _queryfilter_fieldspec = {
+        "type": ("kernels_session_type", lambda s: SessionTypes[s]),
+        "name": ("kernels_session_name", None),
+        "image": ("kernels_image", None),
+        "domain_name": ("kernels_domain_name", None),
+        "group_name": ("groups_group_name", None),
+        "user_email": ("users_email", None),
+        "access_key": ("kernels_access_key", None),
+        "scaling_group": ("kernels_scaling_groups_name", None),
+        "cluster_mode": ("kernels_cluster_mode", lambda s: ClusterMode[s]),
+        "cluster_template": ("kernels_cluster_template", None),
+        "cluster_size": ("kernels_cluster_size", None),
+        "status": ("kernels_status", lambda s: KernelStatus[s]),
+        "status_info": ("kernels_status_info", None),
+        "status_changed": ("kernels_status_changed", dtparse),
+        "result": ("kernels_result", lambda s: SessionResult[s]),
+        "created_at": ("kernels_created_at", dtparse),
+        "terminated_at": ("kernels_terminated_at", dtparse),
+        "starts_at": ("kernels_starts_at", dtparse),
+        "startup_command": ("kernels_startup_command", None),
+    }
+
+    _queryorder_colmap = {
+        "type": "kernels_session_type",
+        "name": "kernels_session_name",
+        "image": "kernels_image",
+        "domain_name": "kernels_domain_name",
+        "group_name": "kernels_group_name",
+        "user_email": "users_email",
+        "access_key": "kernels_access_key",
+        "scaling_group": "kernels_scaling_groups_name",
+        "cluster_mode": "kernels_cluster_mode",
+        "cluster_template": "kernels_cluster_template",
+        "cluster_size": "kernels_cluster_size",
+        "status": "kernels_status",
+        "status_info": "kernels_status_info",
+        "status_changed": "kernels_status_info",
+        "result": "kernels_result",
+        "created_at": "kernels_created_at",
+        "terminated_at": "kernels_terminated_at",
+        "starts_at": "kernels_starts_at",
+    }
+
     @classmethod
     async def load_count(
         cls,
@@ -839,14 +917,20 @@ class ComputeSession(graphene.ObjectType):
         group_id: uuid.UUID = None,
         access_key: str = None,
         status: str = None,
+        filter: str = None,
     ) -> int:
         if isinstance(status, str):
             status_list = [KernelStatus[s] for s in status.split(',')]
         elif isinstance(status, KernelStatus):
             status_list = [status]
+        j = (
+            kernels
+            .join(groups, groups.c.id == kernels.c.group_id)
+            .join(users, users.c.uuid == kernels.c.user_uuid)
+        )
         query = (
             sa.select([sa.func.count(kernels.c.id)])
-            .select_from(kernels)
+            .select_from(j)
             .where(kernels.c.cluster_role == DEFAULT_ROLE)
         )
         if domain_name is not None:
@@ -857,6 +941,9 @@ class ComputeSession(graphene.ObjectType):
             query = query.where(kernels.c.access_key == access_key)
         if status is not None:
             query = query.where(kernels.c.status.in_(status_list))
+        if filter is not None:
+            qfparser = QueryFilterParser(cls._queryfilter_fieldspec)
+            query = qfparser.append_filter(query, filter)
         async with ctx.db.begin_readonly() as conn:
             result = await conn.execute(query)
             return result.scalar()
@@ -872,18 +959,13 @@ class ComputeSession(graphene.ObjectType):
         group_id: uuid.UUID = None,
         access_key: str = None,
         status: str = None,
-        order_key: str = None,
-        order_asc: bool = True,
+        filter: str = None,
+        order: str = None,
     ) -> Sequence[ComputeSession | None]:
         if isinstance(status, str):
             status_list = [KernelStatus[s] for s in status.split(',')]
         elif isinstance(status, KernelStatus):
             status_list = [status]
-        if order_key is None:
-            _ordering = DEFAULT_SESSION_ORDERING
-        else:
-            _order_func = sa.asc if order_asc else sa.desc
-            _ordering = [_order_func(getattr(kernels.c, order_key))]
         j = (
             kernels
             .join(groups, groups.c.id == kernels.c.group_id)
@@ -897,7 +979,6 @@ class ComputeSession(graphene.ObjectType):
             ])
             .select_from(j)
             .where(kernels.c.cluster_role == DEFAULT_ROLE)
-            .order_by(*_ordering)
             .limit(limit)
             .offset(offset)
         )
@@ -909,6 +990,14 @@ class ComputeSession(graphene.ObjectType):
             query = query.where(kernels.c.access_key == access_key)
         if status is not None:
             query = query.where(kernels.c.status.in_(status_list))
+        if filter is not None:
+            parser = QueryFilterParser(cls._queryfilter_fieldspec)
+            query = parser.append_filter(query, filter)
+        if order is not None:
+            qoparser = QueryOrderParser(cls._queryorder_colmap)
+            query = qoparser.append_ordering(query, order)
+        else:
+            query = query.order_by(DEFAULT_SESSION_ORDERING)
         async with ctx.db.begin_readonly() as conn:
             return [cls.from_row(ctx, r) async for r in (await conn.stream(query))]
 
