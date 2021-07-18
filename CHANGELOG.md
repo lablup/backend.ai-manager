@@ -16,6 +16,23 @@ Changes
 
 .. towncrier release notes start
 
+21.03.13 (2021-07-19)
+---------------------
+
+### Breaking Changes
+* Removed never-used `order_key` and `order_asc` arguments in GraphQL pagination queries in favor of the new generic `order` argument ([#449](https://github.com/lablup/backend.ai-manager/issues/449))
+
+### Features
+* Make an explicit error message upon `IntegrityError` due to missing scaling groups when handling agent heartbeats. ([#443](https://github.com/lablup/backend.ai-manager/issues/443))
+* Now all paginated list GraphQL queries have optional `filter` and `order` arguments where the client may specify the filtering/ordering conditions using a simple mini-language expression ([#449](https://github.com/lablup/backend.ai-manager/issues/449))
+* Add aiomonitor module for manager ([#450](https://github.com/lablup/backend.ai-manager/issues/450))
+* Add `groups_by_name` GraphQL query to directly get group(s) from the given name ([#452](https://github.com/lablup/backend.ai-manager/issues/452))
+
+### Fixes
+* Apply missing batching of database queries for the `Group.scaling_groups` GraphQL field resolver. ([#451](https://github.com/lablup/backend.ai-manager/issues/451))
+* Apply batching to user group resolution in GraphQL queries ([#452](https://github.com/lablup/backend.ai-manager/issues/452))
+
+
 21.03.12 (2021-07-13)
 ---------------------
 
