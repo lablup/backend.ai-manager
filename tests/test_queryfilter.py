@@ -134,6 +134,11 @@ def test_select_queries(virtual_user_db) -> None:
     with pytest.raises(ValueError):
         parser.append_filter(
             sa.select([users.c.name, users.c.age]).select_from(users),
+            "",
+        )
+    with pytest.raises(ValueError):
+        parser.append_filter(
+            sa.select([users.c.name, users.c.age]).select_from(users),
             "!!!",
         )
     with pytest.raises(ValueError):
@@ -149,7 +154,7 @@ def test_select_queries(virtual_user_db) -> None:
     with pytest.raises(ValueError):
         parser.append_filter(
             sa.select([users.c.name, users.c.age]).select_from(users),
-            "name"
+            "name ="
         )
 
     # invalid value type
