@@ -107,7 +107,10 @@ VALID_VERSIONS: Final = frozenset([
     'v6.20200815',
 
     # added standard-compliant /admin/gql endpoint
-    # deprecated /admin/graphql endpoint
+    # deprecated /admin/graphql endpoint (still present for backward compatibility)
+    # added "groups_by_name" GQL query
+    # added "filter" and "order" arg to all paginated GQL queries with their own expression mini-langs
+    # removed "order_key" and "order_asc" arguments from all paginated GQL queries (never used!)
     'v6.20210815',
 ])
 LATEST_REV_DATES: Final = {
