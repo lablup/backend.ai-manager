@@ -12,6 +12,7 @@ from typing import (
 )
 import uuid
 
+from dateutil.parser import parse as dtparse
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
@@ -26,6 +27,7 @@ from .base import (
     batch_multiresult,
 )
 from .minilang.queryfilter import QueryFilterParser
+from .minilang.ordering import QueryOrderParser
 from .user import UserRole
 if TYPE_CHECKING:
     from .gql import GraphQueryContext
@@ -500,6 +502,42 @@ class VirtualFolder(graphene.ObjectType):
         # TODO: measure on-the-fly
         return 0
 
+    _queryfilter_fieldspec = {
+        "id": ("vfolders_id", uuid.UUID),
+        "host": ("vfolders_host", None),
+        "name": ("vfolders_name", None),
+        "group": ("vfolders_group", uuid.UUID),
+        "user": ("vfolders_user", uuid.UUID),
+        "user_email": ("users_email", None),
+        "creator": ("vfolders_creator", None),
+        "unmanaged_path": ("vfolders_unmanaged_path", None),
+        "usage_mode": ("vfolders_usage_mode", lambda s: VFolderUsageMode[s]),
+        "permission": ("vfolders_permission", lambda s: VFolderPermission[s]),
+        "ownership_type": ("vfolders_ownership_type", lambda s: VFolderOwnershipType[s]),
+        "max_files": ("vfolders_max_files", None),
+        "max_size": ("vfolders_max_size", None),
+        "created_at": ("vfolders_created_at", dtparse),
+        "last_used": ("vfolders_last_used", dtparse),
+        "cloneable": ("vfolders_cloneable", None),
+    }
+
+    _queryorder_colmap = {
+        "id": "vfolders_id",
+        "host": "vfolders_host",
+        "name": "vfolders_name",
+        "group": "vfolders_group",
+        "user": "vfolders_user",
+        "user_email": "users_email",
+        "usage_mode": "vfolders_usage_mode",
+        "permission": "vfolders_permission",
+        "ownership_type": "vfolders_ownership_type",
+        "max_files": "vfolders_max_files",
+        "max_size": "vfolders_max_size",
+        "created_at": "vfolders_created_at",
+        "last_used": "vfolders_last_used",
+        "cloneable": "vfolders_cloneable",
+    }
+
     @classmethod
     async def load_count(
         cls,
@@ -523,8 +561,8 @@ class VirtualFolder(graphene.ObjectType):
         if user_id is not None:
             query = query.where(vfolders.c.user == user_id)
         if filter is not None:
-            parser = QueryFilterParser()
-            query = parser.append_filter(query, filter)
+            qfparser = QueryFilterParser(cls._queryfilter_fieldspec)
+            query = qfparser.append_filter(query, filter)
         async with graph_ctx.db.begin_readonly() as conn:
             result = await conn.execute(query)
             return result.scalar()
@@ -539,21 +577,14 @@ class VirtualFolder(graphene.ObjectType):
         domain_name: str = None,
         group_id: uuid.UUID = None,
         user_id: uuid.UUID = None,
-        order_key: str = None,
-        order_asc: bool = True,
         filter: str = None,
+        order: str = None,
     ) -> Sequence[VirtualFolder]:
         from .user import users
-        if order_key is None:
-            _ordering = vfolders.c.created_at
-        else:
-            _order_func = sa.asc if order_asc else sa.desc
-            _ordering = _order_func(getattr(vfolders.c, order_key))
         j = sa.join(vfolders, users, vfolders.c.user == users.c.uuid)
         query = (
             sa.select([vfolders])
             .select_from(j)
-            .order_by(_ordering)
             .limit(limit)
             .offset(offset)
         )
@@ -564,8 +595,13 @@ class VirtualFolder(graphene.ObjectType):
         if user_id is not None:
             query = query.where(vfolders.c.user == user_id)
         if filter is not None:
-            parser = QueryFilterParser()
-            query = parser.append_filter(query, filter)
+            qfparser = QueryFilterParser(cls._queryfilter_fieldspec)
+            query = qfparser.append_filter(query, filter)
+        if order is not None:
+            qoparser = QueryOrderParser(cls._queryorder_colmap)
+            query = qoparser.append_ordering(query, order)
+        else:
+            query = query.order_by(vfolders.c.created_at.desc())
         async with graph_ctx.db.begin_readonly() as conn:
             return [
                 obj async for r in (await conn.stream(query))

@@ -6,7 +6,7 @@ from lark import Lark, LarkError, Transformer
 import sqlalchemy as sa
 
 __all__ = (
-    'QueryFilterParser',
+    'QueryOrderParser',
 )
 
 _grammar = r"""
@@ -40,8 +40,8 @@ class QueryOrderTransformer(Transformer):
                 col = self._sa_table.c[col_name]
             return col
         except KeyError:
-            raise ValueError("Unknown field name", col_name)
-    
+            raise ValueError("Unknown/unsupported field name", col_name)
+
     def col(self, *args):
         children = args[0]
         if len(children) == 2:
@@ -54,7 +54,7 @@ class QueryOrderTransformer(Transformer):
             return col.asc()
         elif op == "-":
             return col.desc()
-    
+
     expr = tuple
 
 

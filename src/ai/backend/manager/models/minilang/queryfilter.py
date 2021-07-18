@@ -1,9 +1,6 @@
 from typing import (
     Any,
-    Callable,
     Mapping,
-    Optional,
-    Tuple,
     Union,
 )
 
@@ -87,14 +84,14 @@ class QueryFilterTransformer(Transformer):
                 col = self._sa_table.c[col_name]
             return col
         except KeyError:
-            raise ValueError("Unknown field name", col_name)
+            raise ValueError("Unknown/unsupported field name", col_name)
 
     def _transform_val(self, col_name: str, value: Any) -> Any:
         if self._fieldspec:
             try:
                 func = self._fieldspec[col_name][1]
             except KeyError:
-                raise ValueError("Unknown field name", col_name)
+                raise ValueError("Unknown/unsupported field name", col_name)
             return func(value) if func is not None else value
         else:
             return value

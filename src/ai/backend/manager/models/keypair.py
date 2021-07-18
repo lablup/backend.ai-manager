@@ -16,6 +16,7 @@ import uuid
 from cryptography.hazmat.primitives import serialization as crypto_serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend as crypto_default_backend
+from dateutil.parser import parse as dtparse
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
@@ -45,6 +46,7 @@ from .base import (
     simple_db_mutate_returning_item,
 )
 from .minilang.queryfilter import QueryFilterParser
+from .minilang.ordering import QueryOrderParser
 from .user import ModifyUserInput, UserRole
 from ..defs import RESERVED_DOTFILES
 
@@ -241,8 +243,34 @@ class KeyPair(graphene.ObjectType):
                 if (obj := cls.from_row(graph_ctx, row)) is not None
             ]
 
-    @staticmethod
+    _queryfilter_fieldspec = {
+        "access_key": ("keypairs_access_key", None),
+        "is_active": ("keypairs_is_active", None),
+        "is_admin": ("keypairs_is_admin", None),
+        "resource_policy": ("keypairs_resource_policy", None),
+        "created_at": ("keypairs_created_at", dtparse),
+        "last_used": ("keypairs_last_used", dtparse),
+        "concurrency_limit": ("keypairs_concurrency_limit", None),
+        "concurrency_used": ("keypairs_concurrency_used", None),
+        "rate_limit": ("keypairs_rate_limit", None),
+        "ssh_public_key": ("keypairs_ssh_public_key", None),
+    }
+
+    _queryorder_colmap = {
+        "access_key": "keypairs_access_key",
+        "is_active": "keypairs_is_active",
+        "is_admin": "keypairs_is_admin",
+        "resource_policy": "keypairs_resource_policy",
+        "created_at": "keypairs_created_at",
+        "last_used": "keypairs_last_used",
+        "concurrency_limit": "keypairs_concurrency_limit",
+        "concurrency_used": "keypairs_concurrency_used",
+        "rate_limit": "keypairs_rate_limit",
+    }
+
+    @classmethod
     async def load_count(
+        cls,
         graph_ctx: GraphQueryContext,
         *,
         domain_name: str = None,
@@ -263,8 +291,8 @@ class KeyPair(graphene.ObjectType):
         if is_active is not None:
             query = query.where(keypairs.c.is_active == is_active)
         if filter is not None:
-            parser = QueryFilterParser()
-            query = parser.append_filter(query, filter)
+            qfparser = QueryFilterParser(cls._queryfilter_fieldspec)
+            query = qfparser.append_filter(query, filter)
         async with graph_ctx.db.begin_readonly() as conn:
             result = await conn.execute(query)
             return result.scalar()
@@ -279,21 +307,14 @@ class KeyPair(graphene.ObjectType):
         domain_name: str = None,
         email: str = None,
         is_active: bool = None,
-        order_key: str = None,
-        order_asc: bool = True,
         filter: str = None,
+        order: str = None,
     ) -> Sequence[KeyPair]:
         from .user import users
-        if order_key is None:
-            _ordering = sa.desc(keypairs.c.created_at)
-        else:
-            _order_func = sa.asc if order_asc else sa.desc
-            _ordering = _order_func(getattr(keypairs.c, order_key))
         j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
         query = (
             sa.select([keypairs])
             .select_from(j)
-            .order_by(_ordering)
             .limit(limit)
             .offset(offset)
         )
@@ -304,8 +325,13 @@ class KeyPair(graphene.ObjectType):
         if is_active is not None:
             query = query.where(keypairs.c.is_active == is_active)
         if filter is not None:
-            parser = QueryFilterParser()
-            query = parser.append_filter(query, filter)
+            qfparser = QueryFilterParser(cls._queryfilter_fieldspec)
+            query = qfparser.append_filter(query, filter)
+        if order is not None:
+            qoparser = QueryOrderParser(cls._queryorder_colmap)
+            query = qoparser.append_ordering(query, order)
+        else:
+            query = query.order_by(keypairs.c.created_at.desc())
         async with graph_ctx.db.begin_readonly() as conn:
             return [
                 obj async for row in (await conn.stream(query))
