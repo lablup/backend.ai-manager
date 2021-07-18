@@ -10,16 +10,15 @@ from typing import (
 from lark import Lark, LarkError, Transformer, Tree
 import sqlalchemy as sa
 
+from . import FieldSpecItem
+
 __all__ = (
     'FilterableSQLQuery',
-    'FieldSpecItem',
-    'QueryFilterTransformer',
     'QueryFilterParser',
 )
 
 
 FilterableSQLQuery = Union[sa.sql.Select, sa.sql.Update, sa.sql.Delete]
-FieldSpecItem = Tuple[str, Optional[Callable[[str], Any]]]
 
 _grammar = r"""
     ?start: expr
