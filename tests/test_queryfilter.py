@@ -117,6 +117,13 @@ def test_select_queries(virtual_user_db) -> None:
 
     sa_query = parser.append_filter(
         sa.select([users.c.name, users.c.age]).select_from(users),
+        "data is null | data isnot null"
+    )
+    actual_ret = list(conn.execute(sa_query))
+    assert len(actual_ret) == 4  # all rows
+
+    sa_query = parser.append_filter(
+        sa.select([users.c.name, users.c.age]).select_from(users),
         "data < 9.4"
     )
     actual_ret = list(conn.execute(sa_query))
