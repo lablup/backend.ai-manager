@@ -83,7 +83,12 @@ convention = {
 metadata = sa.MetaData(naming_convention=convention)
 
 pgsql_connect_opts = {
-    'server_settings': {'jit': 'off'}
+    'server_settings': {
+        'jit': 'off',
+        'deadlock_timeout': '10s',
+        'lock_timeout': '3000',
+        'idle_in_transaction_session_timeout': '60000',
+    },
 }
 
 
