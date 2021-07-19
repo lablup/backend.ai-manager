@@ -16,6 +16,13 @@ Changes
 
 .. towncrier release notes start
 
+20.09.23 (2021-07-19)
+---------------------
+
+### Fixes
+* Fix missing order_key, order_asc -> order changes in paginated list GQL queries ([#453](https://github.com/lablup/backend.ai-manager/issues/453))
+
+
 20.09.22 (2021-07-19)
 ---------------------
 
