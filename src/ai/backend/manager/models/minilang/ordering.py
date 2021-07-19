@@ -78,5 +78,5 @@ class QueryOrderParser():
             ast = self._parser.parse(order_expr)
             orders = QueryOrderTransformer(table, self._column_map).transform(ast)
         except LarkError as e:
-            raise ValueError(f"Query filter parsing error: {e}")
+            raise ValueError(f"Query ordering parsing error: {e}")
         return sa_query.order_by(*orders)
