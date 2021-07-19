@@ -245,6 +245,8 @@ class KeyPair(graphene.ObjectType):
 
     _queryfilter_fieldspec = {
         "access_key": ("keypairs_access_key", None),
+        "user_id": ("users_uuid", None),
+        "email": ("users_email", None),
         "is_active": ("keypairs_is_active", None),
         "is_admin": ("keypairs_is_admin", None),
         "resource_policy": ("keypairs_resource_policy", None),
@@ -258,6 +260,7 @@ class KeyPair(graphene.ObjectType):
 
     _queryorder_colmap = {
         "access_key": "keypairs_access_key",
+        "email": "users_email",
         "is_active": "keypairs_is_active",
         "is_admin": "keypairs_is_admin",
         "resource_policy": "keypairs_resource_policy",
