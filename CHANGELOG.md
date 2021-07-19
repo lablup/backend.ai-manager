@@ -16,6 +16,13 @@ Changes
 
 .. towncrier release notes start
 
+20.09.24 (2021-07-19)
+---------------------
+
+### Features
+* Add lock-related DB connection settings for better DB stability when the Manager does not release a lock and/or idle for a long time after acquiring a lock. ([#454](https://github.com/lablup/backend.ai-manager/issues/454))
+
+
 20.09.23 (2021-07-19)
 ---------------------
 
