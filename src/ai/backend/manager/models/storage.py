@@ -4,6 +4,7 @@ import asyncio
 from contextlib import asynccontextmanager as actxmgr
 from contextvars import ContextVar
 import itertools
+import logging
 from typing import (
     Any,
     AsyncIterator,
@@ -17,6 +18,8 @@ from typing import (
     TYPE_CHECKING,
 )
 from uuid import UUID
+
+from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import HardwareMetadata
 
 import aiohttp
@@ -37,6 +40,8 @@ __all__ = (
     'StorageSessionManager',
     'StorageVolume',
 )
+
+log = BraceStyleAdapter(logging.getLogger(__name__))
 
 
 @attr.s(auto_attribs=True, slots=True, frozen=True)
@@ -221,6 +226,7 @@ class StorageVolume(graphene.ObjectType):
     async def load_count(
         cls,
         ctx: GraphQueryContext,
+        filter: str = None,
     ) -> int:
         volumes = [*await ctx.storage_manager.get_all_volumes()]
         return len(volumes)
@@ -231,7 +237,12 @@ class StorageVolume(graphene.ObjectType):
         ctx: GraphQueryContext,
         limit: int,
         offset: int,
+        filter: str = None,
+        order: str = None,
     ) -> Sequence[StorageVolume]:
+        # For consistency we add filter/order params here, but it's actually noop.
+        if filter is not None or order is not None:
+            log.warning("Paginated list of storage volumes igonores custom filtering and/or ordering")
         volumes = [*await ctx.storage_manager.get_all_volumes()]
         return [
             cls.from_info(proxy_name, volume_info)
