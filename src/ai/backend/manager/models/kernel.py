@@ -670,7 +670,7 @@ class ComputeContainer(graphene.ObjectType):
             qoparser = QueryOrderParser(cls._queryorder_colmap)
             query = qoparser.append_ordering(query, order)
         else:
-            query = query.order_by(DEFAULT_SESSION_ORDERING)
+            query = query.order_by(*DEFAULT_SESSION_ORDERING)
         async with ctx.db.begin_readonly() as conn:
             return [cls.from_row(ctx, r) async for r in (await conn.stream(query))]
 
@@ -997,7 +997,7 @@ class ComputeSession(graphene.ObjectType):
             qoparser = QueryOrderParser(cls._queryorder_colmap)
             query = qoparser.append_ordering(query, order)
         else:
-            query = query.order_by(DEFAULT_SESSION_ORDERING)
+            query = query.order_by(*DEFAULT_SESSION_ORDERING)
         async with ctx.db.begin_readonly() as conn:
             return [cls.from_row(ctx, r) async for r in (await conn.stream(query))]
 
