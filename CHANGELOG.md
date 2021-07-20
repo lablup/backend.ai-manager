@@ -16,6 +16,13 @@ Changes
 
 .. towncrier release notes start
 
+20.09.26 (2021-07-20)
+---------------------
+
+### Fixes
+* Fix a critical bug due to a missing column from the select targets of join SQL queries in the new batched GQL object resolvers for `Group.by_user` and `ScalingGroup.by_group`, which only happens with non-admin user accounts ([#457](https://github.com/lablup/backend.ai-manager/issues/457))
+
+
 20.09.25 (2021-07-20)
 ---------------------
 
