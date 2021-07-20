@@ -242,7 +242,7 @@ class Group(graphene.ObjectType):
             groups.c.id == association_groups_users.c.group_id,
         )
         query = (
-            sa.select([groups])
+            sa.select([groups, association_groups_users.c.user_id])
             .select_from(j)
             .where(association_groups_users.c.user_id.in_(user_ids))
         )

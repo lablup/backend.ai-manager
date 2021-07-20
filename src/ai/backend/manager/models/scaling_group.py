@@ -290,7 +290,7 @@ class ScalingGroup(graphene.ObjectType):
             scaling_groups.c.name == sgroups_for_groups.c.scaling_group
         )
         query = (
-            sa.select([scaling_groups])
+            sa.select([scaling_groups, sgroups_for_groups.c.group])
             .select_from(j)
             .where(sgroups_for_groups.c.group.in_(group_ids))
         )
