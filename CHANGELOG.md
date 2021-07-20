@@ -16,6 +16,14 @@ Changes
 
 .. towncrier release notes start
 
+21.03.16 (2021-07-20)
+---------------------
+
+### Fixes
+* Fix a regression of session concurrency limit checks due to transaction retry refactoring in #429 ([#455](https://github.com/lablup/backend.ai-manager/issues/455))
+* Partially revert and fix #454 which introduced default connection settings of deadlock/lock/transaction-idle timeouts for PostgreSQL, to make it working with AWS RDS ([#456](https://github.com/lablup/backend.ai-manager/issues/456))
+
+
 21.03.15 (2021-07-19)
 ---------------------
 
