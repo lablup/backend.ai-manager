@@ -17,10 +17,6 @@ __all__ = (
 
 FilterableSQLQuery = Union[sa.sql.Select, sa.sql.Update, sa.sql.Delete]
 
-_binary_op = (
-    '"==" | "!=" | ">" | ">=" | "<" | "<=" | '
-    '"contains" | "in" | "isnot" | "is" | "like" | "ilike"'
-)
 _grammar = r"""
     ?start: expr
     value: string
@@ -30,7 +26,12 @@ _grammar = r"""
     ATOM       : "null" | "true" | "false"
     COMBINE_OP : "&" | "|"
     UNARY_OP   : "!"
-    BINARY_OP  : {0}
+    BINARY_OP  : "==" | "!="
+               | ">" | ">="
+               | "<" | "<="
+               | "contains" | "in"
+               | "isnot" | "is"
+               | "like" | "ilike"
     expr: UNARY_OP expr         -> unary_expr
         | CNAME BINARY_OP value -> binary_expr
         | expr COMBINE_OP expr  -> combine_expr
@@ -43,7 +44,7 @@ _grammar = r"""
     %import common.SIGNED_NUMBER
     %import common.WS
     %ignore WS
-""".format(_binary_op)
+"""
 _parser = Lark(
     _grammar,
     parser='lalr',
