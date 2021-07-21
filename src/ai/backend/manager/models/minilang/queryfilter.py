@@ -26,7 +26,12 @@ _grammar = r"""
     ATOM       : "null" | "true" | "false"
     COMBINE_OP : "&" | "|"
     UNARY_OP   : "!"
-    BINARY_OP  : "==" | "!=" | ">" | ">=" | "<" | "<=" | "contains" | "in" | "isnot" | "is" | "like"
+    BINARY_OP  : "==" | "!="
+               | ">" | ">="
+               | "<" | "<="
+               | "contains" | "in"
+               | "isnot" | "is"
+               | "like" | "ilike"
     expr: UNARY_OP expr         -> unary_expr
         | CNAME BINARY_OP value -> binary_expr
         | expr COMBINE_OP expr  -> combine_expr
@@ -126,6 +131,8 @@ class QueryFilterTransformer(Transformer):
             return (col.is_(val))
         elif op == "like":
             return (col.like(val))
+        elif op == "ilike":
+            return (col.ilike(val))
         return args
 
     def unary_expr(self, *args):
