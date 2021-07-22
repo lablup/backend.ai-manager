@@ -1,0 +1,1 @@
+Let the idle timeout checkr skip batch-type sessions as they do not have any interaction whose absence are translated to idleness
