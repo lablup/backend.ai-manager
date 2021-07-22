@@ -69,6 +69,14 @@ def test_select_queries(virtual_user_db) -> None:
 
     sa_query = parser.append_filter(
         sa.select([users.c.name, users.c.age]).select_from(users),
+        "full_name in [\"tester1\", \"tester3\", \"tester9\"]",
+    )
+    actual_ret = list(conn.execute(sa_query))
+    test_ret = [("tester", 30), ("test\'er", 50)]
+    assert test_ret == actual_ret
+
+    sa_query = parser.append_filter(
+        sa.select([users.c.name, users.c.age]).select_from(users),
         "full_name == \"tester1\" & age == 20",
     )
     actual_ret = list(conn.execute(sa_query))
@@ -215,6 +223,14 @@ def test_fieldspec(virtual_user_db) -> None:
     )
     actual_ret = list(conn.execute(sa_query))
     test_ret = [("tester", 30)]
+    assert test_ret == actual_ret
+
+    sa_query = parser.append_filter(
+        sa.select([users.c.name, users.c.age]).select_from(users),
+        "n2 in [\"TESTER2\", \"TESTER4\"]",
+    )
+    actual_ret = list(conn.execute(sa_query))
+    test_ret = [("test\"er", 40), ("tester ♪", 20)]
     assert test_ret == actual_ret
 
     # non-existent column in fieldspec

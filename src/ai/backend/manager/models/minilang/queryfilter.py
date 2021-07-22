@@ -91,7 +91,7 @@ class QueryFilterTransformer(Transformer):
         except KeyError:
             raise ValueError("Unknown/unsupported field name", col_name)
 
-    def _transform_val(self, col_name: str, value: Any) -> Any:
+    def _transform_val_leaf(self, col_name: str, value: Any) -> Any:
         if self._fieldspec:
             try:
                 func = self._fieldspec[col_name][1]
@@ -101,14 +101,20 @@ class QueryFilterTransformer(Transformer):
         else:
             return value
 
+    def _transform_val(self, col_name: str, value: Any) -> Any:
+        if isinstance(value, Tree):
+            val = self._transform_val(col_name, value.children[0])
+        elif isinstance(value, list):
+            val = [self._transform_val(col_name, v) for v in value]
+        else:
+            val = self._transform_val_leaf(col_name, value)
+        return val
+
     def binary_expr(self, *args):
         children = args[0]
         col = self._get_col(children[0].value)
         op = children[1].value
-        if isinstance(children[2], Tree):
-            val = self._transform_val(children[0].value, children[2].children[0])
-        else:
-            val = self._transform_val(children[0].value, children[2])
+        val = self._transform_val(children[0].value, children[2])
         if op == "==":
             return (col == val)
         elif op == "!=":
