@@ -16,6 +16,17 @@ Changes
 
 .. towncrier release notes start
 
+20.09.27 (2021-07-22)
+---------------------
+
+### Features
+* Make `ilike` operator (equivalent to SQL's `ILIKE`) available in the queryfilter to allow case-insensitive string matching ([#458](https://github.com/lablup/backend.ai-manager/issues/458))
+
+### Fixes
+* Fix handling of value transforms with array values in queryfilter binary expressions ([#459](https://github.com/lablup/backend.ai-manager/issues/459))
+* Let the idle timeout checkr skip batch-type sessions as they do not have any interaction whose absence are translated to idleness ([#460](https://github.com/lablup/backend.ai-manager/issues/460))
+
+
 20.09.26 (2021-07-20)
 ---------------------
 
