@@ -29,12 +29,42 @@ def virtual_user_db():
     )
     metadata.create_all(engine)
     with engine.connect() as conn:
-        conn.execute(users.insert(), [
-            {'name': 'tester', 'full_name': 'tester1', 'type': UserTypes.ADMIN, 'age': 30, 'is_active': True, 'data': 10.5},
-            {'name': 'test\"er', 'full_name': 'tester2', 'type': UserTypes.USER, 'age': 40, 'is_active': True, 'data': None},
-            {'name': 'test\'er', 'full_name': 'tester3', 'type': UserTypes.USER, 'age': 50, 'is_active': False, 'data': 2.33},
-            {'name': 'tester ♪', 'full_name': 'tester4', 'type': UserTypes.USER, 'age': 20, 'is_active': False, 'data': None},
-        ])
+        conn.execute(
+            users.insert(), [
+                {
+                    'name': 'tester',
+                    'full_name': 'tester1',
+                    'type': UserTypes.ADMIN,
+                    'age': 30,
+                    'is_active': True,
+                    'data': 10.5,
+                },
+                {
+                    'name': 'test\"er',
+                    'full_name': 'tester2',
+                    'type': UserTypes.USER,
+                    'age': 40,
+                    'is_active': True,
+                    'data': None,
+                },
+                {
+                    'name': 'test\'er',
+                    'full_name': 'tester3',
+                    'type': UserTypes.USER,
+                    'age': 50,
+                    'is_active': False,
+                    'data': 2.33,
+                },
+                {
+                    'name': 'tester ♪',
+                    'full_name': 'tester4',
+                    'type': UserTypes.USER,
+                    'age': 20,
+                    'is_active': False,
+                    'data': None,
+                },
+            ]
+        )
         yield conn, users
     engine.dispose()
 
