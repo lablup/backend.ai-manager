@@ -753,6 +753,7 @@ class AgentRegistry:
         session_tag: str = None,
         internal_data: dict = None,
         starts_at: datetime = None,
+        agent_list : List[str] = None,
     ) -> SessionId:
 
         mounts = kernel_enqueue_configs[0]['creation_config'].get('mounts') or []
@@ -830,8 +831,9 @@ class AgentRegistry:
             raise VFolderNotFound
         mounts = determined_mounts
 
+        mapping_agents_containers = []
         ids = []
-        is_multicontainer = cluster_size > 1
+        is_multicontainer = cluster_size > 1    
         if is_multicontainer:
             if len(kernel_enqueue_configs) == 1:
                 log.debug(
@@ -846,6 +848,22 @@ class AgentRegistry:
                     sub_kernel_config['cluster_role'] = 'sub'
                     sub_kernel_config['cluster_idx'] = i + 1
                     kernel_enqueue_configs.append(sub_kernel_config)
+                '''
+                For multi-node cluster sessions, the list should include agents for all individual containers.
+                Let's assume that the orders of agents and containers are same 
+                (e.g., a1, a2, a3 + main1, sub1, sub2 => main1:a1, sub1:a2, sub2:a3)
+                
+                kernel_enqueue_configs[i]['cluster_name'] : main1, sub1, sub2, sub3, ...
+                
+                agent_list                                :    a1,   a2,   a3,   a4, ...
+                '''
+                tmp_tuple = ()
+                for i in range(cluster_size):
+                    tmp_tuple = \
+                        (f"{kernel_enqueue_configs[i]['cluster_role']}{kernel_enqueue_configs[i]['cluster_idx']}", 
+                         agent_list[i])
+                    mapping_agents_containers.append(tmp_tuple)
+                
             elif len(kernel_enqueue_configs) > 1:
                 # each container should have its own kernel_config
                 log.debug(
@@ -1038,6 +1056,9 @@ class AgentRegistry:
                 nonlocal ids
                 async with self.db.begin() as conn:
                     query = kernels.insert().values({
+                        'agent': kernel['agent'],
+                        'agent_addr': kernel['agent_addr'],
+                        'mapping_agents_containers': mapping_agents_containers,
                         'id': kernel_id,
                         'status': KernelStatus.PENDING,
                         'session_creation_id': session_creation_id,
