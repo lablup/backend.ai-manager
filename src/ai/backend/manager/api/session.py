@@ -74,12 +74,13 @@ from ai.backend.common.events import (
     SessionTerminatedEvent,
 )
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.utils import cancel_tasks, str_to_timedelta
+from ai.backend.common.utils import str_to_timedelta
 from ai.backend.common.types import (
     AgentId,
     KernelId,
     ClusterMode,
     KernelEnqueueingConfig,
+    SessionId,
     SessionTypes,
     check_typed_dict,
 )
@@ -505,6 +506,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             session_tag=params['tag'],
             starts_at=starts_at,
         ))
+        session_id = cast(SessionId, kernel_id)  # the main kernel's ID is the session ID
         resp['sessionId'] = str(kernel_id)  # changed since API v5
         resp['sessionName'] = str(params['session_name'])
         resp['status'] = 'PENDING'
@@ -550,6 +552,8 @@ async def _create(request: web.Request, params: Any) -> web.Response:
                         if 'allowed_envs' in item.keys():
                             response_dict['allowed_envs'] = item['allowed_envs']
                         resp['servicePorts'].append(response_dict)
+                    # TODO: handle shutdown of dangling tasks
+                    asyncio.create_task(root_ctx.registry.execute_batch(session_id))
                 else:
                     resp['status'] = row['status'].name
     except asyncio.CancelledError:
@@ -762,9 +766,16 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
         t.Key('startupCommand', default=None) >> 'startup_command': t.Null | t.String,
         tx.AliasedKey(['bootstrap_script', 'bootstrapScript'], default=None): t.Null | t.String,
         t.Key('owner_access_key', default=None): t.Null | t.String,
+        t.Key('agentList', default= None) >> 'agent_list': t.List(t.String),
     }),
     loads=_json_loads)
 async def create_from_params(request: web.Request, params: Any) -> web.Response:
+    if params['agentList'] is not None and request['user']['role'] != (UserRole.SUPERADMIN):
+        raise InsufficientPrivilege('You are not allowed to see Agent List')
+    
+    if request['user']['role'] == (UserRole.SUPERADMIN) and params['cluster_size'] != len(params('agentList')):
+        raise InvalidAPIParameters('cluster_size and length of agent_list are not match')
+    
     if params['session_name'] in ['from-template']:
         raise InvalidAPIParameters(f'Requested session ID {params["session_name"]} is reserved word')
     api_version = request['api_version']
@@ -800,11 +811,19 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
         t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.ToBool,
         t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
         t.Key('owner_access_key', default=None): t.Null | t.String,
+        t.Key('agentList', default=None) >> 'agent_list': t.List(t.String),
     }),
     loads=_json_loads)
 async def create_cluster(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     app_ctx: PrivateContext = request.app['session.context']
+    
+    if params['agentList'] and request['user']['role'] != (UserRole.SUPERADMIN):
+        raise InsufficientPrivilege('You are not allowed to see Agent List')
+        
+    if request['user']['role'] == (UserRole.SUPERADMIN) and params['cluster_size'] != len(params('agentList')):
+        raise InvalidAPIParameters('cluster_size and length of agent_list are not match')
+    
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
     scopes_param = {
@@ -1023,6 +1042,8 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
                         if 'allowed_envs' in item.keys():
                             response_dict['allowed_envs'] = item['allowed_envs']
                         resp['servicePorts'].append(response_dict)
+                    # TODO: handle shutdown of dangling tasks
+                    asyncio.create_task(root_ctx.registry.execute_batch(session_id))
                 else:
                     resp['status'] = row['status'].name
 
@@ -1255,9 +1276,6 @@ async def handle_kernel_log(
         for _ in range(list_size):
             # Read chunk-by-chunk to allow interleaving with other Redis operations.
             chunk = await redis.execute_with_retries(lambda: redis_conn.lpop(log_key))
-            if chunk is None:  # maybe missing
-                log_buffer.write(b"(container log unavailable)\n")
-                break
             log_buffer.write(chunk)
         try:
             log_data = log_buffer.getvalue()
@@ -1956,7 +1974,13 @@ async def shutdown(app: web.Application) -> None:
     app_ctx.stats_task.cancel()
     await app_ctx.stats_task
 
-    await cancel_tasks(app_ctx.pending_waits)
+    for task in {*app_ctx.pending_waits}:
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
