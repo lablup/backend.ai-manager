@@ -45,7 +45,7 @@ from ai.backend.common.events import (
     SessionStartedEvent,
 )
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.types import AccessKey, aobject
+from ai.backend.common.types import AccessKey, aobject, SessionTypes
 from ai.backend.common.utils import nmget
 from ai.backend.manager.models.utils import ExtendedAsyncSAEngine
 
@@ -280,6 +280,8 @@ class TimeoutIdleChecker(BaseIdleChecker):
 
     async def check_session(self, session: Row, dbconn: SAConnection) -> bool:
         session_id = session["id"]
+        if session["session_type"] == SessionTypes.BATCH:
+            return True
         active_streams = await self._redis.zcount(
             f"session.{session_id}.active_app_connections"
         )
