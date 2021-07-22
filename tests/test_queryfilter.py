@@ -1,8 +1,15 @@
+import enum
+
 import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.declarative import declarative_base
 
 from ai.backend.manager.models.minilang.queryfilter import QueryFilterParser
+
+
+class UserTypes(enum.Enum):
+    ADMIN = 0
+    USER = 1
 
 
 @pytest.fixture
@@ -15,6 +22,7 @@ def virtual_user_db():
         sa.Column('id', sa.Integer, sa.Sequence('user_id_seq'), primary_key=True),
         sa.Column('name', sa.String(50)),
         sa.Column('full_name', sa.String(50)),
+        sa.Column('type', sa.Enum(UserTypes)),
         sa.Column('age', sa.Integer),
         sa.Column('is_active', sa.Boolean),
         sa.Column('data', sa.Float, nullable=True),
@@ -22,10 +30,10 @@ def virtual_user_db():
     metadata.create_all(engine)
     with engine.connect() as conn:
         conn.execute(users.insert(), [
-            {'name': 'tester', 'full_name': 'tester1', 'age': 30, 'is_active': True, 'data': 10.5},
-            {'name': 'test\"er', 'full_name': 'tester2', 'age': 40, 'is_active': True, 'data': None},
-            {'name': 'test\'er', 'full_name': 'tester3', 'age': 50, 'is_active': False, 'data': 2.33},
-            {'name': 'tester ♪', 'full_name': 'tester4', 'age': 20, 'is_active': False, 'data': None}
+            {'name': 'tester', 'full_name': 'tester1', 'type': UserTypes.ADMIN, 'age': 30, 'is_active': True, 'data': 10.5},
+            {'name': 'test\"er', 'full_name': 'tester2', 'type': UserTypes.USER, 'age': 40, 'is_active': True, 'data': None},
+            {'name': 'test\'er', 'full_name': 'tester3', 'type': UserTypes.USER, 'age': 50, 'is_active': False, 'data': 2.33},
+            {'name': 'tester ♪', 'full_name': 'tester4', 'type': UserTypes.USER, 'age': 20, 'is_active': False, 'data': None},
         ])
         yield conn, users
     engine.dispose()
@@ -74,6 +82,13 @@ def test_select_queries(virtual_user_db) -> None:
     actual_ret = list(conn.execute(sa_query))
     test_ret = [("tester", 30), ("test\'er", 50)]
     assert test_ret == actual_ret
+
+    sa_query = parser.append_filter(
+        sa.select([users.c.name, users.c.age]).select_from(users),
+        "type in [\"USER\", \"ADMIN\"]",
+    )
+    actual_ret = list(conn.execute(sa_query))
+    assert len(actual_ret) == 4
 
     sa_query = parser.append_filter(
         sa.select([users.c.name, users.c.age]).select_from(users),
@@ -207,6 +222,7 @@ def test_fieldspec(virtual_user_db) -> None:
     parser = QueryFilterParser({
         "n1": ("name", None),
         "n2": ("full_name", lambda s: s.lower()),
+        "t1": ("type", lambda s: UserTypes[s]),
     })
 
     sa_query = parser.append_filter(
@@ -233,9 +249,23 @@ def test_fieldspec(virtual_user_db) -> None:
     test_ret = [("test\"er", 40), ("tester ♪", 20)]
     assert test_ret == actual_ret
 
+    sa_query = parser.append_filter(
+        sa.select([users.c.name, users.c.age]).select_from(users),
+        "t1 in [\"USER\", \"ADMIN\"]",
+    )
+    actual_ret = list(conn.execute(sa_query))
+    assert len(actual_ret) == 4
+
     # non-existent column in fieldspec
     with pytest.raises(ValueError):
         parser.append_filter(
             sa.select([users.c.name, users.c.age]).select_from(users),
             "full_name == \"TESTER1\"",
+        )
+
+    # non-existent enum value
+    with pytest.raises(ValueError):
+        parser.append_filter(
+            sa.select([users.c.name, users.c.age]).select_from(users),
+            "t1 == \"XYZ\"",
         )
