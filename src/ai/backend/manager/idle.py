@@ -42,7 +42,7 @@ import sqlalchemy as sa
 import trafaret as t
 
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.types import aobject, AccessKey
+from ai.backend.common.types import aobject, AccessKey, SessionTypes
 import ai.backend.common.validators as tx
 if TYPE_CHECKING:
     from ai.backend.common.types import AgentId, SessionId
@@ -256,6 +256,8 @@ class TimeoutIdleChecker(BaseIdleChecker):
 
     async def check_session(self, session: Row, dbconn: SAConnection) -> bool:
         session_id = session['id']
+        if session["session_type"] == SessionTypes.BATCH:
+            return True
         active_streams = await self._redis.zcount(f"session.{session_id}.active_app_connections")
         if active_streams is not None and active_streams > 0:
             return True
