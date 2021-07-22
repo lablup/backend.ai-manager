@@ -162,7 +162,6 @@ class User(graphene.ObjectType):
     uuid = graphene.UUID()  # legacy
     username = graphene.String()
     email = graphene.String()
-    password = graphene.String()
     need_password_change = graphene.Boolean()
     full_name = graphene.String()
     description = graphene.String()
