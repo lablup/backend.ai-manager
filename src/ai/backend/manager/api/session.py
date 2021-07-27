@@ -389,15 +389,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
     current_task = asyncio.current_task()
     assert current_task is not None
 
-    if mount_map := params['config'].get('mount_map'):
-        for p in mount_map.values():
-            if p is None:
-                continue
-            if not p.startswith('/home/work/'):
-                raise InvalidAPIParameters(f'Path {p} should start with /home/work/')
-            if p is not None and not verify_vfolder_name(p.replace('/home/work/', '')):
-                raise InvalidAPIParameters(f'Path {str(p)} is reserved for internal operations.')
-
+    # Check work directory and reserved name directory.
     mount_map = params['config'].get('mount_map')
     if mount_map is not None:
         for p in mount_map.values():
