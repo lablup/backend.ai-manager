@@ -391,7 +391,6 @@ async def _create(request: web.Request, params: Any) -> web.Response:
 
     # Check work directory and reserved name directory.
     mount_map = params['config'].get('mount_map')
-    log.debug("<#$%> Mount Map: {0}", mount_map)
     if mount_map is not None:
         original_folders = mount_map.keys()
         alias_folders = mount_map.values()
