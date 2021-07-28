@@ -391,14 +391,22 @@ async def _create(request: web.Request, params: Any) -> web.Response:
 
     # Check work directory and reserved name directory.
     mount_map = params['config'].get('mount_map')
+    log.debug("<#$%> Mount Map: {0}", mount_map)
     if mount_map is not None:
-        for p in mount_map.values():
+        original_folders = mount_map.keys()
+        alias_folders = mount_map.values()
+        if len(alias_folders) != len(set(alias_folders)):
+            raise InvalidAPIParameters(f'Duplicate alias folder name exists.')
+        for p in alias_folders:
+            alias_name = p.replace('/home/work/', '')
             if p is None:
                 continue
             if not p.startswith('/home/work/'):
                 raise InvalidAPIParameters(f'Path {p} should start with /home/work/')
-            if p is not None and not verify_vfolder_name(p.replace('/home/work/', '')):
+            if p is not None and not verify_vfolder_name(alias_name):
                 raise InvalidAPIParameters(f'Path {str(p)} is reserved for internal operations.')
+            if alias_name in original_folders:
+                raise InvalidAPIParameters(f'Alias name cannot be set to an existing folder name: {alias_name}')
 
     # Resolve the image reference.
     try:
