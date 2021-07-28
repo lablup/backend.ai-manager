@@ -405,7 +405,8 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             if p is not None and not verify_vfolder_name(alias_name):
                 raise InvalidAPIParameters(f'Path {str(p)} is reserved for internal operations.')
             if alias_name in original_folders:
-                raise InvalidAPIParameters(f'Alias name cannot be set to an existing folder name: {alias_name}')
+                raise InvalidAPIParameters('Alias name cannot be set to an existing folder name: ' \
+                    + str(alias_name))
             if alias_name == '':
                 raise InvalidAPIParameters('Alias name cannot be empty.')
 
