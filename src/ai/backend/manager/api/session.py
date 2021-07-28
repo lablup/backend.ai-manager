@@ -395,7 +395,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
         original_folders = mount_map.keys()
         alias_folders = mount_map.values()
         if len(alias_folders) != len(set(alias_folders)):
-            raise InvalidAPIParameters(f'Duplicate alias folder name exists.')
+            raise InvalidAPIParameters('Duplicate alias folder name exists.')
         for p in alias_folders:
             alias_name = p.replace('/home/work/', '')
             if p is None:
