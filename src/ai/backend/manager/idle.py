@@ -21,6 +21,7 @@ from typing import (
     Set,
     Type,
     TYPE_CHECKING,
+    Union,
 )
 
 import aioredis
@@ -355,7 +356,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         }
     ).allow_extra("*")
 
-    resource_thresholds: MutableMapping[str, Any]
+    resource_thresholds: MutableMapping[str, Union[int, float, Decimal]]
     thresholds_check_operator: str
     time_window: timedelta
     initial_grace_period: timedelta
