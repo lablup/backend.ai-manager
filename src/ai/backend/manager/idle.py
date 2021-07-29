@@ -530,7 +530,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         sufficiently_utilized = {
             k: (float(avg_utils[k]) >= float(threshold))
             for k, threshold in self.resource_thresholds.items()
-            if (threshold is not None) and (threshold not in unavailable_resources)
+            if (threshold is not None) and (k not in unavailable_resources)
         }
 
         if len(sufficiently_utilized) < 1:
