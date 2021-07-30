@@ -135,6 +135,7 @@ class KeyPair(graphene.ObjectType):
         interfaces = (Item, )
 
     user_id = graphene.String()
+    full_name = graphene.String()
     access_key = graphene.String()
     secret_key = graphene.String()
     is_active = graphene.Boolean()
@@ -179,6 +180,7 @@ class KeyPair(graphene.ObjectType):
         return cls(
             id=row['access_key'],
             user_id=row['user_id'],
+            full_name=row['full_name'],
             access_key=row['access_key'],
             secret_key=row['secret_key'],
             is_active=row['is_active'],
