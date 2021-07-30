@@ -389,24 +389,26 @@ async def _create(request: web.Request, params: Any) -> web.Response:
     current_task = asyncio.current_task()
     assert current_task is not None
 
-    if mount_map := params['config'].get('mount_map'):
-        for p in mount_map.values():
-            if p is None:
-                continue
-            if not p.startswith('/home/work/'):
-                raise InvalidAPIParameters(f'Path {p} should start with /home/work/')
-            if p is not None and not verify_vfolder_name(p.replace('/home/work/', '')):
-                raise InvalidAPIParameters(f'Path {str(p)} is reserved for internal operations.')
-
+    # Check work directory and reserved name directory.
     mount_map = params['config'].get('mount_map')
     if mount_map is not None:
-        for p in mount_map.values():
+        original_folders = mount_map.keys()
+        alias_folders = mount_map.values()
+        if len(alias_folders) != len(set(alias_folders)):
+            raise InvalidAPIParameters('Duplicate alias folder name exists.')
+        for p in alias_folders:
+            alias_name = p.replace('/home/work/', '')
             if p is None:
                 continue
             if not p.startswith('/home/work/'):
                 raise InvalidAPIParameters(f'Path {p} should start with /home/work/')
-            if p is not None and not verify_vfolder_name(p.replace('/home/work/', '')):
+            if p is not None and not verify_vfolder_name(alias_name):
                 raise InvalidAPIParameters(f'Path {str(p)} is reserved for internal operations.')
+            if alias_name in original_folders:
+                raise InvalidAPIParameters('Alias name cannot be set to an existing folder name: '
+                                            + str(alias_name))
+            if alias_name == '':
+                raise InvalidAPIParameters('Alias name cannot be empty.')
 
     # Resolve the image reference.
     try:
