@@ -258,6 +258,7 @@ class KeyPair(graphene.ObjectType):
         "concurrency_limit": ("keypairs_concurrency_limit", None),
         "concurrency_used": ("keypairs_concurrency_used", None),
         "rate_limit": ("keypairs_rate_limit", None),
+        "num_queries": ("keypairs_num_queries", None),
         "ssh_public_key": ("keypairs_ssh_public_key", None),
     }
 
@@ -273,6 +274,7 @@ class KeyPair(graphene.ObjectType):
         "concurrency_limit": "keypairs_concurrency_limit",
         "concurrency_used": "keypairs_concurrency_used",
         "rate_limit": "keypairs_rate_limit",
+        "num_queries": "keypairs_num_queries",
     }
 
     @classmethod
