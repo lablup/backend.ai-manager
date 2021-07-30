@@ -249,6 +249,7 @@ class User(graphene.ObjectType):
             return [cls.from_row(ctx, row) async for row in (await conn.stream(query))]
 
     _queryfilter_fieldspec = {
+        "uuid": ("uuid", None),
         "username": ("username", None),
         "email": ("email", None),
         "need_password_change": ("need_password_change", None),
@@ -264,6 +265,7 @@ class User(graphene.ObjectType):
     }
 
     _queryorder_colmap = {
+        "uuid": "uuid",
         "username": "username",
         "email": "email",
         "need_password_change": "need_password_change",
