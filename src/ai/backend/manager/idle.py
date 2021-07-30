@@ -21,6 +21,7 @@ from typing import (
     Set,
     Type,
     TYPE_CHECKING,
+    Union,
 )
 
 import aioredis
@@ -355,7 +356,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         }
     ).allow_extra("*")
 
-    resource_thresholds: MutableMapping[str, Any]
+    resource_thresholds: MutableMapping[str, Union[int, float, Decimal]]
     thresholds_check_operator: str
     time_window: timedelta
     initial_grace_period: timedelta
@@ -530,7 +531,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         sufficiently_utilized = {
             k: (float(avg_utils[k]) >= float(threshold))
             for k, threshold in self.resource_thresholds.items()
-            if (threshold is not None) and (threshold not in unavailable_resources)
+            if (threshold is not None) and (k not in unavailable_resources)
         }
 
         if len(sufficiently_utilized) < 1:
