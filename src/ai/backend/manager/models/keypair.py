@@ -247,6 +247,7 @@ class KeyPair(graphene.ObjectType):
         "access_key": ("keypairs_access_key", None),
         "user_id": ("users_uuid", None),
         "email": ("users_email", None),
+        "full_name": ("users_full_name", None),
         "is_active": ("keypairs_is_active", None),
         "is_admin": ("keypairs_is_admin", None),
         "resource_policy": ("keypairs_resource_policy", None),
@@ -261,6 +262,7 @@ class KeyPair(graphene.ObjectType):
     _queryorder_colmap = {
         "access_key": "keypairs_access_key",
         "email": "users_email",
+        "full_name": "users_full_name",
         "is_active": "keypairs_is_active",
         "is_admin": "keypairs_is_admin",
         "resource_policy": "keypairs_resource_policy",
@@ -316,7 +318,7 @@ class KeyPair(graphene.ObjectType):
         from .user import users
         j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
         query = (
-            sa.select([keypairs])
+            sa.select([keypairs, users.c.email, users.c.full_name])
             .select_from(j)
             .limit(limit)
             .offset(offset)
