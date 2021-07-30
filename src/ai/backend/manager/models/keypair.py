@@ -180,7 +180,7 @@ class KeyPair(graphene.ObjectType):
         return cls(
             id=row['access_key'],
             user_id=row['user_id'],
-            full_name=row['full_name'],
+            full_name=row['full_name'] if 'full_name' in row else None,
             access_key=row['access_key'],
             secret_key=row['secret_key'],
             is_active=row['is_active'],
