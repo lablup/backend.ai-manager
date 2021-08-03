@@ -843,11 +843,14 @@ class AgentRegistry:
                 # the first kernel_config is repliacted to sub-containers
                 assert kernel_enqueue_configs[0]['cluster_role'] == DEFAULT_ROLE
                 kernel_enqueue_configs[0]['cluster_idx'] = 1
+                kernel_enqueue_configs[0]['mapped_agent'] = agent_list[0]
                 for i in range(cluster_size - 1):
                     sub_kernel_config = cast(KernelEnqueueingConfig, {**kernel_enqueue_configs[0]})
                     sub_kernel_config['cluster_role'] = 'sub'
                     sub_kernel_config['cluster_idx'] = i + 1
+                    sub_kernel_config['mapped_agent'] = agent_list[i+1]
                     kernel_enqueue_configs.append(sub_kernel_config)
+                
                 '''
                 For multi-node cluster sessions, the list should include agents for all individual containers.
                 Let's assume that the orders of agents and containers are same 
@@ -856,14 +859,14 @@ class AgentRegistry:
                 kernel_enqueue_configs[i]['cluster_name'] : main1, sub1, sub2, sub3, ...
                 
                 agent_list                                :    a1,   a2,   a3,   a4, ...
-                '''
+               
                 tmp_tuple = ()
                 for i in range(cluster_size):
                     tmp_tuple = \
                         (f"{kernel_enqueue_configs[i]['cluster_role']}{kernel_enqueue_configs[i]['cluster_idx']}", 
                          agent_list[i])
                     mapping_agents_containers.append(tmp_tuple)
-                
+                 ''' 
             elif len(kernel_enqueue_configs) > 1:
                 # each container should have its own kernel_config
                 log.debug(
@@ -1056,9 +1059,7 @@ class AgentRegistry:
                 nonlocal ids
                 async with self.db.begin() as conn:
                     query = kernels.insert().values({
-                        'agent': kernel['agent'],
-                        'agent_addr': kernel['agent_addr'],
-                        'mapping_agents_containers': mapping_agents_containers,
+                        'agent': kernel['mapped_agent'],
                         'id': kernel_id,
                         'status': KernelStatus.PENDING,
                         'session_creation_id': session_creation_id,

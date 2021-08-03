@@ -208,6 +208,7 @@ creation_config_v5 = t.Dict({
     t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any),
     tx.AliasedKey(['resource_opts', 'resourceOpts'], default=None): t.Null | t.Mapping(t.String, t.Any),
     tx.AliasedKey(['preopen_ports', 'preopenPorts'], default=None): t.Null | t.List(t.Int[1024:65535]),
+    t.Key('agentList', default= None) >> 'agent_list': t.List(t.String)
 })
 creation_config_v5_template = t.Dict({
     t.Key('mounts', default=undefined): UndefChecker | t.Null | t.List(t.String),
@@ -492,6 +493,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
                 'creation_config': params['config'],
                 'bootstrap_script': params['bootstrap_script'],
                 'startup_command': params['startup_command'],
+                'mapped_agent': None 
             }],
             params['config']['scaling_group'],
             params['session_type'],
@@ -505,6 +507,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             startup_command=params['startup_command'],
             session_tag=params['tag'],
             starts_at=starts_at,
+            agent_list = params['config']['agentList']
         ))
         session_id = cast(SessionId, kernel_id)  # the main kernel's ID is the session ID
         resp['sessionId'] = str(kernel_id)  # changed since API v5
@@ -766,15 +769,15 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
         t.Key('startupCommand', default=None) >> 'startup_command': t.Null | t.String,
         tx.AliasedKey(['bootstrap_script', 'bootstrapScript'], default=None): t.Null | t.String,
         t.Key('owner_access_key', default=None): t.Null | t.String,
-        t.Key('agentList', default= None) >> 'agent_list': t.List(t.String),
+        
     }),
     loads=_json_loads)
 async def create_from_params(request: web.Request, params: Any) -> web.Response:
-    if params['agentList'] is not None and request['user']['role'] != (UserRole.SUPERADMIN):
-        raise InsufficientPrivilege('You are not allowed to see Agent List')
+    #if params['agentList'] is not None and request['user']['role'] != (UserRole.SUPERADMIN):
+    #    raise InsufficientPrivilege('You are not allowed to see Agent List')
     
-    if request['user']['role'] == (UserRole.SUPERADMIN) and params['cluster_size'] != len(params('agentList')):
-        raise InvalidAPIParameters('cluster_size and length of agent_list are not match')
+    #if request['user']['role'] == (UserRole.SUPERADMIN) and params['cluster_size'] != len(params('agentList')):
+    #    raise InvalidAPIParameters('cluster_size and length of agent_list are not match')
     
     if params['session_name'] in ['from-template']:
         raise InvalidAPIParameters(f'Requested session ID {params["session_name"]} is reserved word')
@@ -791,7 +794,13 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
         creation_config = creation_config_v1.check(params['config'])
     else:
         raise InvalidAPIParameters('API version not supported')
+    
     params['config'] = creation_config
+    if params['config']['agentList'] is not None and request['user']['role'] != (UserRole.SUEPRADMIN):
+        raise InsufficientPrivilege('You are not allowed to see Agent List')
+    if request['user']['role'] == (UserRole.SUPERADMIN) and params['cluster_size'] != len(params['config']['agentList']):
+        raise InvalidAPIParameters('cluster_size and length of agent_list are not match')
+
     return await _create(request, params)
 
 
@@ -811,18 +820,11 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
         t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.ToBool,
         t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
         t.Key('owner_access_key', default=None): t.Null | t.String,
-        t.Key('agentList', default=None) >> 'agent_list': t.List(t.String),
     }),
     loads=_json_loads)
 async def create_cluster(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     app_ctx: PrivateContext = request.app['session.context']
-    
-    if params['agentList'] and request['user']['role'] != (UserRole.SUPERADMIN):
-        raise InsufficientPrivilege('You are not allowed to see Agent List')
-        
-    if request['user']['role'] == (UserRole.SUPERADMIN) and params['cluster_size'] != len(params('agentList')):
-        raise InvalidAPIParameters('cluster_size and length of agent_list are not match')
     
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
