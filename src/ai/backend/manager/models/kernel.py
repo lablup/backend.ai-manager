@@ -888,6 +888,7 @@ class ComputeSession(graphene.ObjectType):
     }
 
     _queryorder_colmap = {
+        "id": "kernels_id",
         "type": "kernels_session_type",
         "name": "kernels_session_name",
         "image": "kernels_image",
