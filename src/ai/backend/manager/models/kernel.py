@@ -885,6 +885,8 @@ class ComputeSession(graphene.ObjectType):
         "terminated_at": ("kernels_terminated_at", dtparse),
         "starts_at": ("kernels_starts_at", dtparse),
         "startup_command": ("kernels_startup_command", None),
+        "agent": ("kernels_agent", None),
+        "agents": ("kernels_agent", None),
     }
 
     _queryorder_colmap = {
