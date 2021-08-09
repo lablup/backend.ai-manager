@@ -373,7 +373,7 @@ class User(graphene.ObjectType):
         if order is not None:
             if group_id is not None:
                 qoparser = QueryOrderParser({
-                    'users_' + k: v
+                    k: 'users_' + v
                     for k, v in cls._queryorder_colmap.items()
                 })
             else:
