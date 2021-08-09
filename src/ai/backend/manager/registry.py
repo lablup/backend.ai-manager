@@ -827,7 +827,7 @@ class AgentRegistry:
                     item['unmanaged_path'] if item['unmanaged_path'] else '',
                 ))
         if mounts and set(mounts) > matched_mounts:
-            raise VFolderNotFound
+            raise VFolderNotFound(extra_data=[*(set(mounts) - matched_mounts)])
         mounts = determined_mounts
 
         ids = []
