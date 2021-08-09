@@ -1721,6 +1721,8 @@ class AgentRegistry:
                                     .values({
                                         'status': KernelStatus.TERMINATED,
                                         'status_info': reason,
+                                        'status_changed': now,
+                                        'terminated_at': now,
                                     })
                                     .where(kernels.c.id == kernel['id'])
                                 )
@@ -1748,6 +1750,7 @@ class AgentRegistry:
                                     .values({
                                         'status': KernelStatus.TERMINATING,
                                         'status_info': reason,
+                                        'status_changed': now,
                                         'status_data': {
                                             "kernel": {"exit_code": None},
                                             "session": {"status": "terminating"},
