@@ -483,10 +483,10 @@ class SchedulerDispatcher(aobject):
                     .where(agents.c.id == agent_id)
                 )
                 # load available agent by executing query
-                available_agent_slots = await agent_db_conn.execute(query).scalar()
+                available_agent_slots = (await agent_db_conn.execute(query)).scalar()
                     
                 # if pass the available test
-                if available_agent >= sess_ctx.requested_slots:    
+                if available_agent_slots >= sess_ctx.requested_slots:    
                     agent_alloc_ctx = await _reserve_agent(
                         sched_ctx, agent_db_conn, sgroup_name, agent_id, sess_ctx.requested_slots,
                     )
@@ -588,7 +588,7 @@ class SchedulerDispatcher(aobject):
                         .select_from(agents)
                         .where(agents.c.id == agent_id)
                     )
-                    available_agent_slots = await agent_db_conn.execute(query).scalar()
+                    available_agent_slots = (await agent_db_conn.execute(query)).scalar()
             
                     if available_agent_slots >= kernel.requested_slots:
                         async def _reserve() -> None:
