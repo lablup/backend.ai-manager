@@ -480,7 +480,6 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             params['bootstrap_script'] = script
 
     try:
-
         kernel_id = await asyncio.shield(root_ctx.registry.enqueue_session(
             session_creation_id,
             params['session_name'], owner_access_key,
@@ -492,7 +491,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
                 'creation_config': params['config'],
                 'bootstrap_script': params['bootstrap_script'],
                 'startup_command': params['startup_command'],
-                'mapped_agent': None 
+                'agent_id' : None
             }],
             params['config']['scaling_group'],
             params['session_type'],
@@ -790,11 +789,10 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
     if params['config']['agent_list'] is not None and request['user']['role'] != (UserRole.SUPERADMIN):
         raise InsufficientPrivilege('You are not allowed to see Agent List')
     if request['user']['role'] == (UserRole.SUPERADMIN): 
-        if params['config']['agent_list'] is None:
+        if not params['config']['agent_list']:
             pass
         else:
             if params['cluster_size'] != len(params['config']['agent_list']):
-                #print(params['config'])
                 raise InvalidAPIParameters('cluster_size and length of agent_list are not match')
 
     return await _create(request, params)

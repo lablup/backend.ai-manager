@@ -843,30 +843,12 @@ class AgentRegistry:
                 # the first kernel_config is repliacted to sub-containers
                 assert kernel_enqueue_configs[0]['cluster_role'] == DEFAULT_ROLE
                 kernel_enqueue_configs[0]['cluster_idx'] = 1
-                kernel_enqueue_configs[0]['mapped_agent'] = agent_list[0]
                 for i in range(cluster_size - 1):
                     sub_kernel_config = cast(KernelEnqueueingConfig, {**kernel_enqueue_configs[0]})
                     sub_kernel_config['cluster_role'] = 'sub'
                     sub_kernel_config['cluster_idx'] = i + 1
-                    sub_kernel_config['mapped_agent'] = agent_list[i+1]
                     kernel_enqueue_configs.append(sub_kernel_config)
-                
-                '''
-                For multi-node cluster sessions, the list should include agents for all individual containers.
-                Let's assume that the orders of agents and containers are same 
-                (e.g., a1, a2, a3 + main1, sub1, sub2 => main1:a1, sub1:a2, sub2:a3)
-                
-                kernel_enqueue_configs[i]['cluster_name'] : main1, sub1, sub2, sub3, ...
-                
-                agent_list                                :    a1,   a2,   a3,   a4, ...
-               
-                tmp_tuple = ()
-                for i in range(cluster_size):
-                    tmp_tuple = \
-                        (f"{kernel_enqueue_configs[i]['cluster_role']}{kernel_enqueue_configs[i]['cluster_idx']}", 
-                         agent_list[i])
-                    mapping_agents_containers.append(tmp_tuple)
-                 ''' 
+              
             elif len(kernel_enqueue_configs) > 1:
                 # each container should have its own kernel_config
                 log.debug(
@@ -1054,52 +1036,65 @@ class AgentRegistry:
                             raise BackendError(
                                 f'There is a vfolder whose name conflicts with '
                                 f'dotfile {dotfile["path"]}')
+            
+            #map agent with container
+            mapped_agent = ''
+            if agent_list is None:
+                mapped_agent = kernel['agent_id']
+            else:
+                for agent in agent_list:
+                    mapped_agent += (f"{kernel['cluster_hostname']} : {agent}, ")
+                mapped_agent = mapped_agent[:-2]
+        
+            try:
+                async def _enqueue() -> None:
+                    nonlocal ids
+                    async with self.db.begin() as conn:
+                        query = kernels.insert().values({
+                            'agent': mapped_agent,
+                            'id': kernel_id,
+                            'status': KernelStatus.PENDING,
+                            'session_creation_id': session_creation_id,
+                            'session_id': session_id,
+                            'session_name': session_name,
+                            'session_type': session_type,
+                            'cluster_mode': cluster_mode.value,
+                            'cluster_size': cluster_size,
+                            'cluster_role': kernel['cluster_role'],
+                            'cluster_idx': kernel['cluster_idx'],
+                            'cluster_hostname': f"{kernel['cluster_role']}{kernel['cluster_idx']}",
+                            'scaling_group': scaling_group,
+                            'domain_name': domain_name,
+                            'group_id': group_id,
+                            'user_uuid': user_uuid,
+                            'access_key': access_key,
+                            'image': image_ref.canonical,
+                            'registry': image_ref.registry,
+                            'tag': session_tag,
+                            'starts_at': starts_at,
+                            'internal_data': internal_data,
+                            'startup_command': kernel.get('startup_command'),
+                            'occupied_slots': requested_slots,
+                            'occupied_shares': {},
+                            'resource_opts': resource_opts,
+                            'environ': [f'{k}={v}' for k, v in environ.items()],
+                            'mounts': [list(mount) for mount in mounts],  # postgres save tuple as str
+                            'mount_map': mount_map,
+                            'bootstrap_script': kernel.get('bootstrap_script'),
+                            'repl_in_port': 0,
+                            'repl_out_port': 0,
+                            'stdin_port': 0,
+                            'stdout_port': 0,
+                            'preopen_ports': creation_config.get('preopen_ports', []),
+                        })
+                        await conn.execute(query)
+                        ids.append(kernel_id)
 
-            async def _enqueue() -> None:
-                nonlocal ids
-                async with self.db.begin() as conn:
-                    query = kernels.insert().values({
-                        'agent': kernel['mapped_agent'],
-                        'id': kernel_id,
-                        'status': KernelStatus.PENDING,
-                        'session_creation_id': session_creation_id,
-                        'session_id': session_id,
-                        'session_name': session_name,
-                        'session_type': session_type,
-                        'cluster_mode': cluster_mode.value,
-                        'cluster_size': cluster_size,
-                        'cluster_role': kernel['cluster_role'],
-                        'cluster_idx': kernel['cluster_idx'],
-                        'cluster_hostname': f"{kernel['cluster_role']}{kernel['cluster_idx']}",
-                        'scaling_group': scaling_group,
-                        'domain_name': domain_name,
-                        'group_id': group_id,
-                        'user_uuid': user_uuid,
-                        'access_key': access_key,
-                        'image': image_ref.canonical,
-                        'registry': image_ref.registry,
-                        'tag': session_tag,
-                        'starts_at': starts_at,
-                        'internal_data': internal_data,
-                        'startup_command': kernel.get('startup_command'),
-                        'occupied_slots': requested_slots,
-                        'occupied_shares': {},
-                        'resource_opts': resource_opts,
-                        'environ': [f'{k}={v}' for k, v in environ.items()],
-                        'mounts': [list(mount) for mount in mounts],  # postgres save tuple as str
-                        'mount_map': mount_map,
-                        'bootstrap_script': kernel.get('bootstrap_script'),
-                        'repl_in_port': 0,
-                        'repl_out_port': 0,
-                        'stdin_port': 0,
-                        'stdout_port': 0,
-                        'preopen_ports': creation_config.get('preopen_ports', []),
-                    })
-                    await conn.execute(query)
-                    ids.append(kernel_id)
-
-            await execute_with_retry(_enqueue)
-
+                await execute_with_retry(_enqueue)
+            except Exception:
+                log.exception('ForeignKeyViolationError: insert or update on table "kernels" violates foreign key constraint')
+                raise InvalidAPIParameters('ForeignKeyViolationError')
+                
         await self.hook_plugin_ctx.notify(
             'POST_ENQUEUE_SESSION',
             (session_id, session_name, access_key),
@@ -1135,7 +1130,6 @@ class AgentRegistry:
         )
         if hook_result.status != PASSED:
             raise RejectedByHook.from_hook_result(hook_result)
-
         # Get resource policy for the session
         # TODO: memoize with TTL
         async with self.db.begin_readonly() as conn:
@@ -1164,7 +1158,6 @@ class AgentRegistry:
             'resource_policy': resource_policy,
             'auto_pull': auto_pull,
         }
-
         network_name: Optional[str] = None
         if scheduled_session.cluster_mode == ClusterMode.SINGLE_NODE:
             if scheduled_session.cluster_size > 1:
@@ -1249,7 +1242,6 @@ class AgentRegistry:
                     ),
                 )
             )
-
         if per_agent_tasks:
             agent_errors = []
             results = await asyncio.gather(

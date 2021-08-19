@@ -482,17 +482,21 @@ class SchedulerDispatcher(aobject):
                     .select_from(agents)
                     .where(agents.c.id == agent_id)
                 )
-                # load available agent by executing query
                 available_agent_slots = (await agent_db_conn.execute(query)).scalar()
-                    
                 # if pass the available test
-                if available_agent_slots >= sess_ctx.requested_slots:    
+                if available_agent_slots is None:
+                    raise InstanceNotAvailable("There is no available_agent_slots")
+                available_test_pass = False
+                for key in available_agent_slots:
+                    if available_agent_slots[key] >= sess_ctx.requested_slots[key]:
+                        available_test_pass = True
+                        continue
+                    else:
+                        raise InstanceNotAvailable(f"{key} is insufficent.")  
+                if available_test_pass :
                     agent_alloc_ctx = await _reserve_agent(
                         sched_ctx, agent_db_conn, sgroup_name, agent_id, sess_ctx.requested_slots,
                     )
-                # if does not pass the available test
-                else:
-                    raise InstanceNotAvailable
                 
         except InstanceNotAvailable:
             log.debug(log_fmt + 'no-available-instances', *log_args)
@@ -589,8 +593,17 @@ class SchedulerDispatcher(aobject):
                         .where(agents.c.id == agent_id)
                     )
                     available_agent_slots = (await agent_db_conn.execute(query)).scalar()
-            
-                    if available_agent_slots >= kernel.requested_slots:
+
+                    if available_agent_slots is None:
+                        raise InstanceNotAvailable("There is no available_agent_slots")
+                    available_test_pass = False
+                    for key in available_agent_slots:
+                        if available_agent_slots[key] >= kernel.requested_slots:
+                            available_test_pass = True
+                            continue
+                        else:
+                            raise InstanceNotAvailable(f"{key} is insufficent.")
+                    if available_test_pass:
                         async def _reserve() -> None:
                             nonlocal agent_alloc_ctx, candidate_agents
                             #assert agent_id is not None
@@ -601,11 +614,7 @@ class SchedulerDispatcher(aobject):
                                     extra_conds=agent_query_extra_conds,
                                 )
                                 candidate_agents = await _list_agents_by_sgroup(agent_db_conn, sgroup_name)
-                                    
-                        await execute_with_retry(_reserve)
-                    else:
-                        raise InstanceNotAvailable
-                                        
+                            await execute_with_retry(_reserve)                        
                 except InstanceNotAvailable:
                     log.debug(log_fmt + 'no-available-instances', *log_args)
 
