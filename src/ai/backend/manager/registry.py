@@ -828,7 +828,7 @@ class AgentRegistry:
                     item['unmanaged_path'] if item['unmanaged_path'] else '',
                 ))
         if mounts and set(mounts) > matched_mounts:
-            raise VFolderNotFound
+            raise VFolderNotFound(extra_data=[*(set(mounts) - matched_mounts)])
         mounts = determined_mounts
 
         mapping_agents_containers = []
@@ -1735,6 +1735,8 @@ class AgentRegistry:
                                     .values({
                                         'status': KernelStatus.TERMINATED,
                                         'status_info': reason,
+                                        'status_changed': now,
+                                        'terminated_at': now,
                                     })
                                     .where(kernels.c.id == kernel['id'])
                                 )
@@ -1762,6 +1764,7 @@ class AgentRegistry:
                                     .values({
                                         'status': KernelStatus.TERMINATING,
                                         'status_info': reason,
+                                        'status_changed': now,
                                         'status_data': {
                                             "kernel": {"exit_code": None},
                                             "session": {"status": "terminating"},
@@ -2197,7 +2200,6 @@ class AgentRegistry:
             agent_info['resource_slots'].items()})
         current_addr = agent_info['addr']
         sgroup = agent_info.get('scaling_group', 'default')
-
         async with self.heartbeat_lock:
 
             instance_rejoin = False
@@ -2286,7 +2288,10 @@ class AgentRegistry:
                     else:
                         log.error('should not reach here! {0}', type(row['status']))
 
-            await execute_with_retry(_update)
+            try:
+                await execute_with_retry(_update)
+            except sa.exc.IntegrityError:
+                log.error(f'Scaling group named [{sgroup}] does not exist.')
 
             if instance_rejoin:
                 await self.event_producer.produce_event(

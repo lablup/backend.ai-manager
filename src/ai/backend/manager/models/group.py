@@ -36,6 +36,7 @@ from .base import (
     simple_db_mutate,
     simple_db_mutate_returning_item,
     batch_result,
+    batch_multiresult,
 )
 from .storage import StorageSessionManager
 from .user import ModifyUserInput, UserRole
@@ -159,9 +160,11 @@ class Group(graphene.ObjectType):
         )
 
     async def resolve_scaling_groups(self, info: graphene.ResolveInfo) -> Sequence[ScalingGroup]:
-        from .scaling_group import ScalingGroup
         graph_ctx: GraphQueryContext = info.context
-        sgroups = await ScalingGroup.load_by_group(graph_ctx, self.id)
+        loader = graph_ctx.dataloader_manager.get_loader(
+            graph_ctx, "ScalingGroup.by_group",
+        )
+        sgroups = await loader.load(self.id)
         return [sg.name for sg in sgroups]
 
     @classmethod
@@ -193,7 +196,7 @@ class Group(graphene.ObjectType):
         group_ids: Sequence[uuid.UUID],
         *,
         domain_name: str = None
-    ) -> Sequence[Optional[Group]]:
+    ) -> Sequence[Group | None]:
         query = (
             sa.select([groups])
             .select_from(groups)
@@ -205,6 +208,48 @@ class Group(graphene.ObjectType):
             return await batch_result(
                 graph_ctx, conn, query, cls,
                 group_ids, lambda row: row['id'],
+            )
+
+    @classmethod
+    async def batch_load_by_name(
+        cls,
+        graph_ctx: GraphQueryContext,
+        group_names: Sequence[str],
+        *,
+        domain_name: str = None
+    ) -> Sequence[Sequence[Group | None]]:
+        query = (
+            sa.select([groups])
+            .select_from(groups)
+            .where(groups.c.name.in_(group_names))
+        )
+        if domain_name is not None:
+            query = query.where(groups.c.domain_name == domain_name)
+        async with graph_ctx.db.begin_readonly() as conn:
+            return await batch_multiresult(
+                graph_ctx, conn, query, cls,
+                group_names, lambda row: row['name'],
+            )
+
+    @classmethod
+    async def batch_load_by_user(
+        cls,
+        graph_ctx: GraphQueryContext,
+        user_ids: Sequence[uuid.UUID],
+    ) -> Sequence[Sequence[Group | None]]:
+        j = sa.join(
+            groups, association_groups_users,
+            groups.c.id == association_groups_users.c.group_id,
+        )
+        query = (
+            sa.select([groups, association_groups_users.c.user_id])
+            .select_from(j)
+            .where(association_groups_users.c.user_id.in_(user_ids))
+        )
+        async with graph_ctx.db.begin_readonly() as conn:
+            return await batch_multiresult(
+                graph_ctx, conn, query, cls,
+                user_ids, lambda row: row['user_id'],
             )
 
     @classmethod

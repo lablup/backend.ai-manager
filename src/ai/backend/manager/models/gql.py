@@ -209,16 +209,16 @@ class Queries(graphene.ObjectType):
     # super-admin only
     agent = graphene.Field(
         Agent,
-        agent_id=graphene.String(required=True))
+        agent_id=graphene.String(required=True),
+    )
 
     # super-admin only
     agent_list = graphene.Field(
         AgentList,
         limit=graphene.Int(required=True),
         offset=graphene.Int(required=True),
-        # ordering customization
-        order_key=graphene.String(),
-        order_asc=graphene.Boolean(),
+        filter=graphene.String(),
+        order=graphene.String(),
         # filters
         scaling_group=graphene.String(),
         status=graphene.String(),
@@ -228,29 +228,45 @@ class Queries(graphene.ObjectType):
     agents = graphene.List(  # legacy non-paginated list
         Agent,
         scaling_group=graphene.String(),
-        status=graphene.String())
+        status=graphene.String(),
+    )
 
     domain = graphene.Field(
         Domain,
-        name=graphene.String())
+        name=graphene.String(),
+    )
 
     # super-admin only
     domains = graphene.List(
         Domain,
-        is_active=graphene.Boolean())
+        is_active=graphene.Boolean(),
+    )
 
     group = graphene.Field(
         Group,
-        id=graphene.UUID(required=True))
+        id=graphene.UUID(required=True),
+        domain_name=graphene.String(),
+    )
+
+    # Within a single domain, this will always return nothing or a single item,
+    # but if queried across all domains by superadmins, it may return multiple results
+    # because the group name is unique only inside each domain.
+    groups_by_name = graphene.List(
+        Group,
+        name=graphene.String(required=True),
+        domain_name=graphene.String(),
+    )
 
     groups = graphene.List(
         Group,
         domain_name=graphene.String(),
-        is_active=graphene.Boolean())
+        is_active=graphene.Boolean(),
+    )
 
     image = graphene.Field(
         Image,
-        reference=graphene.String(required=True))
+        reference=graphene.String(required=True),
+    )
 
     images = graphene.List(
         Image,
@@ -261,100 +277,113 @@ class Queries(graphene.ObjectType):
     user = graphene.Field(
         User,
         domain_name=graphene.String(),
-        email=graphene.String())
+        email=graphene.String(),
+    )
 
     user_from_uuid = graphene.Field(
         User,
         domain_name=graphene.String(),
-        user_id=graphene.ID())
+        user_id=graphene.ID(),
+    )
 
     users = graphene.List(  # legacy non-paginated list
         User,
         domain_name=graphene.String(),
         group_id=graphene.UUID(),
         is_active=graphene.Boolean(),
-        status=graphene.String())
+        status=graphene.String(),
+    )
 
     user_list = graphene.Field(
         UserList,
         limit=graphene.Int(required=True),
         offset=graphene.Int(required=True),
-        # ordering customization
-        order_key=graphene.String(),
-        order_asc=graphene.Boolean(),
-        # filters
+        filter=graphene.String(),
+        order=graphene.String(),
+        # intrinsic filters
         domain_name=graphene.String(),
         group_id=graphene.UUID(),
         is_active=graphene.Boolean(),
-        status=graphene.String())
+        status=graphene.String(),
+    )
 
     keypair = graphene.Field(
         KeyPair,
         domain_name=graphene.String(),
-        access_key=graphene.String())
+        access_key=graphene.String(),
+    )
 
     keypairs = graphene.List(  # legacy non-paginated list
         KeyPair,
         domain_name=graphene.String(),
         email=graphene.String(),
-        is_active=graphene.Boolean())
+        is_active=graphene.Boolean(),
+    )
 
     keypair_list = graphene.Field(
         KeyPairList,
         limit=graphene.Int(required=True),
         offset=graphene.Int(required=True),
-        # ordering customization
-        order_key=graphene.String(),
-        order_asc=graphene.Boolean(),
-        # filters
+        filter=graphene.String(),
+        order=graphene.String(),
+        # intrinsic filters
         domain_name=graphene.String(),
         email=graphene.String(),
-        is_active=graphene.Boolean())
+        is_active=graphene.Boolean(),
+    )
 
     # NOTE: maybe add keypairs_from_user_id?
 
     keypair_resource_policy = graphene.Field(
         KeyPairResourcePolicy,
-        name=graphene.String())
+        name=graphene.String(),
+    )
 
     keypair_resource_policies = graphene.List(
         KeyPairResourcePolicy)
 
     resource_preset = graphene.Field(
         ResourcePreset,
-        name=graphene.String())
+        name=graphene.String(),
+    )
 
     resource_presets = graphene.List(
-        ResourcePreset)
+        ResourcePreset,
+    )
 
     # super-admin only
     scaling_group = graphene.Field(
         ScalingGroup,
-        name=graphene.String())
+        name=graphene.String(),
+    )
 
     # super-admin only
     scaling_groups = graphene.List(
         ScalingGroup,
         name=graphene.String(),
-        is_active=graphene.Boolean())
+        is_active=graphene.Boolean(),
+    )
 
     # super-admin only
     scaling_groups_for_domain = graphene.List(
         ScalingGroup,
         domain=graphene.String(required=True),
-        is_active=graphene.Boolean())
+        is_active=graphene.Boolean(),
+    )
 
     # super-admin only
     scaling_groups_for_user_group = graphene.List(
         ScalingGroup,
         user_group=graphene.String(required=True),
-        is_active=graphene.Boolean())
+        is_active=graphene.Boolean(),
+    )
 
     # super-admin only
     scaling_groups_for_keypair = graphene.List(
         ScalingGroup,
         access_key=graphene.String(required=True),
-        is_active=graphene.Boolean())
+        is_active=graphene.Boolean(),
+    )
 
     # super-admin only
     storage_volume = graphene.Field(
@@ -367,25 +396,28 @@ class Queries(graphene.ObjectType):
         StorageVolumeList,
         limit=graphene.Int(required=True),
         offset=graphene.Int(required=True),
+        filter=graphene.String(),
+        order=graphene.String(),
     )
 
     vfolder_list = graphene.Field(  # legacy non-paginated list
         VirtualFolderList,
         limit=graphene.Int(required=True),
         offset=graphene.Int(required=True),
-        # ordering customization
-        order_key=graphene.String(),
-        order_asc=graphene.Boolean(),
-        # filters
+        filter=graphene.String(),
+        order=graphene.String(),
+        # intrinsic filters
         domain_name=graphene.String(),
         group_id=graphene.UUID(),
-        access_key=graphene.String())  # must be empty for user requests
+        access_key=graphene.String(),  # must be empty for user requests
+    )
 
     vfolders = graphene.List(  # legacy non-paginated list
         VirtualFolder,
         domain_name=graphene.String(),
         group_id=graphene.String(),
-        access_key=graphene.String())  # must be empty for user requests
+        access_key=graphene.String(),  # must be empty for user requests
+    )
 
     compute_session = graphene.Field(
         ComputeSession,
@@ -401,10 +433,9 @@ class Queries(graphene.ObjectType):
         ComputeSessionList,
         limit=graphene.Int(required=True),
         offset=graphene.Int(required=True),
-        # ordering customization
-        order_key=graphene.String(),
-        order_asc=graphene.Boolean(),
-        # filters
+        filter=graphene.String(),
+        order=graphene.String(),
+        # intrinsic filters
         domain_name=graphene.String(),
         group_id=graphene.String(),
         access_key=graphene.String(),
@@ -415,10 +446,9 @@ class Queries(graphene.ObjectType):
         ComputeContainerList,
         limit=graphene.Int(required=True),
         offset=graphene.Int(required=True),
-        # ordering customization
-        order_key=graphene.String(),
-        order_asc=graphene.Boolean(),
-        # filters
+        filter=graphene.String(),
+        order=graphene.String(),
+        # intrinsic filters
         session_id=graphene.ID(required=True),
         role=graphene.String(),
     )
@@ -427,10 +457,10 @@ class Queries(graphene.ObjectType):
         LegacyComputeSessionList,
         limit=graphene.Int(required=True),
         offset=graphene.Int(required=True),
-        # ordering customization
+        # legacy ordering
         order_key=graphene.String(),
         order_asc=graphene.Boolean(),
-        # filters
+        # intrinsic filters
         domain_name=graphene.String(),
         group_id=graphene.String(),
         access_key=graphene.String(),
@@ -478,22 +508,23 @@ class Queries(graphene.ObjectType):
         limit: int,
         offset: int,
         *,
+        filter: str = None,
+        order: str = None,
         scaling_group: str = None,
         status: str = None,
-        order_key: str = None,
-        order_asc: bool = True,
     ) -> AgentList:
         total_count = await Agent.load_count(
             info.context,
             scaling_group=scaling_group,
             raw_status=status,
+            filter=filter,
         )
         agent_list = await Agent.load_slice(
             info.context, limit, offset,
             scaling_group=scaling_group,
             raw_status=status,
-            order_key=order_key,
-            order_asc=order_asc,
+            filter=filter,
+            order=order,
         )
         return AgentList(agent_list, total_count)
 
@@ -527,25 +558,82 @@ class Queries(graphene.ObjectType):
         executor: AsyncioExecutor,
         info: graphene.ResolveInfo,
         id: uuid.UUID,
+        *,
+        domain_name: str = None,
     ) -> Group:
         ctx: GraphQueryContext = info.context
         client_role = ctx.user['role']
         client_domain = ctx.user['domain_name']
         client_user_id = ctx.user['uuid']
-        loader = ctx.dataloader_manager.get_loader(ctx, 'Group.by_id')
-        group = await loader.load(id)
         if client_role == UserRole.SUPERADMIN:
-            pass
+            loader = ctx.dataloader_manager.get_loader(
+                ctx, 'Group.by_id', domain_name=domain_name,
+            )
+            group = await loader.load(id)
         elif client_role == UserRole.ADMIN:
-            if group.domain_name != client_domain:
+            if domain_name is not None and domain_name != client_domain:
                 raise InsufficientPrivilege
+            loader = ctx.dataloader_manager.get_loader(
+                ctx, 'Group.by_id', domain_name=client_domain,
+            )
+            group = await loader.load(id)
         elif client_role == UserRole.USER:
-            client_groups = await Group.get_groups_for_user(info.context, client_user_id)
+            if domain_name is not None and domain_name != client_domain:
+                raise InsufficientPrivilege
+            loader = ctx.dataloader_manager.get_loader(
+                ctx, 'Group.by_id', domain_name=client_domain,
+            )
+            group = await loader.load(id)
+            loader = ctx.dataloader_manager.get_loader(
+                ctx, 'Group.by_user',
+            )
+            client_groups = await loader.load(client_user_id)
             if group.id not in (g.id for g in client_groups):
                 raise InsufficientPrivilege
         else:
             raise InvalidAPIParameters('Unknown client role')
         return group
+
+    @staticmethod
+    async def resolve_groups_by_name(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        name: str,
+        *,
+        domain_name: str = None,
+    ) -> Sequence[Group]:
+        ctx: GraphQueryContext = info.context
+        client_role = ctx.user['role']
+        client_domain = ctx.user['domain_name']
+        client_user_id = ctx.user['uuid']
+        if client_role == UserRole.SUPERADMIN:
+            loader = ctx.dataloader_manager.get_loader(
+                ctx, 'Group.by_name', domain_name=domain_name,
+            )
+            groups = await loader.load(name)
+        elif client_role == UserRole.ADMIN:
+            if domain_name is not None and domain_name != client_domain:
+                raise InsufficientPrivilege
+            loader = ctx.dataloader_manager.get_loader(
+                ctx, 'Group.by_name', domain_name=client_domain,
+            )
+            groups = await loader.load(name)
+        elif client_role == UserRole.USER:
+            if domain_name is not None and domain_name != client_domain:
+                raise InsufficientPrivilege
+            loader = ctx.dataloader_manager.get_loader(
+                ctx, 'Group.by_name', domain_name=client_domain,
+            )
+            groups = await loader.load(name)
+            loader = ctx.dataloader_manager.get_loader(
+                ctx, 'Group.by_user',
+            )
+            client_groups = await loader.load(client_user_id)
+            client_group_ids = set(g.id for g in client_groups)
+            groups = filter(lambda g: g.id in client_group_ids, groups)
+        else:
+            raise InvalidAPIParameters('Unknown client role')
+        return groups
 
     @staticmethod
     async def resolve_groups(
@@ -566,7 +654,11 @@ class Queries(graphene.ObjectType):
                 raise InsufficientPrivilege
             domain_name = client_domain
         elif client_role == UserRole.USER:
-            return await Group.get_groups_for_user(info.context, client_user_id)
+            loader = ctx.dataloader_manager.get_loader(
+                ctx, 'Group.by_user',
+            )
+            client_groups = await loader.load(client_user_id)
+            return client_groups
         else:
             raise InvalidAPIParameters('Unknown client role')
         return await Group.load_all(
@@ -693,12 +785,12 @@ class Queries(graphene.ObjectType):
         limit: int,
         offset: int,
         *,
+        filter: str = None,
+        order: str = None,
         domain_name: str = None,
         group_id: uuid.UUID = None,
         is_active: bool = None,
         status: UserStatus = None,
-        order_key: str = None,
-        order_asc: bool = True,
     ) -> UserList:
         from .user import UserRole
         ctx: GraphQueryContext = info.context
@@ -721,6 +813,7 @@ class Queries(graphene.ObjectType):
             group_id=group_id,
             is_active=is_active,
             status=status,
+            filter=filter,
         )
         user_list = await User.load_slice(
             info.context,
@@ -730,8 +823,8 @@ class Queries(graphene.ObjectType):
             group_id=group_id,
             is_active=is_active,
             status=status,
-            order_key=order_key,
-            order_asc=order_asc,
+            filter=filter,
+            order=order,
         )
         return UserList(user_list, total_count)
 
@@ -787,17 +880,18 @@ class Queries(graphene.ObjectType):
         limit: int,
         offset: int,
         *,
+        filter: str = None,
+        order: str = None,
         domain_name: str = None,
         email: str = None,
         is_active: bool = None,
-        order_key: str = None,
-        order_asc: bool = True,
     ) -> KeyPairList:
         total_count = await KeyPair.load_count(
             info.context,
             domain_name=domain_name,
             email=email,
             is_active=is_active,
+            filter=filter,
         )
         keypair_list = await KeyPair.load_slice(
             info.context,
@@ -806,8 +900,8 @@ class Queries(graphene.ObjectType):
             domain_name=domain_name,
             email=email,
             is_active=is_active,
-            order_key=order_key,
-            order_asc=order_asc,
+            filter=filter,
+            order=order,
         )
         return KeyPairList(keypair_list, total_count)
 
@@ -876,7 +970,7 @@ class Queries(graphene.ObjectType):
     ) -> ScalingGroup:
         ctx: GraphQueryContext = info.context
         loader = ctx.dataloader_manager.get_loader(
-            ctx, 'ScalingGroup.by_name'
+            ctx, 'ScalingGroup.by_name',
         )
         return await loader.load(name)
 
@@ -941,9 +1035,21 @@ class Queries(graphene.ObjectType):
         info: graphene.ResolveInfo,
         limit: int,
         offset: int,
+        *,
+        filter: str = None,
+        order: str = None,
     ) -> StorageVolumeList:
-        total_count = await StorageVolume.load_count(info.context)
-        items = await StorageVolume.load_slice(info.context, limit, offset)
+        total_count = await StorageVolume.load_count(
+            info.context,
+            filter=filter,
+        )
+        items = await StorageVolume.load_slice(
+            info.context,
+            limit,
+            offset,
+            filter=filter,
+            order=order,
+        )
         return StorageVolumeList(items, total_count)
 
     @staticmethod
@@ -957,8 +1063,8 @@ class Queries(graphene.ObjectType):
         domain_name: str = None,
         group_id: uuid.UUID = None,
         user_id: uuid.UUID = None,
-        order_key: str = None,
-        order_asc: bool = True,
+        filter: str = None,
+        order: str = None,
     ) -> VirtualFolderList:
         # TODO: adopt the generic queryfilter language
         total_count = await VirtualFolder.load_count(
@@ -966,6 +1072,7 @@ class Queries(graphene.ObjectType):
             domain_name=domain_name,  # scope
             group_id=group_id,        # scope
             user_id=user_id,          # scope
+            filter=filter,
         )
         items = await VirtualFolder.load_slice(
             info.context,
@@ -974,8 +1081,8 @@ class Queries(graphene.ObjectType):
             domain_name=domain_name,  # scope
             group_id=group_id,        # scope
             user_id=user_id,          # scope
-            order_key=order_key,      # order
-            order_asc=order_asc,      # order
+            filter=filter,
+            order=order,
         )
         return VirtualFolderList(items, total_count)
 
@@ -987,13 +1094,13 @@ class Queries(graphene.ObjectType):
         limit: int,
         offset: int,
         *,
+        filter: str = None,
+        order: str = None,
         session_id: SessionId,
         role: UserRole = None,
         domain_name: str = None,
         group_id: uuid.UUID = None,
         access_key: AccessKey = None,
-        order_key: str = None,
-        order_asc: bool = True,
     ) -> ComputeContainerList:
         # TODO: adopt the generic queryfilter language
         total_count = await ComputeContainer.load_count(
@@ -1003,6 +1110,7 @@ class Queries(graphene.ObjectType):
             domain_name=domain_name,  # scope
             group_id=group_id,        # scope
             access_key=access_key,    # scope
+            filter=filter,
         )
         items = await ComputeContainer.load_slice(
             info.context,
@@ -1012,8 +1120,8 @@ class Queries(graphene.ObjectType):
             domain_name=domain_name,  # scope
             group_id=group_id,        # scope
             access_key=access_key,    # scope
-            order_key=order_key,      # order
-            order_asc=order_asc,      # order
+            filter=filter,
+            order=order,
         )
         return ComputeContainerList(items, total_count)
 
@@ -1040,12 +1148,12 @@ class Queries(graphene.ObjectType):
         limit: int,
         offset: int,
         *,
+        filter: str = None,
+        order: str = None,
         domain_name: str = None,
         group_id: uuid.UUID = None,
         access_key: AccessKey = None,
         status: str = None,
-        order_key: str = None,
-        order_asc: bool = True,
     ) -> ComputeSessionList:
         total_count = await ComputeSession.load_count(
             info.context,
@@ -1053,6 +1161,7 @@ class Queries(graphene.ObjectType):
             domain_name=domain_name,  # scope
             group_id=group_id,        # scope
             access_key=access_key,    # scope
+            filter=filter,
         )
         items = await ComputeSession.load_slice(
             info.context,
@@ -1061,8 +1170,8 @@ class Queries(graphene.ObjectType):
             domain_name=domain_name,  # scope
             group_id=group_id,        # scope
             access_key=access_key,    # scope
-            order_key=order_key,      # order
-            order_asc=order_asc,      # order
+            filter=filter,
+            order=order,
         )
         return ComputeSessionList(items, total_count)
 

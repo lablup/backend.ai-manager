@@ -1,0 +1,1 @@
+Fix a regression of session concurrency limit checks due to transaction retry refactoring in #429

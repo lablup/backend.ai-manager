@@ -13,6 +13,7 @@ from typing import (
 from uuid import UUID, uuid4
 
 import aiohttp
+from dateutil.parser import parse as dtparse
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 from passlib.hash import bcrypt
@@ -41,6 +42,8 @@ from .base import (
     simple_db_mutate,
     simple_db_mutate_returning_item,
 )
+from .minilang.queryfilter import QueryFilterParser
+from .minilang.ordering import QueryOrderParser
 from .storage import StorageSessionManager
 
 if TYPE_CHECKING:
@@ -159,7 +162,6 @@ class User(graphene.ObjectType):
     uuid = graphene.UUID()  # legacy
     username = graphene.String()
     email = graphene.String()
-    password = graphene.String()
     need_password_change = graphene.Boolean()
     full_name = graphene.String()
     description = graphene.String()
@@ -246,14 +248,45 @@ class User(graphene.ObjectType):
         async with ctx.db.begin_readonly() as conn:
             return [cls.from_row(ctx, row) async for row in (await conn.stream(query))]
 
-    @staticmethod
+    _queryfilter_fieldspec = {
+        "username": ("username", None),
+        "email": ("email", None),
+        "need_password_change": ("need_password_change", None),
+        "full_name": ("full_name", None),
+        "description": ("description", None),
+        "is_active": ("is_active", None),
+        "status": ("status", lambda s: UserStatus[s]),
+        "status_info": ("status_info", None),
+        "created_at": ("created_at", dtparse),
+        "modified_at": ("modified_at", dtparse),
+        "domain_name": ("domain_name", None),
+        "role": ("role", lambda s: UserRole[s]),
+    }
+
+    _queryorder_colmap = {
+        "username": "username",
+        "email": "email",
+        "need_password_change": "need_password_change",
+        "full_name": "full_name",
+        "is_active": "is_active",
+        "status": "status",
+        "status_info": "status_info",
+        "created_at": "created_at",
+        "modified_at": "modified_at",
+        "domain_name": "domain_name",
+        "role": "role",
+    }
+
+    @classmethod
     async def load_count(
+        cls,
         ctx: GraphQueryContext,
         *,
         domain_name: str = None,
         group_id: UUID = None,
         is_active: bool = None,
         status: str = None,
+        filter: str = None,
     ) -> int:
         if group_id is not None:
             from .group import association_groups_users as agus
@@ -275,6 +308,15 @@ class User(graphene.ObjectType):
         elif is_active is not None:  # consider is_active field only if status is empty
             _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
             query = query.where(users.c.status.in_(_statuses))
+        if filter is not None:
+            if group_id is not None:
+                qfparser = QueryFilterParser({
+                    'users_' + k: v
+                    for k, v in cls._queryfilter_fieldspec.items()
+                })
+            else:
+                qfparser = QueryFilterParser(cls._queryfilter_fieldspec)
+            query = qfparser.append_filter(query, filter)
         async with ctx.db.begin_readonly() as conn:
             result = await conn.execute(query)
         return result.scalar()
@@ -290,14 +332,9 @@ class User(graphene.ObjectType):
         group_id: UUID = None,
         is_active: bool = None,
         status: str = None,
-        order_key: str = None,
-        order_asc: bool = True,
+        filter: str = None,
+        order: str = None,
     ) -> Sequence[User]:
-        if order_key is None:
-            _ordering = sa.desc(users.c.created_at)
-        else:
-            _order_func = sa.asc if order_asc else sa.desc
-            _ordering = _order_func(getattr(users.c, order_key))
         if group_id is not None:
             from .group import association_groups_users as agus
             j = (users.join(agus, agus.c.user_id == users.c.uuid))
@@ -305,7 +342,6 @@ class User(graphene.ObjectType):
                 sa.select([users])
                 .select_from(j)
                 .where(agus.c.group_id == group_id)
-                .order_by(_ordering)
                 .limit(limit)
                 .offset(offset)
             )
@@ -313,7 +349,6 @@ class User(graphene.ObjectType):
             query = (
                 sa.select([users])
                 .select_from(users)
-                .order_by(_ordering)
                 .limit(limit)
                 .offset(offset)
             )
@@ -324,6 +359,28 @@ class User(graphene.ObjectType):
         elif is_active is not None:  # consider is_active field only if status is empty
             _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
             query = query.where(users.c.status.in_(_statuses))
+        if filter is not None:
+            if group_id is not None:
+                qfparser = QueryFilterParser({
+                    'users_' + k: v
+                    for k, v in cls._queryfilter_fieldspec.items()
+                })
+            else:
+                qfparser = QueryFilterParser(cls._queryfilter_fieldspec)
+            query = qfparser.append_filter(query, filter)
+        if order is not None:
+            if group_id is not None:
+                qoparser = QueryOrderParser({
+                    'users_' + k: v
+                    for k, v in cls._queryorder_colmap.items()
+                })
+            else:
+                qoparser = QueryOrderParser(cls._queryorder_colmap)
+            query = qoparser.append_ordering(query, order)
+        else:
+            query = query.order_by(
+                users.c.created_at.desc(),
+            )
         async with ctx.db.begin_readonly() as conn:
             return [
                 cls.from_row(ctx, row) async for row in (await conn.stream(query))

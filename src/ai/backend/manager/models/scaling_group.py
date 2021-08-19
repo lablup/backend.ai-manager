@@ -23,6 +23,7 @@ from .base import (
     simple_db_mutate_returning_item,
     set_if_set,
     batch_result,
+    batch_multiresult,
 )
 from .group import resolve_group_name_or_id
 from .user import UserRole
@@ -263,7 +264,8 @@ class ScalingGroup(graphene.ObjectType):
     ) -> Sequence[ScalingGroup]:
         j = sa.join(
             scaling_groups, sgroups_for_keypairs,
-            scaling_groups.c.name == sgroups_for_keypairs.c.scaling_group)
+            scaling_groups.c.name == sgroups_for_keypairs.c.scaling_group
+        )
         query = (
             sa.select([scaling_groups])
             .select_from(j)
@@ -276,6 +278,27 @@ class ScalingGroup(graphene.ObjectType):
                 obj async for row in (await conn.stream(query))
                 if (obj := cls.from_row(ctx, row)) is not None
             ]
+
+    @classmethod
+    async def batch_load_by_group(
+        cls,
+        ctx: GraphQueryContext,
+        group_ids: Sequence[uuid.UUID],
+    ) -> Sequence[Sequence[ScalingGroup | None]]:
+        j = sa.join(
+            scaling_groups, sgroups_for_groups,
+            scaling_groups.c.name == sgroups_for_groups.c.scaling_group
+        )
+        query = (
+            sa.select([scaling_groups, sgroups_for_groups.c.group])
+            .select_from(j)
+            .where(sgroups_for_groups.c.group.in_(group_ids))
+        )
+        async with ctx.db.begin_readonly() as conn:
+            return await batch_multiresult(
+                ctx, conn, query, cls,
+                group_ids, lambda row: row['group'],
+            )
 
     @classmethod
     async def batch_load_by_name(
