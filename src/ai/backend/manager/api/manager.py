@@ -122,13 +122,10 @@ async def fetch_manager_status(request: web.Request) -> web.Response:
             )
             active_sessions_num = await conn.scalar(query)
 
-            if configs.get('id'):
-                _id = configs['id']
-            else:
-                _id = socket.gethostname()
+            _id = configs['id'] if configs.get('id') else socket.gethostname()
             nodes = [
                 {
-                    'id': _id if _id else '',
+                    'id': _id,
                     'num_proc': configs['num-proc'],
                     'service_addr': str(configs['service-addr']),
                     'heartbeat_timeout': configs['heartbeat-timeout'],
