@@ -597,22 +597,23 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
         permission = row['permission']
     proxy_name, volume_name = root_ctx.storage_manager.split_host(row['host'])
     try:
-        async with root_ctx.storage_manager.request(
-            proxy_name, 'GET', 'folder/usage',
-            json={
-                'volume': volume_name,
-                'vfid': str(row['id']),
-            },
-            raise_for_status=True,
-        ) as (_, storage_resp):
-            usage = await storage_resp.json()
+        # TODO: refactor file count and file size requests into background_task
+        # async with root_ctx.storage_manager.request(
+        #     proxy_name, 'GET', 'folder/usage',
+        #     json={
+        #         'volume': volume_name,
+        #         'vfid': str(row['id']),
+        #     },
+        #     raise_for_status=True,
+        # ) as (_, storage_resp):
+        #     usage = await storage_resp.json()
         resp = {
-            'name': row['name'],
-            'id': row['id'].hex,
-            'host': row['host'],
-            'numFiles': usage['file_count'],  # legacy
-            'num_files': usage['file_count'],
-            'used_bytes': usage['used_bytes'],  # added in v20.09
+            "name": row["name"],
+            "id": row["id"].hex,
+            "host": row["host"],
+            # 'numFiles': usage['file_count'],  # legacy
+            # 'num_files': usage['file_count'],
+            # 'used_bytes': usage['used_bytes'],  # added in v20.09
             'created': str(row['created_at']),  # legacy
             'created_at': str(row['created_at']),
             'last_used': str(row['created_at']),
