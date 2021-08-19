@@ -135,6 +135,7 @@ class KeyPair(graphene.ObjectType):
         interfaces = (Item, )
 
     user_id = graphene.String()
+    full_name = graphene.String()
     access_key = graphene.String()
     secret_key = graphene.String()
     is_active = graphene.Boolean()
@@ -179,6 +180,7 @@ class KeyPair(graphene.ObjectType):
         return cls(
             id=row['access_key'],
             user_id=row['user_id'],
+            full_name=row['full_name'] if 'full_name' in row.keys() else None,
             access_key=row['access_key'],
             secret_key=row['secret_key'],
             is_active=row['is_active'],
@@ -247,6 +249,7 @@ class KeyPair(graphene.ObjectType):
         "access_key": ("keypairs_access_key", None),
         "user_id": ("users_uuid", None),
         "email": ("users_email", None),
+        "full_name": ("users_full_name", None),
         "is_active": ("keypairs_is_active", None),
         "is_admin": ("keypairs_is_admin", None),
         "resource_policy": ("keypairs_resource_policy", None),
@@ -255,12 +258,14 @@ class KeyPair(graphene.ObjectType):
         "concurrency_limit": ("keypairs_concurrency_limit", None),
         "concurrency_used": ("keypairs_concurrency_used", None),
         "rate_limit": ("keypairs_rate_limit", None),
+        "num_queries": ("keypairs_num_queries", None),
         "ssh_public_key": ("keypairs_ssh_public_key", None),
     }
 
     _queryorder_colmap = {
         "access_key": "keypairs_access_key",
         "email": "users_email",
+        "full_name": "users_full_name",
         "is_active": "keypairs_is_active",
         "is_admin": "keypairs_is_admin",
         "resource_policy": "keypairs_resource_policy",
@@ -269,6 +274,7 @@ class KeyPair(graphene.ObjectType):
         "concurrency_limit": "keypairs_concurrency_limit",
         "concurrency_used": "keypairs_concurrency_used",
         "rate_limit": "keypairs_rate_limit",
+        "num_queries": "keypairs_num_queries",
     }
 
     @classmethod
@@ -316,7 +322,7 @@ class KeyPair(graphene.ObjectType):
         from .user import users
         j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
         query = (
-            sa.select([keypairs])
+            sa.select([keypairs, users.c.email, users.c.full_name])
             .select_from(j)
             .limit(limit)
             .offset(offset)
