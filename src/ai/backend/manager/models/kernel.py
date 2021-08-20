@@ -177,7 +177,7 @@ kernels = sa.Table(
     sa.Column('image', sa.String(length=512)),
     sa.Column('registry', sa.String(length=512)),
     sa.Column('tag', sa.String(length=64), nullable=True),
-    
+
     # Resource occupation
     sa.Column('container_id', sa.String(length=64)),
     sa.Column('occupied_slots', ResourceSlotColumn(), nullable=False),
