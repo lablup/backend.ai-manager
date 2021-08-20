@@ -873,7 +873,7 @@ class ComputeSession(graphene.ObjectType):
         "group_name": ("groups_group_name", None),
         "user_email": ("users_email", None),
         "access_key": ("kernels_access_key", None),
-        "scaling_group": ("kernels_scaling_groups_name", None),
+        "scaling_group": ("kernels_scaling_group", None),
         "cluster_mode": ("kernels_cluster_mode", lambda s: ClusterMode[s]),
         "cluster_template": ("kernels_cluster_template", None),
         "cluster_size": ("kernels_cluster_size", None),
@@ -885,9 +885,12 @@ class ComputeSession(graphene.ObjectType):
         "terminated_at": ("kernels_terminated_at", dtparse),
         "starts_at": ("kernels_starts_at", dtparse),
         "startup_command": ("kernels_startup_command", None),
+        "agent": ("kernels_agent", None),
+        "agents": ("kernels_agent", None),
     }
 
     _queryorder_colmap = {
+        "id": "kernels_id",
         "type": "kernels_session_type",
         "name": "kernels_session_name",
         "image": "kernels_image",
@@ -895,7 +898,7 @@ class ComputeSession(graphene.ObjectType):
         "group_name": "kernels_group_name",
         "user_email": "users_email",
         "access_key": "kernels_access_key",
-        "scaling_group": "kernels_scaling_groups_name",
+        "scaling_group": "kernels_scaling_group",
         "cluster_mode": "kernels_cluster_mode",
         "cluster_template": "kernels_cluster_template",
         "cluster_size": "kernels_cluster_size",
