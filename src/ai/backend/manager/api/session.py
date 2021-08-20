@@ -493,7 +493,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
                 'creation_config': params['config'],
                 'bootstrap_script': params['bootstrap_script'],
                 'startup_command': params['startup_command'],
-                'agent_id': AgentId(None)
+                'agent_id': AgentId('')
             }],
             params['config']['scaling_group'],
             params['session_type'],

@@ -213,7 +213,7 @@ class PendingSession:
         return {
             kernels.c.id,
             kernels.c.access_key,
-            kernels.c.agent,    
+            kernels.c.agent,
             kernels.c.agent_addr,
             kernels.c.session_creation_id,
             kernels.c.session_id,

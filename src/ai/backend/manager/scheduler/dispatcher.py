@@ -475,7 +475,6 @@ class SchedulerDispatcher(aobject):
                 agent_id = sess_ctx.agent_id
             else:
                 agent_id = scheduler.assign_agent_for_session(candidate_agents, sess_ctx)
-                
             async with self.db.begin() as agent_db_conn:
                 query = (
                     sa.select([agents.c.available_slots])
@@ -492,12 +491,11 @@ class SchedulerDispatcher(aobject):
                         available_test_pass = True
                         continue
                     else:
-                        raise InstanceNotAvailable(f"{key} is insufficent.")  
+                        raise InstanceNotAvailable(f"{key} is insufficent.")
                 if available_test_pass:
                     agent_alloc_ctx = await _reserve_agent(
                         sched_ctx, agent_db_conn, sgroup_name, agent_id, sess_ctx.requested_slots,
                     )
-                
         except InstanceNotAvailable:
             log.debug(log_fmt + 'no-available-instances', *log_args)
 
@@ -581,7 +579,7 @@ class SchedulerDispatcher(aobject):
             for kernel in sess_ctx.kernels:
                 try:
                     agent_alloc_ctx: AgentAllocationContext
-                    agent_id = AgentId(None)
+                    agent_id = AgentId('')
                     if kernel.agent_id is not None:
                         agent_id = kernel.agent_id
                     else:
@@ -612,7 +610,7 @@ class SchedulerDispatcher(aobject):
                                     extra_conds=agent_query_extra_conds,
                                 )
                                 candidate_agents = await _list_agents_by_sgroup(agent_db_conn, sgroup_name)
-                        await execute_with_retry(_reserve)                        
+                        await execute_with_retry(_reserve)  
                 except InstanceNotAvailable:
                     log.debug(log_fmt + 'no-available-instances', *log_args)
 

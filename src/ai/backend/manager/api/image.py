@@ -20,6 +20,7 @@ from ai.backend.common.etcd import (
 )
 from ai.backend.common.types import (
     SessionTypes,
+    AgentId
 )
 
 from ..defs import DEFAULT_ROLE
@@ -418,7 +419,7 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
             },
             'startup_command': '/root/build-image.sh',
             'bootstrap_script': '',
-            'agent_id': ''
+            'agent_id': AgentId('')
         }],
         None,
         SessionTypes.BATCH,

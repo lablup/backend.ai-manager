@@ -1089,7 +1089,7 @@ class AgentRegistry:
                 await execute_with_retry(_enqueue)
             except Exception:
                 log.exception('ForeignKeyViolationError: violates foreign key constraint')
-                raise InvalidAPIParameters('ForeignKeyViolationError')   
+                raise InvalidAPIParameters('ForeignKeyViolationError')
         await self.hook_plugin_ctx.notify(
             'POST_ENQUEUE_SESSION',
             (session_id, session_name, access_key),
