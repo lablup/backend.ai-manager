@@ -1035,10 +1035,11 @@ class AgentRegistry:
                                 f'There is a vfolder whose name conflicts with '
                                 f'dotfile {dotfile["path"]}')
             # map agent with container
-            mapped_agent = ''
+            mapped_agent = None
             if not agent_list:
-                mapped_agent = None
+                pass
             else:
+                mapped_agent = ''
                 for agent in agent_list:
                     mapped_agent += (f"{kernel['cluster_hostname']} : {agent}, ")
                 mapped_agent = mapped_agent[:-2]
