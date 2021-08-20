@@ -753,7 +753,7 @@ class AgentRegistry:
         session_tag: str = None,
         internal_data: dict = None,
         starts_at: datetime = None,
-        agent_list : List[str] = None,
+        agent_list: List[str] = None,
     ) -> SessionId:
 
         mounts = kernel_enqueue_configs[0]['creation_config'].get('mounts') or []
@@ -831,9 +831,8 @@ class AgentRegistry:
             raise VFolderNotFound(extra_data=[*(set(mounts) - matched_mounts)])
         mounts = determined_mounts
 
-        mapping_agents_containers = []
         ids = []
-        is_multicontainer = cluster_size > 1    
+        is_multicontainer = cluster_size > 1
         if is_multicontainer:
             if len(kernel_enqueue_configs) == 1:
                 log.debug(
@@ -848,7 +847,6 @@ class AgentRegistry:
                     sub_kernel_config['cluster_role'] = 'sub'
                     sub_kernel_config['cluster_idx'] = i + 1
                     kernel_enqueue_configs.append(sub_kernel_config)
-              
             elif len(kernel_enqueue_configs) > 1:
                 # each container should have its own kernel_config
                 log.debug(
@@ -991,7 +989,7 @@ class AgentRegistry:
                            .select_from(keypairs)
                            .where(keypairs.c.access_key == access_key))
                 result = await conn.execute(query)
-                row  = result.first()
+                row = result.first()
                 dotfiles = msgpack.unpackb(row['dotfiles'])
                 internal_data = {} if internal_data is None else internal_data
                 internal_data.update({'dotfiles': dotfiles})
@@ -1036,8 +1034,7 @@ class AgentRegistry:
                             raise BackendError(
                                 f'There is a vfolder whose name conflicts with '
                                 f'dotfile {dotfile["path"]}')
-            
-            #map agent with container
+            # map agent with container
             mapped_agent = ''
             if not agent_list:
                 mapped_agent = kernel['agent_id']
@@ -1045,7 +1042,6 @@ class AgentRegistry:
                 for agent in agent_list:
                     mapped_agent += (f"{kernel['cluster_hostname']} : {agent}, ")
                 mapped_agent = mapped_agent[:-2]
-        
             try:
                 async def _enqueue() -> None:
                     nonlocal ids
@@ -1092,9 +1088,8 @@ class AgentRegistry:
 
                 await execute_with_retry(_enqueue)
             except Exception:
-                log.exception('ForeignKeyViolationError: insert or update on table "kernels" violates foreign key constraint')
-                raise InvalidAPIParameters('ForeignKeyViolationError')
-                
+                log.exception('ForeignKeyViolationError: violates foreign key constraint')
+                raise InvalidAPIParameters('ForeignKeyViolationError')          
         await self.hook_plugin_ctx.notify(
             'POST_ENQUEUE_SESSION',
             (session_id, session_name, access_key),

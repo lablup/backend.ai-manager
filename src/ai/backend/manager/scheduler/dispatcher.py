@@ -469,7 +469,7 @@ class SchedulerDispatcher(aobject):
         log_fmt = _log_fmt.get()
         log_args = _log_args.get()
         try:
-            #OP.1415 if configured sess_ctx.agent_id is existed, skip assin_agent_for_session
+            # OP.1415 if configured sess_ctx.agent_id is existed, skip assin_agent_for_session
             agent_id = None
             if sess_ctx.agent_id is not None:
                 agent_id = sess_ctx.agent_id
@@ -493,7 +493,7 @@ class SchedulerDispatcher(aobject):
                         continue
                     else:
                         raise InstanceNotAvailable(f"{key} is insufficent.")  
-                if available_test_pass :
+                if available_test_pass:
                     agent_alloc_ctx = await _reserve_agent(
                         sched_ctx, agent_db_conn, sgroup_name, agent_id, sess_ctx.requested_slots,
                     )
@@ -605,7 +605,7 @@ class SchedulerDispatcher(aobject):
                     if available_test_pass:
                         async def _reserve() -> None:
                             nonlocal agent_alloc_ctx, candidate_agents
-                            #assert agent_id is not None
+                            # assert agent_id is not None
                             async with agent_db_conn.begin_nested():
                                 agent_alloc_ctx = await _reserve_agent(
                                     sched_ctx, agent_db_conn,
