@@ -493,7 +493,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
                 'creation_config': params['config'],
                 'bootstrap_script': params['bootstrap_script'],
                 'startup_command': params['startup_command'],
-                'agent_id' : None
+                'agent_id': AgentId(None)
             }],
             params['config']['scaling_group'],
             params['session_type'],
@@ -507,7 +507,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             startup_command=params['startup_command'],
             session_tag=params['tag'],
             starts_at=starts_at,
-            agent_list = params['config']['agent_list']
+            agent_list=params['config']['agent_list']
         ))
         resp['sessionId'] = str(kernel_id)  # changed since API v5
         resp['sessionName'] = str(params['session_name'])
@@ -769,7 +769,6 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
     }),
     loads=_json_loads)
 async def create_from_params(request: web.Request, params: Any) -> web.Response:
-    
     if params['session_name'] in ['from-template']:
         raise InvalidAPIParameters(f'Requested session ID {params["session_name"]} is reserved word')
     api_version = request['api_version']
@@ -785,12 +784,10 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
         creation_config = creation_config_v1.check(params['config'])
     else:
         raise InvalidAPIParameters('API version not supported')
-    
     params['config'] = creation_config
-        
     if params['config']['agent_list'] is not None and request['user']['role'] != (UserRole.SUPERADMIN):
         raise InsufficientPrivilege('You are not allowed to see Agent List')
-    if request['user']['role'] == (UserRole.SUPERADMIN): 
+    if request['user']['role'] == (UserRole.SUPERADMIN):
         if not params['config']['agent_list']:
             pass
         else:
@@ -821,7 +818,6 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
 async def create_cluster(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     app_ctx: PrivateContext = request.app['session.context']
-    
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
     scopes_param = {
@@ -1974,6 +1970,7 @@ async def shutdown(app: web.Application) -> None:
     await app_ctx.stats_task
 
     await cancel_tasks(app_ctx.pending_waits)
+
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
     app = web.Application()

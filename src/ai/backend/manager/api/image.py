@@ -417,7 +417,8 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
                 }
             },
             'startup_command': '/root/build-image.sh',
-            'bootstrap_script': ''
+            'bootstrap_script': '',
+            'agent_id': ''
         }],
         None,
         SessionTypes.BATCH,

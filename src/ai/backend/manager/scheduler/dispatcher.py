@@ -581,12 +581,11 @@ class SchedulerDispatcher(aobject):
             for kernel in sess_ctx.kernels:
                 try:
                     agent_alloc_ctx: AgentAllocationContext
-                    agent_id = None
+                    agent_id = AgentId(None)
                     if kernel.agent_id is not None:
                         agent_id = kernel.agent_id
                     else:
                         agent_id = scheduler.assign_agent_for_kernel(candidate_agents, kernel)
-                        
                     query = (
                         sa.select([agents.c.available_slots])
                         .select_from(agents)
