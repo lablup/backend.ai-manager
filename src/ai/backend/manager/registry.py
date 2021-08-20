@@ -1039,7 +1039,7 @@ class AgentRegistry:
             
             #map agent with container
             mapped_agent = ''
-            if agent_list is None:
+            if not agent_list:
                 mapped_agent = kernel['agent_id']
             else:
                 for agent in agent_list:

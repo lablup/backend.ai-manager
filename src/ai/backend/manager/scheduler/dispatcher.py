@@ -593,12 +593,11 @@ class SchedulerDispatcher(aobject):
                         .where(agents.c.id == agent_id)
                     )
                     available_agent_slots = (await agent_db_conn.execute(query)).scalar()
-
                     if available_agent_slots is None:
                         raise InstanceNotAvailable("There is no available_agent_slots")
                     available_test_pass = False
                     for key in available_agent_slots:
-                        if available_agent_slots[key] >= kernel.requested_slots:
+                        if available_agent_slots[key] >= kernel.requested_slots[key]:
                             available_test_pass = True
                             continue
                         else:
@@ -614,7 +613,7 @@ class SchedulerDispatcher(aobject):
                                     extra_conds=agent_query_extra_conds,
                                 )
                                 candidate_agents = await _list_agents_by_sgroup(agent_db_conn, sgroup_name)
-                            await execute_with_retry(_reserve)                        
+                        await execute_with_retry(_reserve)                        
                 except InstanceNotAvailable:
                     log.debug(log_fmt + 'no-available-instances', *log_args)
 
