@@ -1037,7 +1037,7 @@ class AgentRegistry:
             # map agent with container
             mapped_agent = ''
             if not agent_list:
-                mapped_agent = kernel['agent_id']
+                mapped_agent = None
             else:
                 for agent in agent_list:
                     mapped_agent += (f"{kernel['cluster_hostname']} : {agent}, ")
