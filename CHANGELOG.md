@@ -16,6 +16,21 @@ Changes
 
 .. towncrier release notes start
 
+20.09.28 (2021-08-23)
+---------------------
+
+### Features
+* Add queryfilter/queryorder support for keypairs' (full_name, num_queries), users' (uuid), and kernels' (id, agent(s)) column. ([#464](https://github.com/lablup/backend.ai-manager/issues/464))
+
+### Fixes
+* Remove duplicate codes of `mount_map` check and add alias name check for `mount_map`. ([#461](https://github.com/lablup/backend.ai-manager/issues/461))
+* Fix missing timestamp updates when terminating sessions ([#465](https://github.com/lablup/backend.ai-manager/issues/465))
+* Include the exact list of missing/invalid vfolders when returning `VFolderNotFound` error ([#466](https://github.com/lablup/backend.ai-manager/issues/466))
+
+### Miscellaneous
+* Update package dependencies ([#462](https://github.com/lablup/backend.ai-manager/issues/462))
+
+
 20.09.27 (2021-07-22)
 ---------------------
 
