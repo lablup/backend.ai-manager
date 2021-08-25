@@ -1,1 +1,0 @@
-Partially revert and fix #454 which introduced default connection settings of deadlock/lock/transaction-idle timeouts for PostgreSQL, to make it working with AWS RDS
