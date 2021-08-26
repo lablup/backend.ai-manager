@@ -48,13 +48,16 @@
 | webencodings                   | 0.5.1      | BSD                                                          |
 | widgetsnbextension             | 3.4.1      | BSD                                                          |
 | wrapt                          | 1.11.2     | BSD                                                          |
-| gast                           | 0.2.2      | BSD 3-Clause                                                 |
 | Markdown                       | 3.1.1      | BSD License                                                  |
 | Pygments                       | 2.2.0      | BSD License                                                  |
 | Send2Trash                     | 1.5.0      | BSD License                                                  |
-| Werkzeug                       | 0.15.5     | BSD-3-Clause                                                 |
 | astor                          | 0.8.0      | BSD-3-Clause                                                 |
+| gast                           | 0.2.2      | BSD 3-Clause                                                 |
+| metakernel                     | 0.20.14    | BSD-3-Clause                                                 |
 | prompt-toolkit                 | 2.0.7      | BSD-3-Clause                                                 |
+| pandocfilters                  | 1.4.2      | BSD-3-Clause                                                 |
+| testpath                       | 0.3.1      | BSD-3-Clause                                                 |
+| werkzeug                       | 0.15.5     | BSD-3-Clause                                                 |
 | idna                           | 2.7        | BSD-like                                                     |
 | python-dateutil                | 2.7.3      | Dual License                                                 |
 | geofront-cli                   | 0.5.2      | GPLv3 or later                                               |
@@ -63,19 +66,23 @@
 | pexpect                        | 4.6.0      | ISC license                                                  |
 | chardet                        | 3.0.4      | LGPL                                                         |
 | pyzmq                          | 17.1.2     | LGPL+BSD                                                     |
-| callosum                       | 0.9.1      | MIT                                                          |
-| ConfigArgParse                 | 0.12.0     | MIT                                                          |
-| Keras-Applications             | 1.0.8      | MIT                                                          |
-| Keras-Preprocessing            | 1.1.0      | MIT                                                          |
-| PyYAML                         | 3.13       | MIT                                                          |
+| pyYAML                         | 3.13       | MIT                                                          |
 | aiotools                       | 0.5.4      | MIT                                                          |
 | attrs                          | 18.2.0     | MIT                                                          |
 | backend.ai-client              | 19.3.1     | MIT                                                          |
 | backend.ai-integration-jupyter | 0.3.2      | MIT                                                          |
+| callosum                       | 0.9.1      | MIT                                                          |
+| configArgParse                 | 0.12.0     | MIT                                                          |
+| entrypoints                    | 0.2.3      | MIT                                                          |
+| html5lib                       | 1.0.1      | MIT                                                          |
 | humanize                       | 0.5.1      | MIT                                                          |
+| idna-ssl                       | 1.1.0      | MIT                                                          |
 | jedi                           | 0.12.1     | MIT                                                          |
 | jmespath                       | 0.9.3      | MIT                                                          |
 | jsonschema                     | 2.6.0      | MIT                                                          |
+| keras-Applications             | 1.0.8      | MIT                                                          |
+| keras-Preprocessing            | 1.1.0      | MIT                                                          |
+| keyring                        | 13.2.1     | MIT                                                          |
 | parso                          | 0.3.1      | MIT                                                          |
 | pickleshare                    | 0.7.4      | MIT                                                          |
 | pyspin                         | 1.1.1      | MIT                                                          |
@@ -85,21 +92,14 @@
 | termcolor                      | 1.1.0      | MIT                                                          |
 | urllib3                        | 1.24.1     | MIT                                                          |
 | wcwidth                        | 0.1.7      | MIT                                                          |
-| html5lib                       | 1.0.1      | MIT License                                                  |
 | certifi                        | 2018.8.24  | MPL-2.0                                                      |
 | tqdm                           | 4.25.0     | MPLv2.0, MIT Licences                                        |
 | futures                        | 3.1.1      | PSF                                                          |
 | backend.ai-cloud-scripts       | 0.1.0      | Proprietary                                                  |
 | configobj                      | 5.0.6      | UNKNOWN                                                      |
 | configparser                   | 4.0.2      | UNKNOWN                                                      |
-| entrypoints                    | 0.2.3      | MIT                                                          |
-| idna-ssl                       | 1.1.0      | MIT                                                          |
-| keyring                        | 13.2.1     | MIT                                                          |
-| metakernel                     | 0.20.14    | BSD-3-Clause License                                         |
-| pandocfilters                  | 1.4.2      | BSD-3-Clause License                                         |
 | ptyprocess                     | 0.6.0      | UNKNOWN                                                      |
 | terminado                      | 0.8.1      | UNKNOWN                                                      |
-| testpath                       | 0.3.1      | BSD-3-Clause License                                         |
 | simplegeneric                  | 0.8.1      | ZPL 2.1                                                      |
 | tornado                        | 5.1        | http://www.apache.org/licenses/LICENSE-2.0                   |
 | decorator                      | 4.3.0      | new BSD License                                              |
