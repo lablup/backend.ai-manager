@@ -92,14 +92,14 @@
 | backend.ai-cloud-scripts       | 0.1.0      | Proprietary                                                  |
 | configobj                      | 5.0.6      | UNKNOWN                                                      |
 | configparser                   | 4.0.2      | UNKNOWN                                                      |
-| entrypoints                    | 0.2.3      | UNKNOWN                                                      |
-| idna-ssl                       | 1.1.0      | UNKNOWN                                                      |
-| keyring                        | 13.2.1     | UNKNOWN                                                      |
-| metakernel                     | 0.20.14    | UNKNOWN                                                      |
-| pandocfilters                  | 1.4.2      | UNKNOWN                                                      |
+| entrypoints                    | 0.2.3      | MIT                                                          |
+| idna-ssl                       | 1.1.0      | MIT                                                          |
+| keyring                        | 13.2.1     | MIT                                                          |
+| metakernel                     | 0.20.14    | BSD-3-Clause License                                         |
+| pandocfilters                  | 1.4.2      | BSD-3-Clause License                                         |
 | ptyprocess                     | 0.6.0      | UNKNOWN                                                      |
 | terminado                      | 0.8.1      | UNKNOWN                                                      |
-| testpath                       | 0.3.1      | UNKNOWN                                                      |
+| testpath                       | 0.3.1      | BSD-3-Clause License                                         |
 | simplegeneric                  | 0.8.1      | ZPL 2.1                                                      |
 | tornado                        | 5.1        | http://www.apache.org/licenses/LICENSE-2.0                   |
 | decorator                      | 4.3.0      | new BSD License                                              |
