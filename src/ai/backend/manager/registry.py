@@ -760,15 +760,21 @@ class AgentRegistry:
         session_id = SessionId(uuid.uuid4())
 
         # Check scaling group availability if scaling_group parameter is given.
-        # If scaling_group is not provided, it will be selected in scheduling step.
-        if scaling_group is not None:
-            async with self.db.begin_readonly() as conn:
-                sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
+        # If scaling_group is not provided, it will be selected as the first one among
+        # the list of allowed scaling groups.
+        async with self.db.begin_readonly() as conn:
+            sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
+            if not sgroups:
+                raise ScalingGroupNotFound("You have no scaling groups allowed to use.")
+            if scaling_group is None:
+                scaling_group = sgroups[0]['name']
+            else:
                 for sgroup in sgroups:
                     if scaling_group == sgroup['name']:
                         break
                 else:
-                    raise ScalingGroupNotFound
+                    raise ScalingGroupNotFound(f"The scaling group {scaling_group} does not exist.")
+        assert scaling_group is not None
 
         # sanity check for vfolders
         allowed_vfolder_types = ['user', 'group']
