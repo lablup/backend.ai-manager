@@ -770,7 +770,8 @@ class AgentRegistry:
                 scaling_group = sgroups[0]['name']
                 log.warning(
                     f"enqueue_session(s:{session_name}, ak:{access_key}): "
-                    f"The client did not specify the scaling group for session; falling back to {scaling_group}"
+                    f"The client did not specify the scaling group for session; "
+                    f"falling back to {scaling_group}"
                 )
             else:
                 for sgroup in sgroups:
