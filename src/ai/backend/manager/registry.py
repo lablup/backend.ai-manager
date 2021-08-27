@@ -768,6 +768,10 @@ class AgentRegistry:
                 raise ScalingGroupNotFound("You have no scaling groups allowed to use.")
             if scaling_group is None:
                 scaling_group = sgroups[0]['name']
+                log.warning(
+                    f"enqueue_session(s:{session_name}, ak:{access_key}): "
+                    f"The client did not specify the scaling group for session; falling back to {scaling_group}"
+                )
             else:
                 for sgroup in sgroups:
                     if scaling_group == sgroup['name']:
