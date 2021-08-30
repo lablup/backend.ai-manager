@@ -1177,17 +1177,18 @@ class AgentRegistry:
             mtu = await self.shared_config.get_raw('config/docker/network/mtu')
             try:
                 # Overlay networks can only be created at the Swarm manager.
-                await self.docker.networks.create({
+                create_options = {
                     'Name': network_name,
                     'Driver': 'overlay',
                     'Attachable': True,
                     'Labels': {
                         'ai.backend.cluster-network': '1'
                     },
-                    'Options': {
-                        'com.docker.network.driver.mtu': mtu
-                    }
-                })
+                    'Options': {}
+                }
+                if mtu:
+                    create_options['Options']['com.docker.network.driver.mtu'] = mtu
+                await self.docker.networks.create(create_options)
             except Exception:
                 log.exception(f"Failed to create an overlay network {network_name}")
                 raise

@@ -61,7 +61,7 @@ Alias keys are also URL-quoted in the same way.
            - ssl-verify: "yes" | "no"
          ...
        + network
-           - mtu: "1500"
+           - mtu: 1500  # Maximum Transmission Unit
      + redis
        - addr: "{redis-host}:{redis-port}"
        - password: {password}
@@ -261,7 +261,6 @@ shared_config_defaults = {
     'volumes/_fsprefix': '/',
     'config/api/allow-origins': '*',
     'config/docker/image/auto_pull': 'digest',
-    'config/docker/network/mtu': '1500',
 }
 
 current_vfolder_types: ContextVar[List[str]] = ContextVar('current_vfolder_types')
@@ -352,6 +351,9 @@ shared_config_iv = t.Dict({
     }).allow_extra('*'),
     t.Key('docker'): t.Dict({
         t.Key('registry'): t.Mapping(t.String, container_registry_iv),
+        t.Key('network', default=None): t.Null | t.Dict({
+            t.Key('mtu', default=1500): t.Int[1:],
+        }).allow_extra('*'),
     }).allow_extra('*'),
     t.Key('plugins', default=_shdefs['plugins']): t.Dict({
         t.Key('accelerator', default=_shdefs['plugins']['accelerator']):
