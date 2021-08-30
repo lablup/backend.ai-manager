@@ -60,6 +60,8 @@ Alias keys are also URL-quoted in the same way.
            - project: "project1-name,project2-name,..."  # harbor only
            - ssl-verify: "yes" | "no"
          ...
+       + network
+           - mtu: "1500"
      + redis
        - addr: "{redis-host}:{redis-port}"
        - password: {password}
@@ -259,6 +261,7 @@ shared_config_defaults = {
     'volumes/_fsprefix': '/',
     'config/api/allow-origins': '*',
     'config/docker/image/auto_pull': 'digest',
+    'config/docker/network/mtu': '1500',
 }
 
 current_vfolder_types: ContextVar[List[str]] = ContextVar('current_vfolder_types')
