@@ -42,6 +42,7 @@ from cryptography.hazmat.backends import default_backend
 from dateutil.tz import tzutc
 import snappy
 import sqlalchemy as sa
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.sql.expression import true
 from yarl import URL
 
@@ -1088,9 +1089,9 @@ class AgentRegistry:
                         ids.append(kernel_id)
 
                 await execute_with_retry(_enqueue)
-            except Exception:
+            except DBAPIError:
                 log.exception('ForeignKeyViolationError: violates foreign key constraint')
-                raise InvalidAPIParameters('ForeignKeyViolationError')
+                raise
         await self.hook_plugin_ctx.notify(
             'POST_ENQUEUE_SESSION',
             (session_id, session_name, access_key),
@@ -1126,6 +1127,7 @@ class AgentRegistry:
         )
         if hook_result.status != PASSED:
             raise RejectedByHook.from_hook_result(hook_result)
+        
         # Get resource policy for the session
         # TODO: memoize with TTL
         async with self.db.begin_readonly() as conn:
@@ -1154,6 +1156,7 @@ class AgentRegistry:
             'resource_policy': resource_policy,
             'auto_pull': auto_pull,
         }
+        
         network_name: Optional[str] = None
         if scheduled_session.cluster_mode == ClusterMode.SINGLE_NODE:
             if scheduled_session.cluster_size > 1:
@@ -1218,7 +1221,6 @@ class AgentRegistry:
 
         # Aggregate by agents to minimize RPC calls
         per_agent_tasks = []
-
         keyfunc = lambda item: item.agent_alloc_ctx.agent_id
         for agent_id, group_iterator in itertools.groupby(
             sorted(kernel_agent_bindings, key=keyfunc), key=keyfunc,

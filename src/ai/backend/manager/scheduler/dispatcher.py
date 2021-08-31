@@ -469,7 +469,7 @@ class SchedulerDispatcher(aobject):
         log_fmt = _log_fmt.get()
         log_args = _log_args.get()
         try:
-            # OP.1415 if configured sess_ctx.agent_id is existed, skip assin_agent_for_session
+            # If sess_ctx.agent_id is already set for manual assignment by superadmin, skip assign_agent_for_session().
             agent_id = None
             if sess_ctx.agent_id is not None:
                 agent_id = sess_ctx.agent_id
@@ -484,14 +484,15 @@ class SchedulerDispatcher(aobject):
                 available_agent_slots = (await agent_db_conn.execute(query)).scalar()
                 # if pass the available test
                 if available_agent_slots is None:
-                    raise InstanceNotAvailable("There is no available_agent_slots")
+                    raise InstanceNotAvailable("There is no such agent.")
                 available_test_pass = False
                 for key in available_agent_slots:
                     if available_agent_slots[key] >= sess_ctx.requested_slots[key]:
                         available_test_pass = True
                         continue
                     else:
-                        raise InstanceNotAvailable(f"{key} is insufficent.")
+                        raise InstanceNotAvailable(f"The resource slot {key} in "
+                                                   f"{agent_id} does not have the enough remaining capacity.")
                 if available_test_pass:
                     agent_alloc_ctx = await _reserve_agent(
                         sched_ctx, agent_db_conn, sgroup_name, agent_id, sess_ctx.requested_slots,
@@ -579,7 +580,7 @@ class SchedulerDispatcher(aobject):
             for kernel in sess_ctx.kernels:
                 try:
                     agent_alloc_ctx: AgentAllocationContext
-                    agent_id = AgentId('')
+                    agent_id: AgentId | None
                     if kernel.agent_id is not None:
                         agent_id = kernel.agent_id
                     else:
@@ -591,24 +592,26 @@ class SchedulerDispatcher(aobject):
                     )
                     available_agent_slots = (await agent_db_conn.execute(query)).scalar()
                     if available_agent_slots is None:
-                        raise InstanceNotAvailable("There is no available_agent_slots")
+                        raise InstanceNotAvailable("There is no such agent.")
                     available_test_pass = False
                     for key in available_agent_slots:
                         if available_agent_slots[key] >= kernel.requested_slots[key]:
                             available_test_pass = True
                             continue
                         else:
-                            raise InstanceNotAvailable(f"{key} is insufficent.")
+                            raise InstanceNotAvailable(f"The resource slot {key} in "
+                                                       f"{agent_id} does not have the enough remaining capacity.")
                     if available_test_pass:
                         async def _reserve() -> None:
                             nonlocal agent_alloc_ctx, candidate_agents
-                            # assert agent_id is not None
                             async with agent_db_conn.begin_nested():
+                                
                                 agent_alloc_ctx = await _reserve_agent(
                                     sched_ctx, agent_db_conn,
                                     sgroup_name, agent_id, kernel.requested_slots,
                                     extra_conds=agent_query_extra_conds,
                                 )
+                                
                                 candidate_agents = await _list_agents_by_sgroup(
                                     agent_db_conn, sgroup_name
                                 )
