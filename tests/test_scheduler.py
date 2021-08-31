@@ -650,6 +650,8 @@ def gen_pending_for_holb_tests(session_id: str, status_data: Mapping[str, Any]) 
         session_id=SessionId(session_id),  # type: ignore
         session_name=secrets.token_hex(8),
         access_key=AccessKey('ak1'),
+        agent_id=None,
+        agent_addr=None,
         status_data=status_data,
         session_creation_id=secrets.token_urlsafe(8),
         kernels=[],

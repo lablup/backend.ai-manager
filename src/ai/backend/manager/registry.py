@@ -1138,7 +1138,7 @@ class AgentRegistry:
         )
         if hook_result.status != PASSED:
             raise RejectedByHook.from_hook_result(hook_result)
-        
+
         # Get resource policy for the session
         # TODO: memoize with TTL
         async with self.db.begin_readonly() as conn:
