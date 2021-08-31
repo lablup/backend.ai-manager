@@ -28,6 +28,9 @@
     "subnet": {
       "agent": "0.0.0.0/0",
       "container": "0.0.0.0/0"
+    },
+    "overlay": {
+      "mtu": 1500
     }
   },
   "watcher": {
@@ -40,7 +43,7 @@
     },
     "scheduler": {
       "fifo": {
-        "num_retries_to_skip": 3,
+        "num_retries_to_skip": 3
       }
     }
   }
