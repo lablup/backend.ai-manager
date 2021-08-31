@@ -13,9 +13,6 @@
         "type": "harbor2",
         "project": "stable,ngc"
       }
-    },
-    "network": {
-      "mtu": 1500
     }
   },
   "idle": {
@@ -31,6 +28,9 @@
     "subnet": {
       "agent": "0.0.0.0/0",
       "container": "0.0.0.0/0"
+    },
+    "overlay": {
+      "mtu": 1500
     }
   },
   "watcher": {

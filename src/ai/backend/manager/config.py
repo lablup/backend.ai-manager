@@ -59,9 +59,7 @@ Alias keys are also URL-quoted in the same way.
            - type: "docker" | "harbor" | "harbor2"
            - project: "project1-name,project2-name,..."  # harbor only
            - ssl-verify: "yes" | "no"
-         ...
-       + network
-           - mtu: 1500  # Maximum Transmission Unit
+         ...           
      + redis
        - addr: "{redis-host}:{redis-port}"
        - password: {password}
@@ -115,6 +113,8 @@ Alias keys are also URL-quoted in the same way.
        + subnet
          - agent: "0.0.0.0/0"
          - container: "0.0.0.0/0"
+       + overlay 
+         - mtu: 1500  # Maximum Transmission Unit
      + watcher
        - token: {some-secret}
    + volumes
@@ -351,9 +351,6 @@ shared_config_iv = t.Dict({
     }).allow_extra('*'),
     t.Key('docker'): t.Dict({
         t.Key('registry'): t.Mapping(t.String, container_registry_iv),
-        t.Key('network', default=None): t.Null | t.Dict({
-            t.Key('mtu', default=1500): t.Int[1:],
-        }).allow_extra('*'),
     }).allow_extra('*'),
     t.Key('plugins', default=_shdefs['plugins']): t.Dict({
         t.Key('accelerator', default=_shdefs['plugins']['accelerator']):
@@ -365,6 +362,9 @@ shared_config_iv = t.Dict({
         t.Key('subnet', default=_shdefs['network']['subnet']): t.Dict({
             t.Key('agent', default=_shdefs['network']['subnet']['agent']): tx.IPNetwork,
             t.Key('container', default=_shdefs['network']['subnet']['container']): tx.IPNetwork,
+        }).allow_extra('*'),
+        t.Key('overlay', default=None): t.Null | t.Dict({
+            t.Key('mtu', default=1500): t.Int[1:],
         }).allow_extra('*'),
     }).allow_extra('*'),
     t.Key('watcher', default=_shdefs['watcher']): t.Dict({
