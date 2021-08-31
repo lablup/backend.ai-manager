@@ -59,7 +59,7 @@ Alias keys are also URL-quoted in the same way.
            - type: "docker" | "harbor" | "harbor2"
            - project: "project1-name,project2-name,..."  # harbor only
            - ssl-verify: "yes" | "no"
-         ...           
+         ...
      + redis
        - addr: "{redis-host}:{redis-port}"
        - password: {password}
@@ -113,7 +113,7 @@ Alias keys are also URL-quoted in the same way.
        + subnet
          - agent: "0.0.0.0/0"
          - container: "0.0.0.0/0"
-       + overlay 
+       + overlay
          - mtu: 1500  # Maximum Transmission Unit
      + watcher
        - token: {some-secret}
