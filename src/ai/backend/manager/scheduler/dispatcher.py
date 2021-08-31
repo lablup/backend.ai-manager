@@ -15,6 +15,7 @@ from typing import (
     Tuple,
     Union,
     TYPE_CHECKING,
+    Optional
 )
 
 import aioredis
@@ -896,7 +897,7 @@ async def _reserve_agent(
     sched_ctx: SchedulingContext,
     db_conn: SAConnection,
     scaling_group: str,
-    agent_id: AgentId,
+    agent_id: Optional[AgentId],
     requested_slots: ResourceSlot,
     extra_conds: Any = None,
 ) -> AgentAllocationContext:
