@@ -1167,7 +1167,7 @@ class AgentRegistry:
             'resource_policy': resource_policy,
             'auto_pull': auto_pull,
         }
-        
+
         network_name: Optional[str] = None
         if scheduled_session.cluster_mode == ClusterMode.SINGLE_NODE:
             if scheduled_session.cluster_size > 1:

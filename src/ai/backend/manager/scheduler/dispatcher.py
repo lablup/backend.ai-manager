@@ -469,7 +469,8 @@ class SchedulerDispatcher(aobject):
         log_fmt = _log_fmt.get()
         log_args = _log_args.get()
         try:
-            # If sess_ctx.agent_id is already set for manual assignment by superadmin, skip assign_agent_for_session().
+            # If sess_ctx.agent_id is already set for manual assignment by superadmin,
+            # skip assign_agent_for_session().
             agent_id = None
             if sess_ctx.agent_id is not None:
                 agent_id = sess_ctx.agent_id
@@ -491,8 +492,9 @@ class SchedulerDispatcher(aobject):
                         available_test_pass = True
                         continue
                     else:
-                        raise InstanceNotAvailable(f"The resource slot {key} in "
-                                                   f"{agent_id} does not have the enough remaining capacity.")
+                        raise InstanceNotAvailable(
+                            "The resource slot does not have the enough remaining capacity."
+                        )
                 if available_test_pass:
                     agent_alloc_ctx = await _reserve_agent(
                         sched_ctx, agent_db_conn, sgroup_name, agent_id, sess_ctx.requested_slots,
@@ -585,6 +587,8 @@ class SchedulerDispatcher(aobject):
                         agent_id = kernel.agent_id
                     else:
                         agent_id = scheduler.assign_agent_for_kernel(candidate_agents, kernel)
+                    assert agent_id is not None
+
                     query = (
                         sa.select([agents.c.available_slots])
                         .select_from(agents)
@@ -599,19 +603,20 @@ class SchedulerDispatcher(aobject):
                             available_test_pass = True
                             continue
                         else:
-                            raise InstanceNotAvailable(f"The resource slot {key} in "
-                                                       f"{agent_id} does not have the enough remaining capacity.")
+                            raise InstanceNotAvailable(
+                                "The resource slot does not have the enough remaining capacity."
+                            )
                     if available_test_pass:
                         async def _reserve() -> None:
                             nonlocal agent_alloc_ctx, candidate_agents
                             async with agent_db_conn.begin_nested():
-                                
+
                                 agent_alloc_ctx = await _reserve_agent(
                                     sched_ctx, agent_db_conn,
                                     sgroup_name, agent_id, kernel.requested_slots,
                                     extra_conds=agent_query_extra_conds,
                                 )
-                                
+
                                 candidate_agents = await _list_agents_by_sgroup(
                                     agent_db_conn, sgroup_name
                                 )
