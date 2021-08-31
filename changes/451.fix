@@ -1,1 +1,0 @@
-Apply missing batching of database queries for the `Group.scaling_groups` GraphQL field resolver.

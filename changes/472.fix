@@ -1,0 +1,1 @@
+Always set the scaling group when creating sessions to prevent use of non-allowed scaling groups

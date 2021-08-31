@@ -1,1 +1,0 @@
-Fix a regression in session cancellation and kernel status updates after SQLAlchemy v1.4 upgrade
