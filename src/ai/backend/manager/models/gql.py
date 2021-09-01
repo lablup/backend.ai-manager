@@ -482,7 +482,11 @@ class Queries(graphene.ObjectType):
         agent_id: AgentId,
     ) -> Agent:
         ctx: GraphQueryContext = info.context
-        loader = ctx.dataloader_manager.get_loader(ctx, 'Agent', status=None)
+        loader = ctx.dataloader_manager.get_loader(
+            ctx,
+            'Agent',
+            raw_status=None,
+        )
         return await loader.load(agent_id)
 
     @staticmethod
