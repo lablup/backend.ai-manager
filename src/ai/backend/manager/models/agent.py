@@ -226,8 +226,7 @@ class Agent(graphene.ObjectType):
         if scaling_group is not None:
             query = query.where(agents.c.scaling_group == scaling_group)
         if raw_status is not None:
-            status = AgentStatus[raw_status]
-            query = query.where(agents.c.status == status)
+            query = query.where(agents.c.status == AgentStatus[raw_status])
         if filter is not None:
             qfparser = QueryFilterParser(cls._queryfilter_fieldspec)
             query = qfparser.append_filter(query, filter)
@@ -254,8 +253,7 @@ class Agent(graphene.ObjectType):
         if scaling_group is not None:
             query = query.where(agents.c.scaling_group == scaling_group)
         if raw_status is not None:
-            status = AgentStatus[raw_status]
-            query = query.where(agents.c.status == status)
+            query = query.where(agents.c.status == AgentStatus[raw_status])
         if filter is not None:
             qfparser = QueryFilterParser(cls._queryfilter_fieldspec)
             query = qfparser.append_filter(query, filter)
@@ -288,8 +286,7 @@ class Agent(graphene.ObjectType):
         if scaling_group is not None:
             query = query.where(agents.c.scaling_group == scaling_group)
         if raw_status is not None:
-            status = AgentStatus[raw_status]
-            query = query.where(agents.c.status == status)
+            query = query.where(agents.c.status == AgentStatus[raw_status])
         async with graph_ctx.db.begin_readonly() as conn:
             return [
                 cls.from_row(graph_ctx, row)
@@ -312,8 +309,7 @@ class Agent(graphene.ObjectType):
             )
         )
         if raw_status is not None:
-            status = AgentStatus[raw_status]
-            query = query.where(agents.c.status == status)
+            query = query.where(agents.c.status == AgentStatus[raw_status])
         async with graph_ctx.db.begin_readonly() as conn:
             return await batch_result(
                 graph_ctx, conn, query, cls,
