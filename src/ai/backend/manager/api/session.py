@@ -72,6 +72,7 @@ from ai.backend.common.events import (
     SessionStartedEvent,
     SessionSuccessEvent,
     SessionTerminatedEvent,
+    KernelPullProgressEvent
 )
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.utils import cancel_tasks, str_to_timedelta
@@ -481,7 +482,6 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             params['bootstrap_script'] = script
 
     try:
-
         kernel_id = await asyncio.shield(root_ctx.registry.enqueue_session(
             session_creation_id,
             params['session_name'], owner_access_key,
@@ -508,52 +508,82 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             starts_at=starts_at,
         ))
         resp['sessionId'] = str(kernel_id)  # changed since API v5
+
+        async def kernelpullprogress(reporter):
+            get_and_update_lock = asyncio.Lock()
+
+            async def _get(kernel_id):
+                async with get_and_update_lock:
+                    async with root_ctx.db.begin() as conn:
+                        query = (
+                            sa.select([
+                                kernels.c.id,
+                                kernels.c.status,
+                                kernels.c.current_progress,
+                                kernels.c.total_progress,
+                            ])
+                            .select_from(kernels)
+                            .where(kernels.c.id==kernel_id)
+                        )
+                        result = await conn.execute(query)
+                await asyncio.sleep(2)
+                return result.first()
+
+            async def updatekernelpullprogress(
+                app: web.Application,
+                source: AgentId,
+                event: KernelPullProgressEvent
+                ) -> None:
+                root_ctx: RootContext = app['_root.context']
+                async def _update() -> None:
+                    async with root_ctx.db.begin() as conn:
+                        query = sa.update(kernels).values(**{
+                            'current_progress': event.current_progress,
+                            'total_progress': event.total_progress,
+                        }).where(kernels.c.id == event.kernel_id)
+                        await conn.execute(query)
+                if not get_and_update_lock.locked():
+                    await execute_with_retry(_update)
+                else:
+                    pass
+
+            root_ctx.event_dispatcher.subscribe(KernelPullProgressEvent, request.app, updatekernelpullprogress)
+            kernel_id = resp['sessionId']
+            while True:
+                cp = 0
+                tp = 0
+                result = await _get(kernel_id)
+                cp += int(result['current_progress'])
+                tp += int(result['total_progress'])
+                reporter.total_progress = tp
+                inc = cp - reporter.current_progress
+                await asyncio.sleep(0.5)
+                await reporter.update(inc)
+                if result['status']==KernelStatus.PREPARING:
+                    await reporter.update(reporter.total_progress, reporter.current_progress)
+                if result['status']==KernelStatus.RUNNING:
+                    break
+            await asyncio.sleep(0.5)
+
+        task_id = await root_ctx.background_task_manager.start(kernelpullprogress, name='uchan_test')
+        resp['background_task'] = str(task_id)
         resp['sessionName'] = str(params['session_name'])
         resp['status'] = 'PENDING'
         resp['servicePorts'] = []
         resp['created'] = True
 
-        if not params['enqueue_only']:
-            app_ctx.pending_waits.add(current_task)
-            max_wait = params['max_wait_seconds']
-            try:
-                if max_wait > 0:
-                    with timeout(max_wait):
-                        await start_event.wait()
-                else:
-                    await start_event.wait()
-            except asyncio.TimeoutError:
-                resp['status'] = 'TIMEOUT'
+        app_ctx.pending_waits.add(current_task)
+        max_wait = params['max_wait_seconds']
+        try:
+            if max_wait > 0:
+                with timeout(max_wait):
+                    await asyncio.sleep(0.5)
             else:
                 await asyncio.sleep(0.5)
-                async with root_ctx.db.begin_readonly() as conn:
-                    query = (
-                        sa.select([
-                            kernels.c.status,
-                            kernels.c.service_ports,
-                        ])
-                        .select_from(kernels)
-                        .where(kernels.c.id == kernel_id)
-                    )
-                    result = await conn.execute(query)
-                    row = result.first()
-                if row['status'] == KernelStatus.RUNNING:
-                    resp['status'] = 'RUNNING'
-                    for item in row['service_ports']:
-                        response_dict = {
-                            'name': item['name'],
-                            'protocol': item['protocol'],
-                            'ports': item['container_ports'],
-                        }
-                        if 'url_template' in item.keys():
-                            response_dict['url_template'] = item['url_template']
-                        if 'allowed_arguments' in item.keys():
-                            response_dict['allowed_arguments'] = item['allowed_arguments']
-                        if 'allowed_envs' in item.keys():
-                            response_dict['allowed_envs'] = item['allowed_envs']
-                        resp['servicePorts'].append(response_dict)
-                else:
-                    resp['status'] = row['status'].name
+
+        except asyncio.TimeoutError:
+            resp['status'] = 'TIMEOUT'
+
     except asyncio.CancelledError:
         raise
     except BackendError:
