@@ -80,6 +80,7 @@ task_template_v1 = t.Dict({
                               default=None) >> 'dest_dir': t.Null | t.String
             })
         }),
+        t.Key('scaling_group', default=None): t.Null | t.String,
         t.Key('mounts', default={}): t.Null | t.Mapping(t.String, t.Any),
         t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any)
     })
@@ -87,7 +88,8 @@ task_template_v1 = t.Dict({
 
 
 def check_task_template(raw_data: Mapping[str, Any]) -> Mapping[str, Any]:
-    data = task_template_v1.check(raw_data)
+    for session_template in raw_data['session_templates']:
+        data = task_template_v1.check(session_template['template'])
     if mounts := data['spec'].get('mounts'):
         for p in mounts.values():
             if p is None:
