@@ -37,7 +37,8 @@ class TemplateType(str, enum.Enum):
 session_templates = sa.Table(
     'session_templates', metadata,
     IDColumn('id'),
-    sa.Column('created_at', sa.DateTime(timezone=True), index=True),
+    sa.Column('created_at', sa.DateTime(timezone=True), 
+             server_default=sa.func.now(), index=True),
     sa.Column('is_active', sa.Boolean, default=True),
 
     sa.Column('domain_name', sa.String(length=64), sa.ForeignKey('domains.name'), nullable=False),
@@ -88,16 +89,17 @@ task_template_v1 = t.Dict({
 
 
 def check_task_template(raw_data: Mapping[str, Any]) -> Mapping[str, Any]:
+    data = {}
     for session_template in raw_data['session_templates']:
         data = task_template_v1.check(session_template['template'])
-    if mounts := data['spec'].get('mounts'):
-        for p in mounts.values():
-            if p is None:
-                continue
-            if not p.startswith('/home/work/'):
-                raise InvalidArgument(f'Path {p} should start with /home/work/')
-            if not verify_vfolder_name(p.replace('/home/work/', '')):
-                raise InvalidArgument(f'Path {p} is reserved for internal operations.')
+        if mounts := data['spec'].get('mounts'):
+            for p in mounts.values():
+                if p is None:
+                    continue
+                if not p.startswith('/home/work/'):
+                    raise InvalidArgument(f'Path {p} should start with /home/work/')
+                if not verify_vfolder_name(p.replace('/home/work/', '')):
+                    raise InvalidArgument(f'Path {p} is reserved for internal operations.')
     return data
 
 
