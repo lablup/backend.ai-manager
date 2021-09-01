@@ -1188,16 +1188,21 @@ class AgentRegistry:
         elif scheduled_session.cluster_mode == ClusterMode.MULTI_NODE:
             # Create overlay network for multi-node sessions
             network_name = f'bai-multinode-{scheduled_session.session_id}'
+            mtu = await self.shared_config.get_raw('config/network/overlay/mtu')
             try:
                 # Overlay networks can only be created at the Swarm manager.
-                await self.docker.networks.create({
+                create_options = {
                     'Name': network_name,
                     'Driver': 'overlay',
                     'Attachable': True,
                     'Labels': {
                         'ai.backend.cluster-network': '1'
-                    }
-                })
+                    },
+                    'Options': {}
+                }
+                if mtu:
+                    create_options['Options'] = {'com.docker.network.driver.mtu': mtu}
+                await self.docker.networks.create(create_options)
             except Exception:
                 log.exception(f"Failed to create an overlay network {network_name}")
                 raise
