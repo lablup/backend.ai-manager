@@ -37,8 +37,8 @@ class TemplateType(str, enum.Enum):
 session_templates = sa.Table(
     'session_templates', metadata,
     IDColumn('id'),
-    sa.Column('created_at', sa.DateTime(timezone=True), 
-             server_default=sa.func.now(), index=True),
+    sa.Column('created_at', sa.DateTime(timezone=True),
+               server_default=sa.func.now(), index=True),
     sa.Column('is_active', sa.Boolean, default=True),
 
     sa.Column('domain_name', sa.String(length=64), sa.ForeignKey('domains.name'), nullable=False),
