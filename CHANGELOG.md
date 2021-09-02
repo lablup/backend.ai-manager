@@ -16,6 +16,15 @@ Changes
 
 .. towncrier release notes start
 
+20.09.29 (2021-09-02)
+---------------------
+
+### Fixes
+* Add the missing extra requirements tag of SQLAlchemy to install greenlet and asyncpg correctly ([#470](https://github.com/lablup/backend.ai-manager/issues/470))
+* Always set the scaling group when creating sessions to prevent use of non-allowed scaling groups ([#472](https://github.com/lablup/backend.ai-manager/issues/472))
+* Fix a regression of `Agent.batch_load()` GraphQL resolver due to internal argument name changes ([#476](https://github.com/lablup/backend.ai-manager/issues/476))
+
+
 20.09.28 (2021-08-23)
 ---------------------
 
