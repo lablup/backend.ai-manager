@@ -1,11 +1,11 @@
 | Name                                                                                       | Version    | License                                                      |
 | ------------------------------------------------------------------------------------------ | ---------- | ------------------------------------------------------------ |
 | [protobuf](https://github.com/eigenein/protobuf)                                           | 3.9.0      | 3-Clause BSD License                                         |
-| [rsa]()                                                                                    | 3.4.2      | ASL 2                                                        |
+| [rsa](https://stuvel.eu/software/rsa/)                                                     | 3.4.2      | ASL 2                                                        |
 | [aiohttp](https://github.com/aio-libs/aiohttp)                                             | 2.3.10     | Apache 2                                                     |
 | [async-timeout](https://github.com/aio-libs/async-timeout)                                 | 3.0.1      | Apache 2                                                     |
 | [multidict](https://github.com/aio-libs/multidict)                                         | 4.3.1      | Apache 2                                                     |
-| [yarl](https://github.com/aio-libs/yarl/)                                                  | 1.2.6      | Apache 2                                                     |
+| [yarl](https://github.com/aio-libs/yarl)                                                   | 1.2.6      | Apache 2                                                     |
 | [absl-py](https://github.com/abseil/abseil-py)                                             | 0.7.1      | Apache 2.0                                                   |
 | [google-pasta](https://github.com/google/pasta)                                            | 0.1.7      | Apache 2.0                                                   |
 | [requests](https://github.com/psf/requests)                                                | 2.21.0     | Apache 2.0                                                   |
@@ -17,8 +17,8 @@
 | [botocore](https://github.com/boto/botocore)                                               | 1.12.148   | Apache License 2.0                                           |
 | [grpcio](https://github.com/grpc/grpc/tree/master/src/python/grpcio)                       | 1.22.0     | Apache License 2.0                                           |
 | [s3transfer](https://github.com/boto/s3transfer)                                           | 0.2.0      | Apache License 2.0                                           |
-| [namedlist]()                                                                              | 1.7        | Apache License Version 2.0                                   |
-| [bleach]()                                                                                 | 2.1.4      | Apache Software License                                      |
+| [namedlist](https://github.com/timgates42/namedlist)                                       | 1.7        | Apache License Version 2.0                                   |
+| [bleach](https://github.com/mozilla/bleach)                                                | 2.1.4      | Apache Software License                                      |
 | [liccheck](https://github.com/dhatim/python-license-check)                                 | 0.3.12     | Apache Software License                                      |
 | [prometheus-client](https://github.com/prometheus/client_python)                           | 0.3.1      | Apache Software License 2.0                                  |
 | [Click](https://github.com/pallets/click)                                                  | 7.0        | BSD                                                          |
@@ -86,7 +86,7 @@
 | [parso](https://github.com/davidhalter/parso)                                              | 0.3.1      | MIT                                                          |
 | [pickleshare](https://github.com/pickleshare/pickleshare)                                  | 0.7.4      | MIT                                                          |
 | [pyspin](https://github.com/lord63/py-spin)                                                | 1.1.1      | MIT                                                          |
-| [redis](https://github.com/andymccurdy/redis-py)                                           | 3.2.1      | MIT                                                          |
+| [redis](https://github.comandymccurdy/redis-py)                                            | 3.2.1      | MIT                                                          |
 | [six](https://github.com/benjaminp/six)                                                    | 1.11.0     | MIT                                                          |
 | [tabulate](https://github.com/cmck/python-tabulate)                                        | 0.8.2      | MIT                                                          |
 | [termcolor](https://github.com/hfeeki/termcolor)                                           | 1.1.0      | MIT                                                          |
@@ -94,8 +94,8 @@
 | [wcwidth](https://github.com/jquast/wcwidth)                                               | 0.1.7      | MIT                                                          |
 | [certifi](https://github.com/certifi/python-certifi)                                       | 2018.8.24  | MPL-2.0                                                      |
 | [tqdm](https://github.com/tqdm/tqdm)                                                       | 4.25.0     | MPLv2.0, MIT Licences                                        |
-| [futures]()                                                                                | 3.1.1      | PSF                                                          |
-| [backend.ai-cloud-scripts]()                                                               | 0.1.0      | Proprietary                                                  |
+| [futures](https://github.com/agronholm/pythonfutures)                                      | 3.1.1      | PSF                                                          |
+| [backend.ai-cloud-scripts](https://www.backend.ai)                                         | 0.1.0      | Proprietary                                                  |
 | [configobj](https://github.com/DiffSK/configobj)                                           | 5.0.6      | UNKNOWN                                                      |
 | [configparser](https://github.com/jaraco/configparser)                                     | 4.0.2      | UNKNOWN                                                      |
 | [ptyprocess](https://github.com/pexpect/ptyprocess)                                        | 0.6.0      | UNKNOWN                                                      |
