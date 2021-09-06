@@ -1,1 +1,1 @@
-Rearrange the alias folder checking order
+Rearrange the order of checking vfolder mount aliases to fix emptiness and null checks to come at the right order
