@@ -511,7 +511,8 @@ async def _create(request: web.Request, params: Any) -> web.Response:
         resp['sessionId'] = str(kernel_id)  # changed since API v5
 
         async def kernelpullprogress(reporter: ProgressReporter) -> None:
-            progress = [0,0]
+            progress = [0, 0]
+
             async def _get_status(kernel_id):
                 async with root_ctx.db.begin() as conn:
                     query = (
@@ -523,13 +524,15 @@ async def _create(request: web.Request, params: Any) -> web.Response:
                         .where(kernels.c.id == kernel_id)
                     )
                     result = await conn.execute(query)
+
                 return result.first()
 
             async def _update_progress(
                 app: web.Application,
                 source: AgentId,
-                event: KernelPullProgressEvent
-                ) -> None:
+                event: KernelPullProgressEvent,
+            ) -> None:
+                # update both current and total
                 progress[0] = int(event.current_progress)
                 progress[1] = int(event.total_progress)
 
@@ -548,7 +551,10 @@ async def _create(request: web.Request, params: Any) -> web.Response:
                 await reporter.update(0)
             await asyncio.sleep(0.5)
 
-        task_id = await root_ctx.background_task_manager.start(kernelpullprogress, name='kernel_pull_progress')
+        task_id = await root_ctx.background_task_manager.start(
+                kernelpullprogress,
+                name='kernel-pull-progress'
+        )
         resp['background_task'] = str(task_id)
         resp['sessionName'] = str(params['session_name'])
         resp['status'] = 'PENDING'
