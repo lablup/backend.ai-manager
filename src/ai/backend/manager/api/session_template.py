@@ -275,7 +275,7 @@ async def get(request: web.Request, params: Any) -> web.Response:
         template = await conn.scalar(query)
         if not template:
             raise TaskTemplateNotFound
-    template = json.loads(template)
+    template = json.dumps(template)
     if params['format'] == 'yaml':
         body = yaml.dump(template)
         return web.Response(text=body, content_type='text/yaml')
