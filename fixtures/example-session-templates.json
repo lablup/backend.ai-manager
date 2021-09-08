@@ -12,8 +12,8 @@
         "api_version": "6",
         "kind": "task_template",
         "metadata": {
-          "name": "cr.backend.ai/testing/ngc-tensorflow",
-          "tag": "20.11-tf2-py3"
+          "name": "cr.backend.ai/testing/ngc-pytorch",
+          "tag": "20.11-py3"
         },
         "spec": {
           "type": "interactive",
