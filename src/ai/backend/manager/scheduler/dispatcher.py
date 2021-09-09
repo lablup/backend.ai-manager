@@ -609,7 +609,7 @@ class SchedulerDispatcher(aobject):
                                 "The resource slot does not have the enough remaining capacity."
                             )
                     if available_test_pass:
-                        
+
                         async def _reserve() -> None:
                             nonlocal agent_alloc_ctx, candidate_agents
                             async with agent_db_conn.begin_nested():

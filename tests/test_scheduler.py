@@ -879,7 +879,8 @@ def test_manually_assign_agent_available(example_agents, example_pending_session
     assert available_test_pass is True
 
 
-def test_manually_assign_agent_has_not_enough_capacity(example_agents_no_valid, example_pending_sessions):
+def test_manually_assign_agent_has_not_enough_capacity(example_agents_no_valid, 
+                                                       example_pending_sessions):
     agent_id = None
     example_pending_sessions[0].agent_id = example_agents_no_valid[0].agent_id
     agent_id = example_pending_sessions[0].agent_id
