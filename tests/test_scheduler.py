@@ -22,7 +22,7 @@ from ai.backend.common.types import (
     ResourceSlot, SessionTypes,
     ClusterMode,
 )
-
+from ai.backend.manager.api.exceptions import InstanceNotAvailable
 from ai.backend.manager.defs import DEFAULT_ROLE
 from ai.backend.manager.scheduler.types import (
     KernelInfo,
@@ -862,6 +862,54 @@ def test_mof_scheduler_no_valid_agent(example_agents_no_valid, example_pending_s
 
     agent_id = scheduler.assign_agent_for_session(example_agents_no_valid, picked_session)
     assert agent_id is None
+
+
+def test_manually_assign_agent_available(example_agents, example_pending_sessions):
+    agent_id = None
+    example_pending_sessions[0].agent_id = example_agents[0].agent_id
+    agent_id = example_pending_sessions[0].agent_id
+    available_agent_slots = example_agents[0].available_slots  # ResourceSlot
+    available_test_pass = False
+
+    assert agent_id == AgentId('i-001')
+    for key in available_agent_slots:
+        if available_agent_slots[key] >= example_pending_sessions[0].requested_slots[key]:
+            available_test_pass = True
+            continue
+    assert available_test_pass is True
+
+
+def test_manually_assign_agent_has_not_enough_capacity(example_agents_no_valid, example_pending_sessions):
+    agent_id = None
+    example_pending_sessions[0].agent_id = example_agents_no_valid[0].agent_id
+    agent_id = example_pending_sessions[0].agent_id
+    available_agent_slots = example_agents_no_valid[0].available_slots  # ResourceSlot
+    available_test_pass = False
+
+    assert agent_id == AgentId('i-001')
+    for key in available_agent_slots:
+        if available_agent_slots[key] >= example_pending_sessions[0].requested_slots[key]:
+            available_test_pass = True
+            continue
+        else:
+            available_test_pass = False
+            assert available_test_pass is False
+
+
+def test_manually_assign_agent_is_not_exist(example_agents, example_pending_sessions):
+    available_agent_slots = None  # ResourceSlot
+    available_test_pass = False
+
+    if available_agent_slots is None:
+        assert InstanceNotAvailable("There is no such agent.")
+    else:
+        for key in available_agent_slots:
+            if available_agent_slots[key] >= example_pending_sessions[0].requested_slots[key]:
+                available_test_pass = True
+                continue
+            else:
+                available_test_pass = False
+                assert available_test_pass is False
 
 
 @pytest.mark.asyncio
