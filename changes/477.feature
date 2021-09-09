@@ -1,1 +1,1 @@
-Add background-task to update progress reporter with KernelPullProgressEvent, until kernel-pulling is done.
+Add a background task to update the progress reporter with 'KernelPullProgressEvent', until image pulling is done.

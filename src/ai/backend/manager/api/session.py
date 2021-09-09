@@ -46,6 +46,7 @@ from sqlalchemy.sql.expression import true, null
 import trafaret as t
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
+    from ..background import ProgressReporter
 
 from ai.backend.common import redis, validators as tx
 from ai.backend.common.docker import ImageRef
@@ -72,7 +73,7 @@ from ai.backend.common.events import (
     SessionStartedEvent,
     SessionSuccessEvent,
     SessionTerminatedEvent,
-    KernelPullProgressEvent
+    KernelPullProgressEvent,
 )
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.utils import cancel_tasks, str_to_timedelta
@@ -86,7 +87,6 @@ from ai.backend.common.types import (
 )
 from ai.backend.common.plugin.monitor import GAUGE
 
-from ..background import ProgressReporter
 from ..config import DEFAULT_CHUNK_SIZE
 from ..defs import DEFAULT_ROLE, REDIS_STREAM_DB
 from ..models import (
@@ -483,6 +483,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             params['bootstrap_script'] = script
 
     try:
+
         kernel_id = await asyncio.shield(root_ctx.registry.enqueue_session(
             session_creation_id,
             params['session_name'], owner_access_key,
@@ -509,12 +510,16 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             starts_at=starts_at,
         ))
         resp['sessionId'] = str(kernel_id)  # changed since API v5
+        resp['sessionName'] = str(params['session_name'])
+        resp['status'] = 'PENDING'
+        resp['servicePorts'] = []
+        resp['created'] = True
 
-        async def kernelpullprogress(reporter: ProgressReporter) -> None:
+        async def monitor_kernel_preparation(reporter: ProgressReporter) -> None:
             progress = [0, 0]
 
             async def _get_status(kernel_id):
-                async with root_ctx.db.begin() as conn:
+                async with root_ctx.db.begin_readonly() as conn:
                     query = (
                         sa.select([
                             kernels.c.id,
@@ -536,43 +541,82 @@ async def _create(request: web.Request, params: Any) -> web.Response:
                 progress[0] = int(event.current_progress)
                 progress[1] = int(event.total_progress)
 
-            root_ctx.event_dispatcher.subscribe(KernelPullProgressEvent, request.app, _update_progress)
+            progress_handler = root_ctx.event_dispatcher.subscribe(
+                KernelPullProgressEvent,
+                request.app,
+                _update_progress
+            )
             kernel_id = resp['sessionId']
-            while True:
-                result = await _get_status(kernel_id)
-                if result is None:
-                    continue
-                if result['status'] == KernelStatus.PREPARING:
+            try:
+                while True:
+                    result = await _get_status(kernel_id)
+                    if result is None:
+                        continue
+                    if result['status'] == KernelStatus.PREPARING:
+                        await reporter.update(0)
+                    if result['status'] == KernelStatus.RUNNING:
+                        break
+                    reporter.current_progress = progress[0]
+                    reporter.total_progress = progress[1]
                     await reporter.update(0)
-                if result['status'] == KernelStatus.RUNNING:
-                    break
-                reporter.current_progress = progress[0]
-                reporter.total_progress = progress[1]
-                await reporter.update(0)
-            await asyncio.sleep(0.5)
-
-        task_id = await root_ctx.background_task_manager.start(
-                kernelpullprogress,
-                name='kernel-pull-progress'
-        )
-        resp['background_task'] = str(task_id)
-        resp['sessionName'] = str(params['session_name'])
-        resp['status'] = 'PENDING'
-        resp['servicePorts'] = []
-        resp['created'] = True
-
-        app_ctx.pending_waits.add(current_task)
-        max_wait = params['max_wait_seconds']
-        try:
-            if max_wait > 0:
-                with timeout(max_wait):
                     await asyncio.sleep(0.5)
+            finally:
+                root_ctx.event_dispatcher.unsubscribe(progress_handler)
+
+        if params['enqueue_only']:
+            task_id = await root_ctx.background_task_manager.start(
+                monitor_kernel_preparation,
+                name='monitor-kernel-preparation',
+            )
+            resp['background_task'] = str(task_id)
+            return web.json_response(resp, status=201)
+        else:
+            app_ctx.pending_waits.add(current_task)
+            max_wait = params['max_wait_seconds']
+            try:
+                if max_wait > 0:
+                    with timeout(max_wait):
+                        await start_event.wait()
+                else:
+                    await start_event.wait()
+            except asyncio.TimeoutError:
+                task_id = await root_ctx.background_task_manager.start(
+                    monitor_kernel_preparation,
+                    name='monitor-kernel-preparation',
+                )
+                resp['background_task'] = str(task_id)
+                resp['status'] = 'TIMEOUT'
+                return web.json_response(resp, status=201)
             else:
                 await asyncio.sleep(0.5)
-
-        except asyncio.TimeoutError:
-            resp['status'] = 'TIMEOUT'
-
+                async with root_ctx.db.begin_readonly() as conn:
+                    query = (
+                        sa.select([
+                            kernels.c.status,
+                            kernels.c.service_ports,
+                        ])
+                        .select_from(kernels)
+                        .where(kernels.c.id == kernel_id)
+                    )
+                    result = await conn.execute(query)
+                    row = result.first()
+                if row['status'] == KernelStatus.RUNNING:
+                    resp['status'] = 'RUNNING'
+                    for item in row['service_ports']:
+                        response_dict = {
+                            'name': item['name'],
+                            'protocol': item['protocol'],
+                            'ports': item['container_ports'],
+                        }
+                        if 'url_template' in item.keys():
+                            response_dict['url_template'] = item['url_template']
+                        if 'allowed_arguments' in item.keys():
+                            response_dict['allowed_arguments'] = item['allowed_arguments']
+                        if 'allowed_envs' in item.keys():
+                            response_dict['allowed_envs'] = item['allowed_envs']
+                        resp['servicePorts'].append(response_dict)
+                else:
+                    resp['status'] = row['status'].name
     except asyncio.CancelledError:
         raise
     except BackendError:
