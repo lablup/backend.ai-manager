@@ -397,19 +397,22 @@ async def _create(request: web.Request, params: Any) -> web.Response:
         alias_folders = mount_map.values()
         if len(alias_folders) != len(set(alias_folders)):
             raise InvalidAPIParameters('Duplicate alias folder name exists.')
+
+        p: str
         for p in alias_folders:
-            alias_name = p.replace('/home/work/', '')
             if p is None:
                 continue
             if not p.startswith('/home/work/'):
                 raise InvalidAPIParameters(f'Path {p} should start with /home/work/')
-            if p is not None and not verify_vfolder_name(alias_name):
+
+            alias_name = p.replace('/home/work/', '')
+            if alias_name == '':
+                raise InvalidAPIParameters('Alias name cannot be empty.')
+            if not verify_vfolder_name(alias_name):
                 raise InvalidAPIParameters(f'Path {str(p)} is reserved for internal operations.')
             if alias_name in original_folders:
                 raise InvalidAPIParameters('Alias name cannot be set to an existing folder name: '
                                             + str(alias_name))
-            if alias_name == '':
-                raise InvalidAPIParameters('Alias name cannot be empty.')
 
     # Resolve the image reference.
     try:
