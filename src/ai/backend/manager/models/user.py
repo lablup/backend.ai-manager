@@ -249,6 +249,7 @@ class User(graphene.ObjectType):
             return [cls.from_row(ctx, row) async for row in (await conn.stream(query))]
 
     _queryfilter_fieldspec = {
+        "uuid": ("uuid", None),
         "username": ("username", None),
         "email": ("email", None),
         "need_password_change": ("need_password_change", None),
@@ -264,6 +265,7 @@ class User(graphene.ObjectType):
     }
 
     _queryorder_colmap = {
+        "uuid": "uuid",
         "username": "username",
         "email": "email",
         "need_password_change": "need_password_change",
@@ -311,7 +313,7 @@ class User(graphene.ObjectType):
         if filter is not None:
             if group_id is not None:
                 qfparser = QueryFilterParser({
-                    'users_' + k: v
+                    k: ('users_' + v[0], v[1])
                     for k, v in cls._queryfilter_fieldspec.items()
                 })
             else:
@@ -362,7 +364,7 @@ class User(graphene.ObjectType):
         if filter is not None:
             if group_id is not None:
                 qfparser = QueryFilterParser({
-                    'users_' + k: v
+                    k: ('users_' + v[0], v[1])
                     for k, v in cls._queryfilter_fieldspec.items()
                 })
             else:
@@ -371,7 +373,7 @@ class User(graphene.ObjectType):
         if order is not None:
             if group_id is not None:
                 qoparser = QueryOrderParser({
-                    'users_' + k: v
+                    k: 'users_' + v
                     for k, v in cls._queryorder_colmap.items()
                 })
             else:

@@ -760,15 +760,26 @@ class AgentRegistry:
         session_id = SessionId(uuid.uuid4())
 
         # Check scaling group availability if scaling_group parameter is given.
-        # If scaling_group is not provided, it will be selected in scheduling step.
-        if scaling_group is not None:
-            async with self.db.begin_readonly() as conn:
-                sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
+        # If scaling_group is not provided, it will be selected as the first one among
+        # the list of allowed scaling groups.
+        async with self.db.begin_readonly() as conn:
+            sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
+            if not sgroups:
+                raise ScalingGroupNotFound("You have no scaling groups allowed to use.")
+            if scaling_group is None:
+                scaling_group = sgroups[0]['name']
+                log.warning(
+                    f"enqueue_session(s:{session_name}, ak:{access_key}): "
+                    f"The client did not specify the scaling group for session; "
+                    f"falling back to {scaling_group}"
+                )
+            else:
                 for sgroup in sgroups:
                     if scaling_group == sgroup['name']:
                         break
                 else:
-                    raise ScalingGroupNotFound
+                    raise ScalingGroupNotFound(f"The scaling group {scaling_group} does not exist.")
+        assert scaling_group is not None
 
         # sanity check for vfolders
         allowed_vfolder_types = ['user', 'group']
@@ -1163,16 +1174,21 @@ class AgentRegistry:
         elif scheduled_session.cluster_mode == ClusterMode.MULTI_NODE:
             # Create overlay network for multi-node sessions
             network_name = f'bai-multinode-{scheduled_session.session_id}'
+            mtu = await self.shared_config.get_raw('config/network/overlay/mtu')
             try:
                 # Overlay networks can only be created at the Swarm manager.
-                await self.docker.networks.create({
+                create_options = {
                     'Name': network_name,
                     'Driver': 'overlay',
                     'Attachable': True,
                     'Labels': {
                         'ai.backend.cluster-network': '1'
-                    }
-                })
+                    },
+                    'Options': {}
+                }
+                if mtu:
+                    create_options['Options'] = {'com.docker.network.driver.mtu': mtu}
+                await self.docker.networks.create(create_options)
             except Exception:
                 log.exception(f"Failed to create an overlay network {network_name}")
                 raise

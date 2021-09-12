@@ -791,8 +791,7 @@ async def _list_pending_sessions(
         .where(
             (kernels.c.status == KernelStatus.PENDING) &
             (
-                (kernels.c.scaling_group == sgroup_name) |
-                (kernels.c.scaling_group.is_(None))
+                (kernels.c.scaling_group == sgroup_name)
             )
         )
     )
@@ -802,13 +801,13 @@ async def _list_pending_sessions(
 
 async def _list_existing_sessions(
     db_conn: SAConnection,
-    sgroup: str,
+    sgroup_name: str,
 ) -> List[ExistingSession]:
     query = (
         ExistingSession.base_query()
         .where(
             (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)) &
-            (kernels.c.scaling_group == sgroup)
+            (kernels.c.scaling_group == sgroup_name)
         )
     )
     rows = (await db_conn.execute(query)).fetchall()
