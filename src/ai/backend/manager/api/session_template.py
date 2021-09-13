@@ -147,23 +147,25 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 body = yaml.safe_load(params['payload'])
             except (yaml.YAMLError, yaml.MarkedYAMLError):
                 raise InvalidAPIParameters('Malformed payload')
-        template_data = check_task_template(body)
-        template_id = uuid.uuid4().hex
-        resp = {
-            'id': template_id,
-            'user': user_uuid.hex,
-        }
-        query = session_templates.insert().values({
-            'id': template_id,
-            'domain_name': params['domain'],
-            'group_id': group_id,
-            'user_uuid': user_uuid,
-            'name': template_data['metadata']['name'],
-            'template': template_data,
-            'type': TemplateType.TASK,
-        })
-        result = await conn.execute(query)
-        assert result.rowcount == 1
+        for st in body['session_templates']:
+            template_data = check_task_template(st)
+            template_id = uuid.uuid4().hex
+            resp = {
+                'id': template_id,
+                'user': user_uuid.hex,
+            }
+            template_type = st['type']
+            query = session_templates.insert().values({
+                'id': template_id,
+                'domain_name': params['domain'],
+                'group_id': group_id,
+                'user_uuid': user_uuid,
+                'name': template_data['metadata']['name'],
+                'template': template_data,
+                'type': TemplateType.TASK,
+            })
+            result = await conn.execute(query)
+            assert result.rowcount == 1
     return web.json_response(resp)
 
 
@@ -214,6 +216,7 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
                               if row.session_templates_group_id else None),
                     'user_email': row.users_email,
                     'group_name': row.groups_name,
+                    'domain_name': domain_name,
                 })
         else:
             extra_conds = None
@@ -239,6 +242,7 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
                 'user_email': entry['user_email'],
                 'group_name': entry['group_name'],
                 'type': 'user' if entry['user'] is not None else 'group',
+                'domain_name': domain_name,
             })
         return web.json_response(resp)
 
@@ -254,6 +258,7 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
 async def get(request: web.Request, params: Any) -> web.Response:
     if params['format'] not in ['yaml', 'json']:
         raise InvalidAPIParameters('format should be "yaml" or "json"')
+    domain_name = request['user']['domain_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
     log.info(
         'SESSION_TEMPLATE.GET (ak:{0}/{1})',
@@ -275,6 +280,9 @@ async def get(request: web.Request, params: Any) -> web.Response:
         template = await conn.scalar(query)
         if not template:
             raise TaskTemplateNotFound
+    template.update({
+        'domain_name': domain_name,
+    })
     template = json.dumps(template)
     if params['format'] == 'yaml':
         body = yaml.dump(template)
