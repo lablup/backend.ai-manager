@@ -148,13 +148,12 @@ async def create(request: web.Request, params: Any) -> web.Response:
             except (yaml.YAMLError, yaml.MarkedYAMLError):
                 raise InvalidAPIParameters('Malformed payload')
         for st in body['session_templates']:
-            template_data = check_task_template(st)
+            template_data = check_task_template(st['template'])
             template_id = uuid.uuid4().hex
             resp = {
                 'id': template_id,
                 'user': user_uuid.hex,
             }
-            template_type = st['type']
             query = session_templates.insert().values({
                 'id': template_id,
                 'domain_name': params['domain'],
