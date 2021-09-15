@@ -1,4 +1,5 @@
 import json
+import datetime
 import logging
 from typing import (
     Any,
@@ -161,6 +162,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 user_uuid = st['user_uuid']
             query = session_templates.insert().values({
                 'id': template_id,
+                'created_at': datetime.datetime.now(),
                 'domain_name': params['domain'],
                 'group_id': group_id,
                 'user_uuid': user_uuid,
@@ -332,10 +334,15 @@ async def put(request: web.Request, params: Any) -> web.Response:
             body = yaml.safe_load(params['payload'])
         except (yaml.YAMLError, yaml.MarkedYAMLError):
             raise InvalidAPIParameters('Malformed payload')
-        template_data = check_task_template(body)
+        template_data = body['session_templates'][0]
+        checked_template = check_task_template(template_data['template'])
+        if template_data['name'] is not None:
+            name = template_data['name']
+        else:
+            name = checked_template['metadata']['name']
         query = (
             sa.update(session_templates)
-            .values(template=template_data, name=template_data['metadata']['name'])
+            .values(template=checked_template, name=name)
             .where((session_templates.c.id == template_id))
         )
         result = await conn.execute(query)
