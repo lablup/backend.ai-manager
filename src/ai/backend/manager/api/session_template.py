@@ -154,12 +154,17 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 'id': template_id,
                 'user': user_uuid.hex,
             }
+            name = st['name'] if st['name'] else template_data['metadata']['name']
+            if st['group_id'] is not None:
+                group_id = st['group_id']
+            if st['user_uuid'] is not None:
+                user_uuid = st['user_uuid']
             query = session_templates.insert().values({
                 'id': template_id,
                 'domain_name': params['domain'],
                 'group_id': group_id,
                 'user_uuid': user_uuid,
-                'name': template_data['metadata']['name'],
+                'name': name,
                 'template': template_data,
                 'type': TemplateType.TASK,
             })
@@ -250,7 +255,7 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
 @server_status_required(READ_ALLOWED)
 @check_api_params(
     t.Dict({
-        t.Key('format', default='yaml'): t.Null | t.Enum('yaml', 'json'),
+        t.Key('format', default='json'): t.Null | t.Enum('yaml', 'json'),
         t.Key('owner_access_key', default=None): t.Null | t.String,
     })
 )
@@ -282,12 +287,11 @@ async def get(request: web.Request, params: Any) -> web.Response:
     template.update({
         'domain_name': domain_name,
     })
-    template = json.dumps(template)
-    if params['format'] == 'yaml':
-        body = yaml.dump(template)
-        return web.Response(text=body, content_type='text/yaml')
+    if isinstance(template, str):
+        template = json.loads(template)
     else:
-        return web.json_response(template)
+        template = json.loads(json.dumps(template))
+    return web.json_response(template)
 
 
 @auth_required
