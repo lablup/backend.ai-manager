@@ -16,7 +16,7 @@
           "tag": "20.11-py3"
         },
         "spec": {
-          "type": "interactive",
+          "session_type": "interactive",
           "kernel": {
             "image": "cr.backend.ai/testing/ngc-pytorch:20.11-py3",
             "environ": {},
@@ -50,7 +50,7 @@
           "tag": "4.0"
         },
         "spec": {
-          "type": "interactive",
+          "session_type": "interactive",
           "kernel": {
             "image": "cr.backend.ai/cloud/r-base:4.0",
             "environ": {},

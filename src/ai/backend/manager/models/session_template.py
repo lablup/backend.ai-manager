@@ -59,7 +59,7 @@ task_template_v1 = t.Dict({
         t.Key('tag', default=None): t.Null | t.String,
     }),
     t.Key('spec'): t.Dict({
-        tx.AliasedKey(['type', 'sessionType'],
+        tx.AliasedKey(['type', 'session_type', 'sessionType'],
                       default='interactive') >> 'session_type': tx.Enum(SessionTypes),
         t.Key('kernel'): t.Dict({
             t.Key('image'): t.String,
