@@ -28,6 +28,7 @@ from typing import (
     TYPE_CHECKING,
     cast,
 )
+from urllib.parse import urlparse
 import uuid
 
 import aiohttp
@@ -76,6 +77,7 @@ from ai.backend.common.events import (
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.utils import cancel_tasks, str_to_timedelta
 from ai.backend.common.types import (
+    AccessKey,
     AgentId,
     KernelId,
     ClusterMode,
@@ -103,6 +105,7 @@ from ..models import (
 from ..models.kernel import match_session_ids
 from ..models.utils import execute_with_retry
 from .exceptions import (
+    AppNotFound,
     InvalidAPIParameters,
     GenericNotFound,
     ImageNotFound,
@@ -1046,6 +1049,83 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
         app_ctx.pending_waits.discard(current_task)
         del session_creation_tracker[session_creation_id]
     return web.json_response(resp, status=201)
+
+
+@server_status_required(READ_ALLOWED)
+@auth_required
+@check_api_params(
+    t.Dict({
+        tx.AliasedKey(['app', 'service']): t.String,
+        # The port argument is only required to use secondary ports
+        # when the target app listens multiple TCP ports.
+        # Otherwise it should be omitted or set to the same value of
+        # the actual port number used by the app.
+        tx.AliasedKey(['port'], default=None): t.Null | t.Int[1024:65535],
+        tx.AliasedKey(['envs'], default=None): t.Null | t.String,  # stringified JSON
+                                                                   # e.g., '{"PASSWORD": "12345"}'
+        tx.AliasedKey(['arguments'], default=None): t.Null | t.String,  # stringified JSON
+                                                                        # e.g., '{"-P": "12345"}'
+                                                                        # The value can be one of:
+                                                                        # None, str, List[str]
+    }))
+async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.Response:
+    root_ctx: RootContext = request.app['_root.context']
+    session_name: str = request.match_info['session_name']
+    access_key: AccessKey = request['keypair']['access_key']
+    service: str = params['app']
+    myself = asyncio.current_task()
+    assert myself is not None
+    try:
+        kernel = await asyncio.shield(root_ctx.registry.get_session(session_name, access_key))
+    except (SessionNotFound, TooManySessionsMatched):
+        raise
+
+    if kernel['kernel_host'] is None:
+        kernel_host = urlparse(kernel['agent_addr']).hostname
+    else:
+        kernel_host = kernel['kernel_host']
+    for sport in kernel['service_ports']:
+        if sport['name'] == service:
+            if params['port']:
+                # using one of the primary/secondary ports of the app
+                try:
+                    hport_idx = sport['container_ports'].index(params['port'])
+                except ValueError:
+                    raise InvalidAPIParameters(
+                        f"Service {service} does not open the port number {params['port']}.")
+                host_port = sport['host_ports'][hport_idx]
+            else:
+                # using the default (primary) port of the app
+                if 'host_ports' not in sport:
+                    host_port = sport['host_port']  # legacy kernels
+                else:
+                    host_port = sport['host_ports'][0]
+            dest = (kernel_host, host_port)
+            break
+    else:
+        raise AppNotFound(f'{session_name}:{service}')
+
+    await asyncio.shield(root_ctx.registry.increment_session_usage(session_name, access_key))
+
+    opts: MutableMapping[str, Union[None, str, List[str]]] = {}
+    if params['arguments'] is not None:
+        opts['arguments'] = json.loads(params['arguments'])
+    if params['envs'] is not None:
+        opts['envs'] = json.loads(params['envs'])
+
+    result = await asyncio.shield(
+        root_ctx.registry.start_service(session_name, access_key, service, opts)
+    )
+    if result['status'] == 'failed':
+        raise InternalServerError(
+            "Failed to launch the app service",
+            extra_data=result['error'])
+
+
+    return web.json_response({
+        'host': dest[0],
+        'port': dest[1],
+    })
 
 
 async def handle_kernel_creation_lifecycle(
@@ -1992,4 +2072,5 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     cors.add(app.router.add_route('GET',  '/{session_name}/download', download_files))
     cors.add(app.router.add_route('GET',  '/{session_name}/download_single', download_single))
     cors.add(app.router.add_route('GET',  '/{session_name}/files', list_files))
+    cors.add(app.router.add_route('POST', '/{session_name}/start-service', start_service))
     return app, []
