@@ -1121,7 +1121,6 @@ async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.
             "Failed to launch the app service",
             extra_data=result['error'])
 
-
     return web.json_response({
         'host': dest[0],
         'port': dest[1],
