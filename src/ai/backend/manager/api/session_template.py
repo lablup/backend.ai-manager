@@ -264,6 +264,7 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
 async def get(request: web.Request, params: Any) -> web.Response:
     if params['format'] not in ['yaml', 'json']:
         raise InvalidAPIParameters('format should be "yaml" or "json"')
+    resp = []
     domain_name = request['user']['domain_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
     log.info(
@@ -275,7 +276,10 @@ async def get(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     async with root_ctx.db.begin() as conn:
         query = (
-            sa.select([session_templates.c.template])
+            sa.select([session_templates.c.template,
+                       session_templates.c.name,
+                       session_templates.c.user_uuid,
+                       session_templates.c.group_id])
             .select_from(session_templates)
             .where(
                 (session_templates.c.id == template_id) &
@@ -283,17 +287,30 @@ async def get(request: web.Request, params: Any) -> web.Response:
                 (session_templates.c.type == TemplateType.TASK)
             )
         )
-        template = await conn.scalar(query)
-        if not template:
-            raise TaskTemplateNotFound
-    template.update({
-        'domain_name': domain_name,
-    })
-    if isinstance(template, str):
-        template = json.loads(template)
-    else:
-        template = json.loads(json.dumps(template))
-    return web.json_response(template)
+        result = await conn.execute(query)
+        entries = []
+        for row in result:
+            if not row.template:
+                raise TaskTemplateNotFound  
+            entries.append({
+                'template': row.template,
+                'name': row.name,
+                'user_uuid': row.user_uuid,
+                'group_id': row.group_id
+            })
+        for entry in entries:
+            resp.append({
+                'template': entry['template'],
+                'domain_name': domain_name,
+                'name': entry['name'],
+                'user_uuid': entry['user_uuid'].hex,
+                'group_id': entry['group_id'].hex
+            })
+        if isinstance(resp, str):
+            resp = json.loads(resp)
+        else:
+            resp = json.loads(json.dumps(resp))
+        return web.json_response(resp)
 
 
 @auth_required
