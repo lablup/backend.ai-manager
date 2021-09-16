@@ -264,7 +264,7 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
 async def get(request: web.Request, params: Any) -> web.Response:
     if params['format'] not in ['yaml', 'json']:
         raise InvalidAPIParameters('format should be "yaml" or "json"')
-    resp = []
+    resp = {}
     domain_name = request['user']['domain_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
     log.info(
@@ -299,7 +299,7 @@ async def get(request: web.Request, params: Any) -> web.Response:
                 'group_id': row.group_id
             })
         for entry in entries:
-            resp.append({
+            resp.update({
                 'template': entry['template'],
                 'domain_name': domain_name,
                 'name': entry['name'],
