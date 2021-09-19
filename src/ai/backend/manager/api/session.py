@@ -1083,15 +1083,15 @@ async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.
     except (SessionNotFound, TooManySessionsMatched):
         raise
 
-    query = (sa.select([scaling_groups.c.coordinator_address])
+    query = (sa.select([scaling_groups.c.wsproxy_address])
                .select_from(scaling_groups)
                .where((scaling_groups.c.name == kernel['scaling_group'])))
 
     async with root_ctx.db.begin() as conn:
         result = await conn.execute(query)
         sgroup = result.first()
-    coordinator_address = sgroup['coordinator_address']
-    if not coordinator_address:
+    wsproxy_address = sgroup['wsproxy_address']
+    if not wsproxy_address:
         raise ServiceUnavailable('No coordinator configured for this resource group')
 
     if kernel['kernel_host'] is None:
@@ -1135,14 +1135,14 @@ async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.
             extra_data=result['error'])
 
     async with aiohttp.ClientSession() as session:
-        async with session.post(f'{coordinator_address}/v2/conf', json={
+        async with session.post(f'{wsproxy_address}/v2/conf', json={
             'kernel_host': kernel_host,
             'kernel_port': host_port,
         }) as resp:
             token_json = await resp.json()
             return web.json_response({
                 'token': token_json['token'],
-                'coordinator_address': coordinator_address,
+                'wsproxy_address': wsproxy_address,
             })
 
 

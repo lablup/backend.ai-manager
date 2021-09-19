@@ -1,4 +1,4 @@
-"""Add coordinator_address column on scaling_group
+"""Add wsproxy_address column on scaling_group
 
 Revision ID: 60a1effa77d2
 Revises: 8679d0a7e22b
@@ -17,8 +17,8 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column('scaling_groups', sa.Column('coordinator_address', sa.String(length=1024), nullable=True))
+    op.add_column('scaling_groups', sa.Column('wsproxy_address', sa.String(length=1024), nullable=True))
 
 
 def downgrade():
-    op.drop_colu('scaling_groups', 'coordinator_address')
+    op.drop_colu('scaling_groups', 'wsproxy_address')
