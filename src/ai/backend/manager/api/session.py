@@ -45,6 +45,9 @@ import multidict
 import sqlalchemy as sa
 from sqlalchemy.sql.expression import true, null
 import trafaret as t
+
+from ai.backend.manager.api import scaling_group
+from ai.backend.manager.models.scaling_group import scaling_groups
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
@@ -110,6 +113,7 @@ from .exceptions import (
     GenericNotFound,
     ImageNotFound,
     InsufficientPrivilege,
+    ServiceUnavailable,
     SessionNotFound,
     SessionAlreadyExists,
     TooManySessionsMatched,
@@ -1080,6 +1084,17 @@ async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.
     except (SessionNotFound, TooManySessionsMatched):
         raise
 
+    query = (sa.select([scaling_groups.c.coordinator_address])
+               .select_from(scaling_groups)
+               .where((scaling_groups.c.name == kernel['scaling_group'])))
+    
+    async with root_ctx.db.begin() as conn:
+        result = await conn.execute(query)
+        sgroup = result.first()
+    coordinator_address = sgroup['coordinator_address']
+    if not coordinator_address:
+        raise ServiceUnavailable('No coordinator configured for this resource group')
+
     if kernel['kernel_host'] is None:
         kernel_host = urlparse(kernel['agent_addr']).hostname
     else:
@@ -1100,7 +1115,6 @@ async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.
                     host_port = sport['host_port']  # legacy kernels
                 else:
                     host_port = sport['host_ports'][0]
-            dest = (kernel_host, host_port)
             break
     else:
         raise AppNotFound(f'{session_name}:{service}')
@@ -1121,10 +1135,16 @@ async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.
             "Failed to launch the app service",
             extra_data=result['error'])
 
-    return web.json_response({
-        'host': dest[0],
-        'port': dest[1],
-    })
+    async with aiohttp.ClientSession() as session:
+        async with session.post(f'{coordinator_address}/v2/conf', json={
+            'kernel_host': kernel_host,
+            'kernel_port': host_port,
+        }) as resp:
+            token_json = await resp.json()
+            return web.json_response({
+                'token': token_json['token'],
+                'coordinator_address': coordinator_address,
+            })
 
 
 async def handle_kernel_creation_lifecycle(

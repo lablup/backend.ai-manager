@@ -59,6 +59,7 @@ scaling_groups = sa.Table(
     sa.Column('is_active', sa.Boolean, index=True, default=True),
     sa.Column('created_at', sa.DateTime(timezone=True),
               server_default=sa.func.now()),
+    sa.Column('coordinator_address', sa.String(length=1024), nullable=True),
     sa.Column('driver', sa.String(length=64), nullable=False),
     sa.Column('driver_opts', pgsql.JSONB(), nullable=False, default={}),
     sa.Column('scheduler', sa.String(length=64), nullable=False),
@@ -168,6 +169,7 @@ class ScalingGroup(graphene.ObjectType):
     description = graphene.String()
     is_active = graphene.Boolean()
     created_at = GQLDateTime()
+    coordinator_address = graphene.String()
     driver = graphene.String()
     driver_opts = graphene.JSONString()
     scheduler = graphene.String()
@@ -186,6 +188,7 @@ class ScalingGroup(graphene.ObjectType):
             description=row['description'],
             is_active=row['is_active'],
             created_at=row['created_at'],
+            coordinator_address=row['coordinator_address'],
             driver=row['driver'],
             driver_opts=row['driver_opts'],
             scheduler=row['scheduler'],
@@ -324,6 +327,7 @@ class ScalingGroup(graphene.ObjectType):
 class CreateScalingGroupInput(graphene.InputObjectType):
     description = graphene.String(required=False, default='')
     is_active = graphene.Boolean(required=False, default=True)
+    coordinator_address = graphene.String(required=False)
     driver = graphene.String(required=True)
     driver_opts = graphene.JSONString(required=False, default={})
     scheduler = graphene.String(required=True)
@@ -333,6 +337,7 @@ class CreateScalingGroupInput(graphene.InputObjectType):
 class ModifyScalingGroupInput(graphene.InputObjectType):
     description = graphene.String(required=False)
     is_active = graphene.Boolean(required=False)
+    coordinator_address = graphene.String(required=False)
     driver = graphene.String(required=False)
     driver_opts = graphene.JSONString(required=False)
     scheduler = graphene.String(required=False)
@@ -363,6 +368,7 @@ class CreateScalingGroup(graphene.Mutation):
             'name': name,
             'description': props.description,
             'is_active': bool(props.is_active),
+            'coordinator_address': props.coordinator_address,
             'driver': props.driver,
             'driver_opts': props.driver_opts,
             'scheduler': props.scheduler,
@@ -399,6 +405,7 @@ class ModifyScalingGroup(graphene.Mutation):
         set_if_set(props, data, 'description')
         set_if_set(props, data, 'is_active')
         set_if_set(props, data, 'driver')
+        set_if_set(props, data, 'coordinator_address')
         set_if_set(props, data, 'driver_opts')
         set_if_set(props, data, 'scheduler')
         set_if_set(props, data, 'scheduler_opts')
