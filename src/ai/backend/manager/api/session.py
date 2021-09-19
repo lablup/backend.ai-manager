@@ -46,7 +46,6 @@ import sqlalchemy as sa
 from sqlalchemy.sql.expression import true, null
 import trafaret as t
 
-from ai.backend.manager.api import scaling_group
 from ai.backend.manager.models.scaling_group import scaling_groups
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
@@ -1087,7 +1086,7 @@ async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.
     query = (sa.select([scaling_groups.c.coordinator_address])
                .select_from(scaling_groups)
                .where((scaling_groups.c.name == kernel['scaling_group'])))
-    
+
     async with root_ctx.db.begin() as conn:
         result = await conn.execute(query)
         sgroup = result.first()
