@@ -4,6 +4,7 @@ import logging
 from typing import (
     Any,
     List,
+    Dict,
     Mapping,
     TYPE_CHECKING,
     Tuple,
@@ -264,7 +265,7 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
 async def get(request: web.Request, params: Any) -> web.Response:
     if params['format'] not in ['yaml', 'json']:
         raise InvalidAPIParameters('format should be "yaml" or "json"')
-    resp = {}
+    resp: Dict[str, Any] = {}
     domain_name = request['user']['domain_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
     log.info(
@@ -288,23 +289,15 @@ async def get(request: web.Request, params: Any) -> web.Response:
             )
         )
         result = await conn.execute(query)
-        entries = []
         for row in result:
             if not row.template:
                 raise TaskTemplateNotFound  
-            entries.append({
+            resp.update({
                 'template': row.template,
                 'name': row.name,
-                'user_uuid': row.user_uuid,
-                'group_id': row.group_id
-            })
-        for entry in entries:
-            resp.update({
-                'template': entry['template'],
-                'domain_name': domain_name,
-                'name': entry['name'],
-                'user_uuid': entry['user_uuid'].hex,
-                'group_id': entry['group_id'].hex
+                'user_uuid': row.user_uuid.hex,
+                'group_id': row.group_id.hex,
+                'domain_name': domain_name
             })
         if isinstance(resp, str):
             resp = json.loads(resp)
