@@ -628,6 +628,7 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
         raise VFolderOperationFailed
     return web.json_response(resp, status=200)
 
+
 @atomic
 @superadmin_required
 @server_status_required(READ_ALLOWED)
