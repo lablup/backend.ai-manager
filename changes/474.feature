@@ -1,0 +1,1 @@
+Provide Read / Update API for storage proxy specific operations such as quota.
