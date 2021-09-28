@@ -291,7 +291,7 @@ async def get(request: web.Request, params: Any) -> web.Response:
         result = await conn.execute(query)
         for row in result:
             if not row.template:
-                raise TaskTemplateNotFound  
+                raise TaskTemplateNotFound
             resp.update({
                 'template': row.template,
                 'name': row.name,
@@ -344,20 +344,21 @@ async def put(request: web.Request, params: Any) -> web.Response:
             body = yaml.safe_load(params['payload'])
         except (yaml.YAMLError, yaml.MarkedYAMLError):
             raise InvalidAPIParameters('Malformed payload')
-        template_data = body['session_templates'][0]
-        checked_template = check_task_template(template_data['template'])
-        if template_data['name'] is not None:
-            name = template_data['name']
-        else:
-            name = checked_template['metadata']['name']
-        query = (
-            sa.update(session_templates)
-            .values(template=checked_template, name=name)
-            .where((session_templates.c.id == template_id))
-        )
-        result = await conn.execute(query)
-        assert result.rowcount == 1
-
+        for st in body['session_templates']:
+            name = st['name'] if st['name'] else template_data['metadata']['name']
+            template_data = check_task_template(st['template'])
+            query = (
+                sa.update(session_templates)
+                .values({
+                    'group_id': st['group_id'],
+                    'user_uuid': st['user_uuid'],
+                    'name': name,
+                    'template': template_data
+                })
+                .where((session_templates.c.id == template_id))
+            )
+            result = await conn.execute(query)
+            assert result.rowcount == 1
         return web.json_response({'success': True})
 
 
