@@ -1,1 +1,1 @@
-Provide Read / Update API for storage proxy specific operations such as quota.
+Add the get/set APIs for size-based quota of vfolder hosts via storage proxy

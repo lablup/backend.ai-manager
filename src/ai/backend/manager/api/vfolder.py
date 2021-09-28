@@ -656,7 +656,7 @@ async def get_quota(request: web.Request, params: Any) -> web.Response:
 
 @atomic
 @superadmin_required
-@server_status_required(READ_ALLOWED)
+@server_status_required(ALL_ALLOWED)
 @check_api_params(
     t.Dict({
         t.Key('folder_host'): t.String,
