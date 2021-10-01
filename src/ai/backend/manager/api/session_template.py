@@ -224,6 +224,7 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
                     'user_email': row.users_email,
                     'group_name': row.groups_name,
                     'domain_name': domain_name,
+                    'template': row.session_templates_template,
                 })
         else:
             extra_conds = None
@@ -250,6 +251,7 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
                 'group_name': entry['group_name'],
                 'type': 'user' if entry['user'] is not None else 'group',
                 'domain_name': domain_name,
+                'template': entry['template'],
             })
         return web.json_response(resp)
 
