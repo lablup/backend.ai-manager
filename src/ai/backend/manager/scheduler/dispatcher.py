@@ -169,15 +169,15 @@ class SchedulerDispatcher(aobject):
         self.schedule_timer_redis = await aioredis.create_redis(str(redis_url))
         self.prepare_timer_redis = await aioredis.create_redis(str(redis_url))
         self.schedule_timer = GlobalTimer(
-            self.schedule_timer_redis,
-            "scheduler_tick",
+            self.db,
+            AdvisoryLock.LOCKID_SCHEDULE_TIMER,
             self.event_producer,
             lambda: DoScheduleEvent(),
             interval=10.0,
         )
         self.prepare_timer = GlobalTimer(
-            self.prepare_timer_redis,
-            "prepare_tick",
+            self.db,
+            AdvisoryLock.LOCKID_PREPARE_TIMER,
             self.event_producer,
             lambda: DoPrepareEvent(),
             interval=10.0,
