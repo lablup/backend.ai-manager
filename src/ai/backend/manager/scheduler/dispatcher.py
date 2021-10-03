@@ -219,10 +219,9 @@ class SchedulerDispatcher(aobject):
             known_slot_types=known_slot_types,
         )
 
-        # We use short transaction blocks to prevent deadlock timeouts under heavy loads
-        # because this scheduling handler will be executed by only one process.
-        # It is executed under a globally exclusive context using aioredlock.
         try:
+            # The schedule() method should be executed with a global lock
+            # as its individual steps are composed of many short-lived transactions.
             async with self.db.advisory_lock(AdvisoryLock.LOCKID_SCHEDULE):
                 async with self.db.begin_readonly() as conn:
                     query = (
