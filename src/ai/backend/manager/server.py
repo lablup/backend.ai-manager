@@ -70,7 +70,7 @@ from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB, REDIS_STREAM_DB
 from .exceptions import InvalidArgument
 from .idle import create_idle_checkers
 from .models.storage import StorageSessionManager
-from .models.utils import ExtendedAsyncSAEngine, create_database
+from .models.utils import create_database
 from .plugin.webapp import WebappPluginContext
 from .registry import AgentRegistry
 from .scheduler.dispatcher import SchedulerDispatcher
