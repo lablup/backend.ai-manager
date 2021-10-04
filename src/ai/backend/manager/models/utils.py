@@ -79,6 +79,9 @@ class ExtendedAsyncSAEngine(SAEngine):
     @actxmgr
     async def advisory_lock(self, lock_id: AdvisoryLock) -> AsyncIterator[None]:
         lock_acquired = False
+        # Here we use the session-level advisory lock,
+        # which follows the lifetime of underlying DB connection.
+        # As such, we should keep using one single connection for both lock and unlock ops.
         async with self.connect() as lock_conn:
             try:
                 # It is usually a BAD practice to directly interpolate strings into SQL statements,
