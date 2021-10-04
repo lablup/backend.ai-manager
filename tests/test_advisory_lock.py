@@ -37,7 +37,6 @@ async def test_lock(database_engine: ExtendedAsyncSAEngine) -> None:
         )
         rows = result.fetchall()
         print(rows)
-        assert len(rows) == 5
         result = await conn.exec_driver_sql(
             "SELECT objid, granted FROM pg_locks "
             "WHERE locktype = 'advisory' AND objid = 42 AND granted = 't';"

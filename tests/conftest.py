@@ -1,6 +1,5 @@
 import asyncio
 from datetime import datetime
-import functools
 import hashlib, hmac
 import json
 import os
@@ -32,7 +31,6 @@ import pytest
 from sqlalchemy.ext.asyncio.engine import AsyncEngine as SAEngine
 
 from ai.backend.common.config import redis_config_iv
-from ai.backend.common.json import ExtendedJSONEncoder
 from ai.backend.common.types import HostPortPair
 from ai.backend.manager.api.context import RootContext
 from ai.backend.manager.config import LocalConfig, SharedConfig, load as load_config
@@ -48,7 +46,7 @@ from ai.backend.manager.models import (
     agents,
     kernels, keypairs, vfolders,
 )
-from ai.backend.manager.models.utils import create_async_engine
+from ai.backend.manager.models.utils import create_database
 
 here = Path(__file__).parent
 
@@ -233,31 +231,8 @@ def database(request, local_config, test_db):
 
 @pytest.fixture()
 async def database_engine(local_config, database):
-    username = local_config['db']['user']
-    password = local_config['db']['password']
-    address = local_config['db']['addr']
-    dbname = local_config['db']['name']
-    url = f"postgresql+asyncpg://{urlquote(username)}:{urlquote(password)}@{address}/{urlquote(dbname)}"
-
-    version_check_db = create_async_engine(url)
-    async with version_check_db.begin() as conn:
-        result = await conn.execute(sa.text("show server_version"))
-        major, minor, *_ = map(int, result.scalar().split("."))
-        if (major, minor) < (11, 0):
-            pgsql_connect_opts['server_settings'].pop("jit")
-    await version_check_db.dispose()
-
-    db = create_async_engine(
-        url,
-        connect_args=pgsql_connect_opts,
-        pool_size=8,
-        max_overflow=64,
-        json_serializer=functools.partial(json.dumps, cls=ExtendedJSONEncoder),
-        isolation_level="SERIALIZABLE",
-        future=True,
-    )
-    yield db
-    await db.dispose()
+    async with create_database(local_config) as db:
+        yield db
 
 
 @pytest.fixture()

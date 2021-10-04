@@ -19,7 +19,7 @@ from ai.backend.common.events import AbstractEvent, EventDispatcher, EventProduc
 
 from ai.backend.manager.defs import REDIS_STREAM_DB, AdvisoryLock
 from ai.backend.manager.distributed import GlobalTimer
-from ai.backend.manager.models.utils import ExtendedAsyncSAEngine
+from ai.backend.manager.models.utils import create_database
 
 if TYPE_CHECKING:
     from ai.backend.common.types import AgentId
@@ -66,7 +66,6 @@ class TimerNode(threading.Thread):
         interval: float,
         thread_idx: int,
         test_id: str,
-        db: ExtendedAsyncSAEngine,
         local_config: LocalConfig,
         shared_config: SharedConfig,
         event_records: queue.Queue[float],
@@ -75,7 +74,6 @@ class TimerNode(threading.Thread):
         self.interval = interval
         self.thread_idx = thread_idx
         self.test_id = test_id
-        self.db = db
         self.local_config = local_config
         self.shared_config = shared_config
         self.event_records = event_records
@@ -97,20 +95,21 @@ class TimerNode(threading.Thread):
         event_producer = await EventProducer.new(redis_connector)
         event_dispatcher.consume(NoopEvent, None, _tick)
 
-        timer = GlobalTimer(
-            self.db,
-            AdvisoryLock.LOCKID_TEST,
-            event_producer,
-            lambda: NoopEvent(self.test_id),
-            self.interval,
-        )
-        try:
-            await timer.join()
-            await self.stop_event.wait()
-        finally:
-            await timer.leave()
-            await event_producer.close()
-            await event_dispatcher.close()
+        async with create_database(self.local_config) as db:
+            timer = GlobalTimer(
+                db,
+                AdvisoryLock.LOCKID_TEST,
+                event_producer,
+                lambda: NoopEvent(self.test_id),
+                self.interval,
+            )
+            try:
+                await timer.join()
+                await self.stop_event.wait()
+            finally:
+                await timer.leave()
+                await event_producer.close()
+                await event_dispatcher.close()
 
     def run(self) -> None:
         asyncio.run(self.timer_node_async())
@@ -129,7 +128,6 @@ async def test_global_timer(test_id, local_config, shared_config, database_engin
             interval,
             thread_idx,
             test_id,
-            database_engine,
             local_config,
             shared_config,
             event_records,

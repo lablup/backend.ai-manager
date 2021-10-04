@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager as actxmgr
+import functools
+import json
 import logging
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Awaitable,
@@ -13,6 +16,7 @@ from typing import (
     Tuple,
     TypeVar,
 )
+from urllib.parse import quote_plus as urlquote
 
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as psql
@@ -23,8 +27,11 @@ from sqlalchemy.ext.asyncio import (
     AsyncEngine as SAEngine,
 )
 
+from ai.backend.common.json import ExtendedJSONEncoder
 from ai.backend.common.logging import BraceStyleAdapter
 
+if TYPE_CHECKING:
+    from ..config import LocalConfig
 from ..defs import AdvisoryLock
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
@@ -88,7 +95,11 @@ class ExtendedAsyncSAEngine(SAEngine):
                 # but in this case:
                 #  - The lock ID is only given from trusted codes.
                 #  - asyncpg does not support parameter interpolation with raw SQL statements.
-                await lock_conn.exec_driver_sql(f"SELECT pg_advisory_lock({lock_id:d})")
+                while not lock_acquired:
+                    result = await lock_conn.exec_driver_sql(
+                        f"SELECT pg_sleep(0.2), pg_try_advisory_lock({lock_id:d});"
+                    )
+                    lock_acquired = result.fetchall()[0][1]
             except sa.exc.DBAPIError as e:
                 if getattr(e.orig, 'pgcode', None) == '55P03':  # lock not available error
                     # This may happen upon shutdown after some time.
@@ -97,17 +108,50 @@ class ExtendedAsyncSAEngine(SAEngine):
             except asyncio.CancelledError:
                 raise
             else:
-                lock_acquired = True
                 yield
             finally:
                 if lock_acquired:
-                    await lock_conn.exec_driver_sql(f"SELECT pg_advisory_unlock({lock_id:d})")
+                    await lock_conn.exec_driver_sql(
+                        f"SELECT pg_advisory_unlock({lock_id:d})"
+                    )
 
 
 def create_async_engine(*args, **kwargs) -> ExtendedAsyncSAEngine:
     kwargs["future"] = True
     sync_engine = _create_engine(*args, **kwargs)
     return ExtendedAsyncSAEngine(sync_engine)
+
+
+@actxmgr
+async def create_database(
+    local_config: LocalConfig | Mapping[str, Any],
+) -> AsyncIterator[ExtendedAsyncSAEngine]:
+    from .base import pgsql_connect_opts
+    username = local_config['db']['user']
+    password = local_config['db']['password']
+    address = local_config['db']['addr']
+    dbname = local_config['db']['name']
+    url = f"postgresql+asyncpg://{urlquote(username)}:{urlquote(password)}@{address}/{urlquote(dbname)}"
+
+    version_check_db = create_async_engine(url)
+    async with version_check_db.begin() as conn:
+        result = await conn.execute(sa.text("show server_version"))
+        major, minor, *_ = map(int, result.scalar().split("."))
+        if (major, minor) < (11, 0):
+            pgsql_connect_opts['server_settings'].pop("jit")
+    await version_check_db.dispose()
+
+    db = create_async_engine(
+        url,
+        connect_args=pgsql_connect_opts,
+        pool_size=8,
+        max_overflow=64,
+        json_serializer=functools.partial(json.dumps, cls=ExtendedJSONEncoder),
+        isolation_level="SERIALIZABLE",
+        future=True,
+    )
+    yield db
+    await db.dispose()
 
 
 @actxmgr
