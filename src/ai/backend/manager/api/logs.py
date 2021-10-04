@@ -19,7 +19,7 @@ from ai.backend.common.events import AbstractEvent, EmptyEventArgs
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import AgentId, LogSeverity
 
-from ..defs import REDIS_LIVE_DB
+from ..defs import REDIS_LIVE_DB, AdvisoryLock
 from ..distributed import GlobalTimer
 from ..models import (
     error_logs, UserRole, groups,
@@ -255,8 +255,8 @@ async def init(app: web.Application) -> None:
         str(root_ctx.shared_config.get_redis_url(db=REDIS_LIVE_DB))
     )
     app_ctx.log_cleanup_timer = GlobalTimer(
-        app_ctx.log_cleanup_timer_redis,
-        "manager_log_cleanup",
+        root_ctx.db,
+        AdvisoryLock.LOCKID_LOG_CLEANUP_TIMER,
         root_ctx.event_producer,
         lambda: DoLogCleanupEvent(),
         20.0,

@@ -33,5 +33,10 @@ REDIS_STREAM_DB: Final = 4
 
 # PostgreSQL session-level advisory lock indentifiers
 class AdvisoryLock(enum.IntEnum):
+    LOCKID_TEST = 1
     LOCKID_SCHEDULE = 91
     LOCKID_PREPARE = 92
+    LOCKID_SCHEDULE_TIMER = 191
+    LOCKID_PREPARE_TIMER = 192
+    LOCKID_LOG_CLEANUP_TIMER = 195
+    LOCKID_IDLE_CHECK_TIMER = 196

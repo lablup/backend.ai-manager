@@ -50,7 +50,7 @@ from ai.backend.common.types import AccessKey, aobject, SessionTypes
 from ai.backend.common.utils import nmget
 from ai.backend.manager.models.utils import ExtendedAsyncSAEngine
 
-from .defs import DEFAULT_ROLE, REDIS_LIVE_DB, REDIS_STAT_DB
+from .defs import DEFAULT_ROLE, REDIS_LIVE_DB, REDIS_STAT_DB, AdvisoryLock
 from .distributed import GlobalTimer
 from .models import kernels, keypair_resource_policies, keypairs
 from .models.kernel import LIVE_STATUS
@@ -107,8 +107,8 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
         )
         await self.populate_config(raw_config or {})
         self.timer = GlobalTimer(
-            self._redis,
-            "idle_check",
+            self._db,
+            AdvisoryLock.LOCKID_IDLE_CHECK_TIMER,
             self._event_producer,
             lambda: DoIdleCheckEvent(),
             self.check_interval,
