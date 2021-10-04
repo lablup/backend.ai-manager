@@ -123,7 +123,7 @@ def create_async_engine(*args, **kwargs) -> ExtendedAsyncSAEngine:
 
 
 @actxmgr
-async def create_database(
+async def connect_database(
     local_config: LocalConfig | Mapping[str, Any],
 ) -> AsyncIterator[ExtendedAsyncSAEngine]:
     from .base import pgsql_connect_opts

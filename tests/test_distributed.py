@@ -19,7 +19,7 @@ from ai.backend.common.events import AbstractEvent, EventDispatcher, EventProduc
 
 from ai.backend.manager.defs import REDIS_STREAM_DB, AdvisoryLock
 from ai.backend.manager.distributed import GlobalTimer
-from ai.backend.manager.models.utils import create_database
+from ai.backend.manager.models.utils import connect_database
 
 if TYPE_CHECKING:
     from ai.backend.common.types import AgentId
@@ -95,7 +95,7 @@ class TimerNode(threading.Thread):
         event_producer = await EventProducer.new(redis_connector)
         event_dispatcher.consume(NoopEvent, None, _tick)
 
-        async with create_database(self.local_config) as db:
+        async with connect_database(self.local_config) as db:
             timer = GlobalTimer(
                 db,
                 AdvisoryLock.LOCKID_TEST,

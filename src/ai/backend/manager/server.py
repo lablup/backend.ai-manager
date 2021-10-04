@@ -70,7 +70,7 @@ from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB, REDIS_STREAM_DB
 from .exceptions import InvalidArgument
 from .idle import create_idle_checkers
 from .models.storage import StorageSessionManager
-from .models.utils import create_database
+from .models.utils import connect_database
 from .plugin.webapp import WebappPluginContext
 from .registry import AgentRegistry
 from .scheduler.dispatcher import SchedulerDispatcher
@@ -322,7 +322,7 @@ async def redis_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 
 @aiotools.actxmgr
 async def database_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
-    async with create_database(root_ctx.local_config) as db:
+    async with connect_database(root_ctx.local_config) as db:
         root_ctx.db = db
         yield
 

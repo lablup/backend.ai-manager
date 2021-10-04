@@ -46,7 +46,7 @@ from ai.backend.manager.models import (
     agents,
     kernels, keypairs, vfolders,
 )
-from ai.backend.manager.models.utils import create_database
+from ai.backend.manager.models.utils import connect_database
 
 here = Path(__file__).parent
 
@@ -231,7 +231,7 @@ def database(request, local_config, test_db):
 
 @pytest.fixture()
 async def database_engine(local_config, database):
-    async with create_database(local_config) as db:
+    async with connect_database(local_config) as db:
         yield db
 
 
