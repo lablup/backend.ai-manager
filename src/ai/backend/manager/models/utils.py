@@ -79,21 +79,20 @@ class ExtendedAsyncSAEngine(SAEngine):
     @actxmgr
     async def advisory_lock(self, lock_id: AdvisoryLock) -> AsyncIterator[None]:
         lock_acquired = False
-        try:
-            async with self.connect() as lock_conn:
+        async with self.connect() as lock_conn:
+            try:
                 # It is usually a BAD practice to directly interpolate strings into SQL statements,
                 # but in this case:
                 #  - The lock ID is only given from trusted codes.
                 #  - asyncpg does not support parameter interpolation with raw SQL statements.
                 await lock_conn.exec_driver_sql(f"SELECT pg_advisory_lock({lock_id:d})")
-        except asyncio.CancelledError:
-            raise
-        else:
-            lock_acquired = True
-            yield
-        finally:
-            if lock_acquired:
-                async with self.connect() as lock_conn:
+            except asyncio.CancelledError:
+                raise
+            else:
+                lock_acquired = True
+                yield
+            finally:
+                if lock_acquired:
                     await lock_conn.exec_driver_sql(f"SELECT pg_advisory_unlock({lock_id:d})")
 
 
