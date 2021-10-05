@@ -1356,7 +1356,7 @@ class AgentRegistry:
         async with RPCContext(
             agent_alloc_ctx.agent_id,
             agent_alloc_ctx.agent_addr,
-            inovke_timeout=None,
+            invoke_timeout=None,
             order_key=scheduled_session.session_id,
             keepalive_timeout=self.rpc_keepalive_timeout,
         ) as rpc:
