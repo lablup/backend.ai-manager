@@ -16,6 +16,19 @@ Changes
 
 .. towncrier release notes start
 
+21.03.21 (2021-10-05)
+---------------------
+
+### Features
+* Allow configuration of the TCP keepalive timeout for the manager-to-agent RPC layer via etcd ([#485](https://github.com/lablup/backend.ai-manager/issues/485))
+
+### Fixes
+* More realistic resource preset fixture. ([#481](https://github.com/lablup/backend.ai-manager/issues/481))
+* Replace aioredlock with `pg_advisory_lock` because aioredlock is no longer actively maintained and causes lots of synchronization issues ([#482](https://github.com/lablup/backend.ai-manager/issues/482))
+* A follow-up fix for #482 to silence bogus DB API error upon service shutdown ([#483](https://github.com/lablup/backend.ai-manager/issues/483))
+* Apply TCP keepalive options to ZeroMQ sockets for RPC channels ([#484](https://github.com/lablup/backend.ai-manager/issues/484))
+
+
 21.03.20 (2021-09-02)
 ---------------------
 
