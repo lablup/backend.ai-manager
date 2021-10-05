@@ -10,8 +10,9 @@ from typing import (
 )
 
 from aiohttp import web
+import aioredis
 from aiotools import apartial
-from aioredis import Redis
+from aioredis import ConnectionPool, Redis
 import attr
 
 from ai.backend.common import redis
@@ -88,6 +89,7 @@ async def rlim_middleware(
 
 @attr.s(slots=True, auto_attribs=True, init=False)
 class PrivateContext:
+    redis_rlim_pool: ConnectionPool
     redis_rlim: Redis
     redis_rlim_script: str
 
@@ -95,13 +97,13 @@ class PrivateContext:
 async def init(app: web.Application) -> None:
     root_ctx: RootContext = app['_root.context']
     app_ctx: PrivateContext = app['ratelimit.context']
-    rr = await redis.connect_with_retries(
+    rr_pool = aioredis.ConnectionPool.from_url(
         str(root_ctx.shared_config.get_redis_url(db=REDIS_RLIM_DB)),
-        timeout=3.0,
-        encoding='utf8',
     )
+    rr = aioredis.Redis(connection_pool=rr_pool)
+    app_ctx.redis_rlim_pool = rr_pool
     app_ctx.redis_rlim = rr
-    app_ctx.redis_rlim_script = await rr.script_load(_rlim_script)
+    app_ctx.redis_rlim_script = await redis.execute(rr, lambda r: r.script_load(_rlim_script))
 
 
 async def shutdown(app: web.Application) -> None:
@@ -110,8 +112,7 @@ async def shutdown(app: web.Application) -> None:
         await app_ctx.redis_rlim.flushdb()
     except (ConnectionResetError, ConnectionRefusedError):
         pass
-    app_ctx.redis_rlim.close()
-    await app_ctx.redis_rlim.wait_closed()
+    await app_ctx.redis_rlim_pool.disconnect()
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:

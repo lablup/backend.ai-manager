@@ -1221,15 +1221,15 @@ async def check_agent_lost(root_ctx: RootContext, interval: float) -> None:
         now = datetime.now(tzutc())
         timeout = timedelta(seconds=root_ctx.local_config['manager']['heartbeat-timeout'])
 
-        async def _check_impl():
-            async for agent_id, prev in root_ctx.redis_live.ihscan('agent.last_seen'):
+        async def _check_impl(r: aioredis.Redis):
+            async for agent_id, prev in r.hscan_iter('agent.last_seen'):
                 prev = datetime.fromtimestamp(float(prev), tzutc())
                 if now - prev > timeout:
                     await root_ctx.event_producer.produce_event(
                         AgentTerminatedEvent("agent-lost"),
                         source=agent_id)
 
-        await redis.execute_with_retries(lambda: _check_impl())
+        await redis.execute(root_ctx.redis_live, _check_impl)
     except asyncio.CancelledError:
         pass
 
@@ -1240,7 +1240,7 @@ async def handle_kernel_log(
     event: DoSyncKernelLogsEvent
 ) -> None:
     root_ctx: RootContext = app['_root.context']
-    redis_conn: aioredis.Redis = await redis.connect_with_retries(
+    redis_conn: aioredis.Redis = aioredis.Redis.from_url(
         str(root_ctx.shared_config.get_redis_url(db=REDIS_STREAM_DB)),
         encoding=None,
     )
@@ -1248,8 +1248,9 @@ async def handle_kernel_log(
     log_buffer = BytesIO()
     log_key = f'containerlog.{event.container_id}'
     try:
-        list_size = await redis.execute_with_retries(
-            lambda: redis_conn.llen(log_key)
+        list_size = await redis.execute(
+            redis_conn,
+            lambda r: r.llen(log_key)
         )
         if list_size is None:
             # The log data is expired due to a very slow event delivery.
@@ -1259,7 +1260,7 @@ async def handle_kernel_log(
             return
         for _ in range(list_size):
             # Read chunk-by-chunk to allow interleaving with other Redis operations.
-            chunk = await redis.execute_with_retries(lambda: redis_conn.lpop(log_key))
+            chunk = await redis.execute(lambda: redis_conn.lpop(log_key))
             if chunk is None:  # maybe missing
                 log_buffer.write(b"(container log unavailable)\n")
                 break
@@ -1279,8 +1280,9 @@ async def handle_kernel_log(
             await execute_with_retry(_update_log)
         finally:
             # Clear the log data from Redis when done.
-            await redis.execute_with_retries(
-                lambda: redis_conn.delete(log_key)
+            await redis.execute(
+                redis_conn,
+                lambda r: r.delete(log_key)
             )
     finally:
         log_buffer.close()

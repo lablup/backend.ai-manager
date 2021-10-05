@@ -27,6 +27,7 @@ from urllib.parse import quote_plus as urlquote
 from aiohttp import web
 import aiohttp_cors
 import aiojobs.aiohttp
+import aioredis
 import aiotools
 import click
 from pathlib import Path
@@ -136,6 +137,10 @@ PUBLIC_INTERFACES: Final = [
     'redis_stat',
     'redis_image',
     'redis_stream',
+    'redis_live_pool',
+    'redis_stat_pool',
+    'redis_image_pool',
+    'redis_stream_pool',
     'event_dispatcher',
     'event_producer',
     'idle_checkers',
@@ -294,35 +299,28 @@ async def manager_status_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 
 @aiotools.actxmgr
 async def redis_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
-    root_ctx.redis_live = await redis.connect_with_retries(
+
+    root_ctx.redis_live_pool = aioredis.ConnectionPool.from_url(
         str(root_ctx.shared_config.get_redis_url(db=REDIS_LIVE_DB)),
-        timeout=3.0,
-        encoding='utf8',
     )
-    root_ctx.redis_stat = await redis.connect_with_retries(
+    root_ctx.redis_live = aioredis.Redis(connection_pool=root_ctx.redis_live_pool)
+    root_ctx.redis_stat_pool = aioredis.ConnectionPool.from_url(
         str(root_ctx.shared_config.get_redis_url(db=REDIS_STAT_DB)),
-        timeout=3.0,
-        encoding='utf8',
     )
-    root_ctx.redis_image = await redis.connect_with_retries(
+    root_ctx.redis_stat = aioredis.Redis(connection_pool=root_ctx.redis_stat_pool)
+    root_ctx.redis_image_pool = aioredis.ConnectionPool.from_url(
         str(root_ctx.shared_config.get_redis_url(db=REDIS_IMAGE_DB)),
-        timeout=3.0,
-        encoding='utf8',
     )
-    root_ctx.redis_stream = await redis.connect_with_retries(
+    root_ctx.redis_image = aioredis.Redis(connection_pool=root_ctx.redis_image_pool)
+    root_ctx.redis_stream_pool = aioredis.ConnectionPool.from_url(
         str(root_ctx.shared_config.get_redis_url(db=REDIS_STREAM_DB)),
-        timeout=3.0,
-        encoding='utf8',
     )
+    root_ctx.redis_stream = aioredis.Redis(connection_pool=root_ctx.redis_stream_pool)
     yield
-    root_ctx.redis_image.close()
-    await root_ctx.redis_image.wait_closed()
-    root_ctx.redis_stat.close()
-    await root_ctx.redis_stat.wait_closed()
-    root_ctx.redis_live.close()
-    await root_ctx.redis_live.wait_closed()
-    root_ctx.redis_stream.close()
-    await root_ctx.redis_stream.wait_closed()
+    await root_ctx.redis_image_pool.disconnect()
+    await root_ctx.redis_stat_pool.disconnect()
+    await root_ctx.redis_live_pool.disconnect()
+    await root_ctx.redis_stream_pool.disconnect()
 
 
 @aiotools.actxmgr
@@ -357,9 +355,9 @@ async def database_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 @aiotools.actxmgr
 async def event_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 
-    async def redis_connector():
+    def redis_connector():
         redis_url = root_ctx.shared_config.get_redis_url(db=REDIS_STREAM_DB)
-        return await redis.connect_with_retries(str(redis_url), encoding=None)
+        return aioredis.ConnectionPool.from_url(str(redis_url))
 
     root_ctx.event_producer = await EventProducer.new(redis_connector)
     root_ctx.event_dispatcher = await EventDispatcher.new(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from re import S
 from typing import (
     Callable,
     Final,
@@ -8,7 +9,7 @@ from typing import (
 )
 
 from aioredis import Redis
-from aioredlock import Aioredlock, LockError
+from aioredis.lock import Lock
 
 if TYPE_CHECKING:
     from ai.backend.common.events import AbstractEvent, EventProducer
@@ -21,7 +22,7 @@ class GlobalTimer:
     uniquely among multiple manager instances across multiple nodes.
     """
 
-    _lock_manager: Final[Aioredlock]
+    _lock_manager: Final[Lock]
     _event_producer: Final[EventProducer]
 
     def __init__(
@@ -33,30 +34,27 @@ class GlobalTimer:
         interval: float = 10.0,
         initial_delay: float = 0.0,
     ) -> None:
-        self._lock_manager = Aioredlock([redis])
-        self._event_producer = event_producer
-        self._event_factory = event_factory
         self.lock_key = f"timer.{timer_name}.lock"
         self.interval = interval
         self.initial_delay = initial_delay
+
+        self._lock_manager = Lock(redis, self.lock_key, timeout=self.interval)
+        self._event_producer = event_producer
+        self._event_factory = event_factory
 
     async def generate_tick(self) -> None:
         try:
             await asyncio.sleep(self.initial_delay)
             while True:
-                try:
-                    async with (
-                        await self._lock_manager.lock(self.lock_key, lock_timeout=self.interval)
-                    ) as lock:
-                        await self._event_producer.produce_event(self._event_factory())
-                        await self._lock_manager.extend(lock, lock_timeout=self.interval)
-                        await asyncio.sleep(self.interval)
-                except LockError:
-                    pass
+                await self._lock_manager.acquire(blocking=True)
+                await self._event_producer.produce_event(self._event_factory())
+                await self._lock_manager.reacquire()
+                await asyncio.sleep(self.interval)
         except asyncio.CancelledError:
             pass
         finally:
-            await self._lock_manager.destroy()
+            if await self._lock_manager.owned():
+                await self._lock_manager.release()
 
     async def join(self) -> None:
         self._tick_task = asyncio.create_task(self.generate_tick())

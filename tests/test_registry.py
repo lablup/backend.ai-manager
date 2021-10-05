@@ -49,7 +49,7 @@ async def test_handle_heartbeat(mocker) -> None:
     ])
     mocker.patch('ai.backend.manager.registry.get_known_registries', mock_get_known_registries)
     mock_redis_wrapper = MagicMock()
-    mock_redis_wrapper.execute_with_retries = AsyncMock()
+    mock_redis_wrapper.execute = AsyncMock()
     mocker.patch('ai.backend.manager.registry.redis', mock_redis_wrapper)
     image_data = snappy.compress(msgpack.packb([
         ('index.docker.io/lablup/python:3.6-ubuntu18.04', ),

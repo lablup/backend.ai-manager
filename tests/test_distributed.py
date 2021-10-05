@@ -81,9 +81,9 @@ class TimerNode(threading.Thread):
 
     async def timer_node_async(self) -> None:
 
-        async def redis_connector():
+        def redis_connector():
             redis_url = self.shared_config.get_redis_url(db=REDIS_STREAM_DB)
-            return await aioredis.create_redis(str(redis_url))
+            return aioredis.ConnectionPool.from_url(str(redis_url))
 
         async def _tick(context: Any, source: AgentId, event: NoopEvent) -> None:
             self.event_records.put(time.monotonic())

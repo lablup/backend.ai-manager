@@ -5,7 +5,7 @@ from typing import Sequence, TYPE_CHECKING
 import attr
 
 if TYPE_CHECKING:
-    from aioredis import Redis
+    from aioredis import ConnectionPool, Redis
 
     from ai.backend.common.events import EventDispatcher, EventProducer
     from ai.backend.common.plugin.hook import HookPluginContext
@@ -35,6 +35,10 @@ class RootContext(BaseContext):
     redis_stat: Redis
     redis_image: Redis
     redis_stream: Redis
+    redis_live_pool: ConnectionPool
+    redis_stat_pool: ConnectionPool
+    redis_image_pool: ConnectionPool
+    redis_stream_pool: ConnectionPool
     shared_config: SharedConfig
     local_config: LocalConfig
     cors_options: CORSOptions

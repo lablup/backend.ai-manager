@@ -131,6 +131,8 @@ class SchedulerDispatcher(aobject):
     registry: AgentRegistry
     db: SAEngine
 
+    schedule_timer_redis_pool: aioredis.ConnectionPool
+    prepare_timer_redis_pool: aioredis.ConnectionPool
     schedule_timer_redis: aioredis.Redis
     prepare_timer_redis: aioredis.Redis
     event_dispatcher: EventDispatcher
@@ -166,8 +168,10 @@ class SchedulerDispatcher(aobject):
         evd.consume(DoScheduleEvent, None, self.schedule, coalescing_opts)
         evd.consume(DoPrepareEvent, None, self.prepare)
         redis_url = self.shared_config.get_redis_url(db=REDIS_STREAM_DB)
-        self.schedule_timer_redis = await aioredis.create_redis(str(redis_url))
-        self.prepare_timer_redis = await aioredis.create_redis(str(redis_url))
+        self.schedule_timer_redis_pool = aioredis.ConnectionPool.from_url(str(redis_url))
+        self.prepare_timer_redis_pool = aioredis.ConnectionPool.from_url(str(redis_url))
+        self.schedule_timer_redis = aioredis.Redis(connection_pool=self.schedule_timer_redis_pool)
+        self.prepare_timer_redis = aioredis.Redis(connection_pool=self.prepare_timer_redis_pool)
         self.schedule_timer = GlobalTimer(
             self.schedule_timer_redis,
             "scheduler_tick",
@@ -191,10 +195,8 @@ class SchedulerDispatcher(aobject):
         await self.prepare_timer.leave()
         await self.schedule_timer.leave()
         log.info('Session scheduler stopped')
-        self.prepare_timer_redis.close()
-        self.schedule_timer_redis.close()
-        await self.prepare_timer_redis.wait_closed()
-        await self.schedule_timer_redis.wait_closed()
+        await self.prepare_timer_redis_pool.disconnect()
+        await self.schedule_timer_redis_pool.disconnect()
 
     async def schedule(
         self,

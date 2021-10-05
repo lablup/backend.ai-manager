@@ -31,7 +31,7 @@ from dateutil.tz import tzutc
 from sqlalchemy.engine import Row
 
 import ai.backend.common.validators as tx
-from ai.backend.common import msgpack
+from ai.backend.common import msgpack, redis
 from ai.backend.common.events import (
     AbstractEvent,
     DoIdleCheckEvent,
@@ -99,9 +99,10 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
         self._event_producer = event_producer
 
     async def __ainit__(self) -> None:
-        self._redis = await aioredis.create_redis(
+        self._redis_pool = aioredis.ConnectionPool.from_url(
             str(self._shared_config.get_redis_url(db=REDIS_LIVE_DB))
         )
+        self._redis = aioredis.Redis(connection_pool=self._redis_pool)
         raw_config = await self._shared_config.etcd.get_prefix_dict(
             f"config/idle/checkers/{self.name}"
         )
@@ -123,8 +124,7 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
     async def aclose(self) -> None:
         await self.timer.leave()
         self._event_dispatcher.unconsume(self._evh_idle_check)
-        self._redis.close()
-        await self._redis.wait_closed()
+        await self._redis_pool.disconnect()
 
     @abstractmethod
     async def populate_config(self, config: Mapping[str, Any]) -> None:
@@ -371,13 +371,15 @@ class UtilizationIdleChecker(BaseIdleChecker):
     async def __ainit__(self) -> None:
         await super().__ainit__()
         self._policy_cache = ContextVar("_policy_cache")
-        self._redis_stat = await aioredis.create_redis(
-            str(self._shared_config.get_redis_url(db=REDIS_STAT_DB))
+        self._redis_pool = aioredis.ConnectionPool.from_url(
+            str(self._shared_config.get_redis_url(db=REDIS_STAT_DB)),
+        )
+        self._redis_stat = aioredis.Redis(
+            connection_pool=self._redis_pool,
         )
 
     async def aclose(self) -> None:
-        self._redis_stat.close()
-        await self._redis_stat.wait_closed()
+        await self._redis_pool.disconnect()
         await super().aclose()
 
     async def populate_config(self, raw_config: Mapping[str, Any]) -> None:
@@ -500,7 +502,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
         # Update utilization time-series data.
         not_enough_data = False
-        raw_util_series = await self._redis.get(util_series_key, encoding=None)
+        raw_util_series = await redis.execute(self._redis, lambda r: r.get(util_series_key), do_encode=True)
 
         try:
             util_series = msgpack.unpackb(raw_util_series, use_list=True)
@@ -558,7 +560,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         try:
             utilizations = {k: 0.0 for k in self.resource_thresholds.keys()}
             for kernel_id in kernel_ids:
-                raw_live_stat = await self._redis_stat.get(str(kernel_id), encoding=None)
+                raw_live_stat = await redis.execute(self._redis_stat, lambda r: r.get(str(kernel_id)), encoding='utf-8')
                 live_stat = msgpack.unpackb(raw_live_stat)
                 kernel_utils = {
                     k: float(nmget(live_stat, f"{k}.pct", 0.0))

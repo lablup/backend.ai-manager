@@ -242,6 +242,7 @@ async def log_cleanup_task(app: web.Application, src: AgentId, event: DoLogClean
 class PrivateContext:
     log_cleanup_timer: GlobalTimer
     log_cleanup_timer_redis: aioredis.Redis
+    log_cleanup_timer_redis_pool: aioredis.ConnectionPool
     log_cleanup_timer_evh: EventHandler[web.Application, DoLogCleanupEvent]
 
 
@@ -251,9 +252,10 @@ async def init(app: web.Application) -> None:
     app_ctx.log_cleanup_timer_evh = root_ctx.event_dispatcher.consume(
         DoLogCleanupEvent, app, log_cleanup_task,
     )
-    app_ctx.log_cleanup_timer_redis = await aioredis.create_redis(
+    app_ctx.log_cleanup_timer_redis_pool = aioredis.ConnectionPool.from_url(
         str(root_ctx.shared_config.get_redis_url(db=REDIS_LIVE_DB))
     )
+    app_ctx.log_cleanup_timer_redis = aioredis.Redis(connection_pool=app_ctx.log_cleanup_timer_redis_pool)
     app_ctx.log_cleanup_timer = GlobalTimer(
         app_ctx.log_cleanup_timer_redis,
         "manager_log_cleanup",
@@ -269,8 +271,7 @@ async def shutdown(app: web.Application) -> None:
     root_ctx: RootContext = app['_root.context']
     app_ctx: PrivateContext = app['logs.context']
     await app_ctx.log_cleanup_timer.leave()
-    app_ctx.log_cleanup_timer_redis.close()
-    await app_ctx.log_cleanup_timer_redis.wait_closed()
+    await app_ctx.log_cleanup_timer_redis_pool.disconnect()
     root_ctx.event_dispatcher.unconsume(app_ctx.log_cleanup_timer_evh)
 
 
