@@ -44,6 +44,7 @@ import snappy
 import sqlalchemy as sa
 from sqlalchemy.sql.expression import true
 from yarl import URL
+import zmq
 
 from ai.backend.common import msgpack, redis
 from ai.backend.common.docker import get_registry_info, get_known_registries, ImageRef
@@ -188,6 +189,14 @@ async def RPCContext(agent_id, addr, timeout=None, *, order_key: str = None):
         peer = PeerInvoker(
             connect=ZeroMQAddress(addr),
             transport=ZeroMQRPCTransport,
+            transport_opts={
+                'zsock_opts': {
+                    zmq.TCP_KEEPALIVE: 1,
+                    zmq.TCP_KEEPALIVE_IDLE: 20,
+                    zmq.TCP_KEEPALIVE_INTVL: 5,
+                    zmq.TCP_KEEPALIVE_CNT: 3,
+                },
+            },
             serializer=msgpack.packb,
             deserializer=msgpack.unpackb,
         )
