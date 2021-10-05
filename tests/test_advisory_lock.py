@@ -17,9 +17,6 @@ async def test_lock(database_engine: ExtendedAsyncSAEngine) -> None:
             enter_count += 1
             await asyncio.sleep(1.0)
 
-    async with database_engine.connect() as conn:
-        await conn.exec_driver_sql("SELECT pg_advisory_unlock_all()")
-
     tasks = []
     for idx in range(5):
         tasks.append(

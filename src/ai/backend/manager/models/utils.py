@@ -105,7 +105,7 @@ class ExtendedAsyncSAEngine(SAEngine):
             except sa.exc.DBAPIError as e:
                 if getattr(e.orig, 'pgcode', None) == '55P03':  # lock not available error
                     # This may happen upon shutdown after some time.
-                    return
+                    raise asyncio.CancelledError()
                 raise
             except asyncio.CancelledError:
                 raise
