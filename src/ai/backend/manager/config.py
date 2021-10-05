@@ -116,7 +116,7 @@ Alias keys are also URL-quoted in the same way.
        + overlay
          - mtu: 1500  # Maximum Transmission Unit
        + rpc
-         - keepalive_timeout: 60  # seconds
+         - keepalive-timeout: 60  # seconds
      + watcher
        - token: {some-secret}
    + volumes
