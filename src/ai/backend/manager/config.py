@@ -630,8 +630,11 @@ class SharedConfig(AbstractConfig):
                     if tag == '':
                         continue
                     raw_ref = f'{etcd_unquote(registry)}/{etcd_unquote(image)}:{tag}'
-                    ref = ImageRef(raw_ref, known_registries)
-                    coros.append(self._parse_image(ref, image_info, reverse_aliases))
+                    try:
+                        ref = ImageRef(raw_ref, known_registries)
+                        coros.append(self._parse_image(ref, image_info, reverse_aliases))
+                    except ValueError:
+                        log.warn('skipping image {} as it contains malformed metadata', raw_ref)
         result = await asyncio.gather(*coros)
         return result
 
