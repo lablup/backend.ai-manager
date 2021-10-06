@@ -292,7 +292,7 @@ async def recalculate_usage(request: web.Request) -> web.Response:
 
 async def get_container_stats_for_period(request: web.Request, start_date, end_date, group_ids=None):
     root_ctx: RootContext = request.app['_root.context']
-    async with root_ctx.db.begin_readonly(deferrable=True) as conn:
+    async with root_ctx.db.begin_readonly() as conn:
         j = (
             kernels
             .join(groups, groups.c.id == kernels.c.group_id)
