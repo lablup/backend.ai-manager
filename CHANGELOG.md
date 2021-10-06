@@ -16,6 +16,14 @@ Changes
 
 .. towncrier release notes start
 
+21.03.22 (2021-10-07)
+---------------------
+
+### Fixes
+* Filter out images with malformed tags from the response of the image list API ([#486](https://github.com/lablup/backend.ai-manager/issues/486))
+* Remove `deferrable=True` option from the DB transaction to read session usage statistics. Since the manager now keeps repeatedly creating implicitly started DB transactions to acquire advisory locks (#482) and deferrable transactions barely can be started. ([#487](https://github.com/lablup/backend.ai-manager/issues/487))
+
+
 21.03.21 (2021-10-05)
 ---------------------
 
