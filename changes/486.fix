@@ -1,1 +1,1 @@
-Remove malformed image from response when calling image list API
+Filter out images with malformed tags from the response of the image list API
