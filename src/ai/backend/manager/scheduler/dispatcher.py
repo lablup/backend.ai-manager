@@ -467,8 +467,8 @@ class SchedulerDispatcher(aobject):
         check_results: List[Tuple[str, Union[Exception, PredicateResult]]],
     ) -> None:
         # Assign agent resource per session.
-        log_fmt = _log_fmt.get()
-        log_args = _log_args.get()
+        log_fmt = _log_fmt.get("")
+        log_args = _log_args.get(tuple())
         try:
             # If sess_ctx.agent_id is already set for manual assignment by superadmin,
             # skip assign_agent_for_session().
@@ -487,20 +487,16 @@ class SchedulerDispatcher(aobject):
                 # if pass the available test
                 if available_agent_slots is None:
                     raise InstanceNotAvailable("There is no such agent.")
-                available_test_pass = False
                 for key in available_agent_slots:
                     if available_agent_slots[key] >= sess_ctx.requested_slots[key]:
-                        available_test_pass = True
                         continue
                     else:
-                        available_test_pass = False
                         raise InstanceNotAvailable(
                             "The resource slot does not have the enough remaining capacity."
                         )
-                if available_test_pass:
-                    agent_alloc_ctx = await _reserve_agent(
-                        sched_ctx, agent_db_conn, sgroup_name, agent_id, sess_ctx.requested_slots,
-                    )
+                agent_alloc_ctx = await _reserve_agent(
+                    sched_ctx, agent_db_conn, sgroup_name, agent_id, sess_ctx.requested_slots,
+                )
         except InstanceNotAvailable:
             log.debug(log_fmt + 'no-available-instances', *log_args)
 
@@ -921,13 +917,11 @@ async def _reserve_agent(
         .where(agents.c.id == agent_id)
     )
     await db_conn.execute(update_query)
-
     # Get the agent address for later RPC calls
     query = (sa.select([agents.c.addr])
                .where(agents.c.id == agent_id))
     agent_addr = await db_conn.scalar(query)
     assert agent_addr is not None
-
     return AgentAllocationContext(agent_id, agent_addr, scaling_group)
 
 
