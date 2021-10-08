@@ -962,10 +962,8 @@ async def test_manually_assign_agent_available(example_agents, example_pending_s
         mock_check_result
     )
     result = mock_dbresult.scalar()
-    assert result['cpu'] >= example_pending_sessions[0].requested_slots['cpu']
-    assert result['mem'] >= example_pending_sessions[0].requested_slots['mem']
-    assert result['cuda.shares'] >= example_pending_sessions[0].requested_slots['cuda.shares']
-    assert result['rocm.devices'] >= example_pending_sessions[0].requested_slots['rocm.devices']
+    for key in result:
+        assert result[key] >= example_pending_sessions[0].requested_slots[key]
 
     # manually assigned agent is not enough capacity.
     mock_dbresult.scalar = MagicMock(return_value={
@@ -982,11 +980,9 @@ async def test_manually_assign_agent_available(example_agents, example_pending_s
         sess_ctx,
         mock_check_result
     )
-    result = mock_dbresult.scalar()
-    assert result['cpu'] <= example_pending_sessions[0].requested_slots['cpu']
-    assert result['mem'] <= example_pending_sessions[0].requested_slots['mem']
-    assert result['cuda.shares'] <= example_pending_sessions[0].requested_slots['cuda.shares']
-    assert result['rocm.devices'] <= example_pending_sessions[0].requested_slots['rocm.devices']
+    result = mock_dbresult.scalar()    
+    for key in result:
+        assert result[key] <= example_pending_sessions[0].requested_slots[key]
 
 
 @pytest.mark.asyncio
