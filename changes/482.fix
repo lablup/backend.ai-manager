@@ -1,0 +1,1 @@
+Replace aioredlock with `pg_advisory_lock` because aioredlock is no longer actively maintained and causes lots of synchronization issues

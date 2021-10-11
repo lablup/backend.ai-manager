@@ -44,6 +44,7 @@ import snappy
 import sqlalchemy as sa
 from sqlalchemy.sql.expression import true
 from yarl import URL
+import zmq
 
 from ai.backend.common import msgpack, redis
 from ai.backend.common.docker import get_registry_info, get_known_registries, ImageRef
@@ -181,20 +182,39 @@ class PeerInvoker(Peer):
 
 
 @aiotools.actxmgr
-async def RPCContext(agent_id, addr, timeout=None, *, order_key: str = None):
+async def RPCContext(
+    agent_id: AgentId,
+    addr,
+    *,
+    invoke_timeout: float = None,
+    order_key: str = None,
+    keepalive_timeout: int = 60,
+) -> AsyncIterator[PeerInvoker]:
     global agent_peers
     peer = agent_peers.get(addr, None)
     if peer is None:
+        keepalive_retry_count = 3
+        keepalive_interval = keepalive_timeout // keepalive_retry_count
+        if keepalive_interval < 2:
+            keepalive_interval = 2
         peer = PeerInvoker(
             connect=ZeroMQAddress(addr),
             transport=ZeroMQRPCTransport,
+            transport_opts={
+                'zsock_opts': {
+                    zmq.TCP_KEEPALIVE: 1,
+                    zmq.TCP_KEEPALIVE_IDLE: keepalive_timeout,
+                    zmq.TCP_KEEPALIVE_INTVL: keepalive_interval,
+                    zmq.TCP_KEEPALIVE_CNT: keepalive_retry_count,
+                },
+            },
             serializer=msgpack.packb,
             deserializer=msgpack.unpackb,
         )
         await peer.__aenter__()
         agent_peers[addr] = peer
     try:
-        with _timeout(timeout):
+        with _timeout(invoke_timeout):
             okey_token = peer.call.order_key.set('')
             try:
                 yield peer
@@ -250,6 +270,8 @@ class AgentRegistry:
         self.hook_plugin_ctx = hook_plugin_ctx
         self.kernel_creation_tracker = {}
         self._post_kernel_creation_tasks = weakref.WeakValueDictionary()
+        self.rpc_keepalive_timeout = \
+            int(shared_config.get("config/network/rpc/keepalive-timeout", "60"))
 
     async def init(self) -> None:
         self.heartbeat_lock = asyncio.Lock()
@@ -295,7 +317,11 @@ class AgentRegistry:
 
     async def gather_agent_hwinfo(self, instance_id: AgentId) -> Mapping[str, HardwareMetadata]:
         agent = await self.get_instance(instance_id, agents.c.addr)
-        async with RPCContext(agent['id'], agent['addr'], None) as rpc:
+        async with RPCContext(
+            agent['id'], agent['addr'],
+            invoke_timeout=None,
+            keepalive_timeout=self.rpc_keepalive_timeout,
+        ) as rpc:
             result = await rpc.call.gather_hwinfo()
             return {
                 k: check_typed_dict(v, HardwareMetadata)  # type: ignore  # (python/mypy#9827)
@@ -760,15 +786,26 @@ class AgentRegistry:
         session_id = SessionId(uuid.uuid4())
 
         # Check scaling group availability if scaling_group parameter is given.
-        # If scaling_group is not provided, it will be selected in scheduling step.
-        if scaling_group is not None:
-            async with self.db.begin_readonly() as conn:
-                sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
+        # If scaling_group is not provided, it will be selected as the first one among
+        # the list of allowed scaling groups.
+        async with self.db.begin_readonly() as conn:
+            sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
+            if not sgroups:
+                raise ScalingGroupNotFound("You have no scaling groups allowed to use.")
+            if scaling_group is None:
+                scaling_group = sgroups[0]['name']
+                log.warning(
+                    f"enqueue_session(s:{session_name}, ak:{access_key}): "
+                    f"The client did not specify the scaling group for session; "
+                    f"falling back to {scaling_group}"
+                )
+            else:
                 for sgroup in sgroups:
                     if scaling_group == sgroup['name']:
                         break
                 else:
-                    raise ScalingGroupNotFound
+                    raise ScalingGroupNotFound(f"The scaling group {scaling_group} does not exist.")
+        assert scaling_group is not None
 
         # sanity check for vfolders
         allowed_vfolder_types = ['user', 'group']
@@ -1151,8 +1188,9 @@ class AgentRegistry:
                     async with RPCContext(
                         kernel_agent_bindings[0].agent_alloc_ctx.agent_id,
                         kernel_agent_bindings[0].agent_alloc_ctx.agent_addr,
-                        None,
+                        invoke_timeout=None,
                         order_key=scheduled_session.session_id,
+                        keepalive_timeout=self.rpc_keepalive_timeout,
                     ) as rpc:
                         await rpc.call.create_local_network(network_name)
                 except Exception:
@@ -1163,16 +1201,21 @@ class AgentRegistry:
         elif scheduled_session.cluster_mode == ClusterMode.MULTI_NODE:
             # Create overlay network for multi-node sessions
             network_name = f'bai-multinode-{scheduled_session.session_id}'
+            mtu = await self.shared_config.get_raw('config/network/overlay/mtu')
             try:
                 # Overlay networks can only be created at the Swarm manager.
-                await self.docker.networks.create({
+                create_options = {
                     'Name': network_name,
                     'Driver': 'overlay',
                     'Attachable': True,
                     'Labels': {
                         'ai.backend.cluster-network': '1'
-                    }
-                })
+                    },
+                    'Options': {}
+                }
+                if mtu:
+                    create_options['Options'] = {'com.docker.network.driver.mtu': mtu}
+                await self.docker.networks.create(create_options)
             except Exception:
                 log.exception(f"Failed to create an overlay network {network_name}")
                 raise
@@ -1313,8 +1356,9 @@ class AgentRegistry:
         async with RPCContext(
             agent_alloc_ctx.agent_id,
             agent_alloc_ctx.agent_addr,
-            None,
+            invoke_timeout=None,
             order_key=scheduled_session.session_id,
+            keepalive_timeout=self.rpc_keepalive_timeout,
         ) as rpc:
             kernel_creation_id = secrets.token_urlsafe(16)
             # Prepare kernel_started event handling
@@ -1581,8 +1625,9 @@ class AgentRegistry:
             async with RPCContext(
                 destroyed_kernels[0]['agent'],
                 destroyed_kernels[0]['agent_addr'],
-                None,
+                invoke_timeout=None,
                 order_key=session_id,
+                keepalive_timeout=self.rpc_keepalive_timeout,
             ) as rpc:
                 for kernel in destroyed_kernels:
                     # internally it enqueues a "destroy" lifecycle event.
@@ -1776,8 +1821,9 @@ class AgentRegistry:
                     async with RPCContext(
                         destroyed_kernels[0]['agent'],
                         destroyed_kernels[0]['agent_addr'],
-                        None,
+                        invoke_timeout=None,
                         order_key=session['session_id'],
+                        keepalive_timeout=self.rpc_keepalive_timeout,
                     ) as rpc:
                         rpc_coros = []
                         for kernel in destroyed_kernels:
@@ -1858,8 +1904,9 @@ class AgentRegistry:
                 async with RPCContext(
                     session['agent'],       # the main-container's agent
                     session['agent_addr'],
-                    None,
+                    invoke_timeout=None,
                     order_key=session['session_id'],
+                    keepalive_timeout=self.rpc_keepalive_timeout,
                 ) as rpc:
                     await rpc.call.destroy_local_network(network_name)
             except Exception:
@@ -1927,8 +1974,9 @@ class AgentRegistry:
                     async with RPCContext(
                         kernel['agent'],       # the main-container's agent
                         kernel['agent_addr'],
-                        None,
+                        invoke_timeout=None,
                         order_key=None,
+                        keepalive_timeout=self.rpc_keepalive_timeout,
                     ) as rpc:
                         updated_config: Dict[str, Any] = {
                             # TODO: support resacling of sub-containers
@@ -1998,8 +2046,9 @@ class AgentRegistry:
             async with RPCContext(
                 kernel['agent'],
                 kernel['agent_addr'],
-                30,
+                invoke_timeout=30,
                 order_key=kernel['id'],
+                keepalive_timeout=self.rpc_keepalive_timeout,
             ) as rpc:
                 return await rpc.call.execute(
                     str(kernel['id']),
@@ -2018,8 +2067,9 @@ class AgentRegistry:
             async with RPCContext(
                 kernel['agent'],
                 kernel['agent_addr'],
-                30,
+                invoke_timeout=30,
                 order_key=kernel['id'],
+                keepalive_timeout=self.rpc_keepalive_timeout,
             ) as rpc:
                 return await rpc.call.interrupt_kernel(str(kernel['id']))
 
@@ -2035,8 +2085,9 @@ class AgentRegistry:
             async with RPCContext(
                 kernel['agent'],
                 kernel['agent_addr'],
-                10,
+                invoke_timeout=10,
                 order_key=kernel['id'],
+                keepalive_timeout=self.rpc_keepalive_timeout,
             ) as rpc:
                 return await rpc.call.get_completions(str(kernel['id']), text, opts)
 
@@ -2052,8 +2103,9 @@ class AgentRegistry:
             async with RPCContext(
                 kernel['agent'],
                 kernel['agent_addr'],
-                None,
+                invoke_timeout=None,
                 order_key=kernel['id'],
+                keepalive_timeout=self.rpc_keepalive_timeout,
             ) as rpc:
                 return await rpc.call.start_service(str(kernel['id']), service, opts)
 
@@ -2068,8 +2120,9 @@ class AgentRegistry:
             async with RPCContext(
                 kernel['agent'],
                 kernel['agent_addr'],
-                None,
+                invoke_timeout=None,
                 order_key=kernel['id'],
+                keepalive_timeout=self.rpc_keepalive_timeout,
             ) as rpc:
                 return await rpc.call.shutdown_service(str(kernel['id']), service)
 
@@ -2085,8 +2138,9 @@ class AgentRegistry:
             async with RPCContext(
                 kernel['agent'],
                 kernel['agent_addr'],
-                None,
+                invoke_timeout=None,
                 order_key=kernel['id'],
+                keepalive_timeout=self.rpc_keepalive_timeout,
             ) as rpc:
                 return await rpc.call.upload_file(str(kernel['id']), filename, payload)
 
@@ -2102,8 +2156,9 @@ class AgentRegistry:
             async with RPCContext(
                 kernel['agent'],
                 kernel['agent_addr'],
-                None,
+                invoke_timeout=None,
                 order_key=kernel['id'],
+                keepalive_timeout=self.rpc_keepalive_timeout,
             ) as rpc:
                 return await rpc.call.download_file(str(kernel['id']), filepath)
 
@@ -2118,8 +2173,9 @@ class AgentRegistry:
             async with RPCContext(
                 kernel['agent'],
                 kernel['agent_addr'],
-                30,
+                invoke_timeout=30,
                 order_key=kernel['id'],
+                keepalive_timeout=self.rpc_keepalive_timeout,
             ) as rpc:
                 return await rpc.call.list_files(str(kernel['id']), path)
 
@@ -2133,8 +2189,9 @@ class AgentRegistry:
             async with RPCContext(
                 kernel['agent'],
                 kernel['agent_addr'],
-                30,
+                invoke_timeout=30,
                 order_key=kernel['id'],
+                keepalive_timeout=self.rpc_keepalive_timeout,
             ) as rpc:
                 reply = await rpc.call.get_logs(str(kernel['id']))
                 return reply['logs']
@@ -2159,7 +2216,12 @@ class AgentRegistry:
         #     await execute_with_retry(conn, query)
 
     async def kill_all_sessions_in_agent(self, agent_id, agent_addr):
-        async with RPCContext(agent_id, agent_addr, None) as rpc:
+        async with RPCContext(
+            agent_id,
+            agent_addr,
+            invoke_timeout=None,
+            keepalive_timeout=self.rpc_keepalive_timeout,
+        ) as rpc:
             coro = rpc.call.clean_all_kernels('manager-freeze-force-kill')
             return await coro
 

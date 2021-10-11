@@ -113,6 +113,10 @@ Alias keys are also URL-quoted in the same way.
        + subnet
          - agent: "0.0.0.0/0"
          - container: "0.0.0.0/0"
+       + overlay
+         - mtu: 1500  # Maximum Transmission Unit
+       + rpc
+         - keepalive-timeout: 60  # seconds
      + watcher
        - token: {some-secret}
    + volumes
@@ -360,6 +364,9 @@ shared_config_iv = t.Dict({
         t.Key('subnet', default=_shdefs['network']['subnet']): t.Dict({
             t.Key('agent', default=_shdefs['network']['subnet']['agent']): tx.IPNetwork,
             t.Key('container', default=_shdefs['network']['subnet']['container']): tx.IPNetwork,
+        }).allow_extra('*'),
+        t.Key('overlay', default=None): t.Null | t.Dict({
+            t.Key('mtu', default=1500): t.Int[1:],
         }).allow_extra('*'),
     }).allow_extra('*'),
     t.Key('watcher', default=_shdefs['watcher']): t.Dict({
@@ -623,8 +630,11 @@ class SharedConfig(AbstractConfig):
                     if tag == '':
                         continue
                     raw_ref = f'{etcd_unquote(registry)}/{etcd_unquote(image)}:{tag}'
-                    ref = ImageRef(raw_ref, known_registries)
-                    coros.append(self._parse_image(ref, image_info, reverse_aliases))
+                    try:
+                        ref = ImageRef(raw_ref, known_registries)
+                        coros.append(self._parse_image(ref, image_info, reverse_aliases))
+                    except ValueError:
+                        log.warn('skipping image {} as it contains malformed metadata', raw_ref)
         result = await asyncio.gather(*coros)
         return result
 

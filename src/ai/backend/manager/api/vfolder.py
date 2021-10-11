@@ -630,6 +630,60 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
 
 
 @atomic
+@superadmin_required
+@server_status_required(READ_ALLOWED)
+@check_api_params(
+    t.Dict({
+        t.Key('folder_host'): t.String,
+    }))
+async def get_quota(request: web.Request, params: Any) -> web.Response:
+    root_ctx: RootContext = request.app['_root.context']
+    proxy_name, volume_name = root_ctx.storage_manager.split_host(params['folder_host'])
+    log.info('VFOLDER.GET_QUOTA (volume_name:{})', volume_name)
+    try:
+        async with root_ctx.storage_manager.request(
+            proxy_name, 'GET', 'volume/quota',
+            json={
+                'volume': volume_name,
+            },
+            raise_for_status=True,
+        ) as (_, storage_resp):
+            storage_reply = await storage_resp.json()
+    except aiohttp.ClientResponseError:
+        raise VFolderOperationFailed
+    return web.json_response(storage_reply, status=200)
+
+
+@atomic
+@superadmin_required
+@server_status_required(ALL_ALLOWED)
+@check_api_params(
+    t.Dict({
+        t.Key('folder_host'): t.String,
+        t.Key('input'): t.Mapping(t.String, t.Any),
+    }),
+)
+async def update_quota(request: web.Request, params: Any) -> web.Response:
+    root_ctx: RootContext = request.app['_root.context']
+    proxy_name, volume_name = root_ctx.storage_manager.split_host(params['folder_host'])
+    quota = params['input']['size_bytes']
+    log.info('VFOLDER.UPDATE_QUOTA (volume_name:{}, quota:{})', quota)
+    try:
+        async with root_ctx.storage_manager.request(
+            proxy_name, 'PATCH', 'volume/quota',
+            json={
+                'volume': volume_name,
+                'size_bytes': quota,
+            },
+            raise_for_status=True,
+        ):
+            pass
+    except aiohttp.ClientResponseError:
+        raise VFolderOperationFailed
+    return web.json_response({}, status=200)
+
+
+@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @vfolder_permission_required(VFolderPermission.OWNER_PERM)
@@ -2197,4 +2251,6 @@ def create_app(default_cors_options):
     cors.add(add_route('GET',    r'/_/mounts', list_mounts))
     cors.add(add_route('POST',   r'/_/mounts', mount_host))
     cors.add(add_route('DELETE', r'/_/mounts', umount_host))
+    cors.add(add_route('GET',    r'/_/quota', get_quota))
+    cors.add(add_route('POST',   r'/_/quota', update_quota))
     return app, []

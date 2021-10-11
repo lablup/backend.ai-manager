@@ -16,16 +16,16 @@ Changes
 
 .. towncrier release notes start
 
-## 21.09.0a2 (2021-10-12)
-No significant changes.
+## 21.09.0a2 (2021-09-28)
 
+### Features
+* Add the get/set APIs for size-based quota of vfolder hosts via storage proxy ([#474](https://github.com/lablup/backend.ai-manager/issues/474))
+* Add an Etcd option to set MTU in creating an overlay network for a cluster session to support improved performance for multi-node cluster training. ([#475](https://github.com/lablup/backend.ai-manager/issues/475))
 
-## 21.09.0a2 (2021-10-12)
-No significant changes.
-
-
-## 21.09.0a2 (2021-10-12)
-No significant changes.
+### Fixes
+* Always set the scaling group when creating sessions to prevent use of non-allowed scaling groups ([#472](https://github.com/lablup/backend.ai-manager/issues/472))
+* Rearrange the order of checking vfolder mount aliases to fix emptiness and null checks to come at the right order ([#473](https://github.com/lablup/backend.ai-manager/issues/473))
+* Fix a regression of `Agent.batch_load()` GraphQL resolver due to internal argument name changes ([#476](https://github.com/lablup/backend.ai-manager/issues/476))
 
 
 ## 21.09.0a1 (2021-08-25)
@@ -34,10 +34,10 @@ No significant changes.
 * Removed never-used `order_key` and `order_asc` arguments in GraphQL pagination queries in favor of the new generic `order` argument ([#449](https://github.com/lablup/backend.ai-manager/issues/449))
 
 ### Features
-* Rewrite the session scheduler to avoid HoL blocking
+* Rewrite the session scheduler to avoid HoL blocking ([#415](https://github.com/lablup/backend.ai-manager/issues/415))
    - Skip over sessions in the queue if they fail to satisfy predicates for multiple retries -> 1st case of HoL blocking: a rogue pending session blocks everything in the same scaling group
    - You may configure the maximum number of retries in the `config/plugins/scheduler/fifo/num_retries_to_skip` etcd key.
-   - Split the scheduler into two async loops for scheduling decision and session spawning by inserting "SCHEDULED" status between "PENDING" and "PREPARING" statuses -> 2nd case of HoL blocking: failure isolation with each task ([#415](https://github.com/lablup/backend.ai-manager/issues/415))
+   - Split the scheduler into two async loops for scheduling decision and session spawning by inserting "SCHEDULED" status between "PENDING" and "PREPARING" statuses -> 2nd case of HoL blocking: failure isolation with each task
 * Add an API endpoint to share/unshare a group virtual folder directly to specific users. This is to allow specified users (usually teachers with user account) can upload data/materials to a virtual folder while it is shared as read-only for other group users. ([#419](https://github.com/lablup/backend.ai-manager/issues/419))
 * Add `PRE_AUTH_MIDDLEWARE` hook for cookie-based SSO plugins ([#420](https://github.com/lablup/backend.ai-manager/issues/420))
 * Add update_full_name API to rename user's full_name regardless of role. ([#424](https://github.com/lablup/backend.ai-manager/issues/424))
@@ -62,7 +62,7 @@ No significant changes.
 * Fix a regression of spawning multi-node cluster sessions due to DB API changes related to setting transaction isolation levels ([#416](https://github.com/lablup/backend.ai-manager/issues/416))
 * Adjust the firing rate of `DoPrepareEvent` to follow and alternate with the scheduler execution ([#418](https://github.com/lablup/backend.ai-manager/issues/418))
 * Change the `KeyPair.num_queries` GQL field to use Redis instead of the `keypairs.num_queries` DB column to avoid excessive DB writes ([#421](https://github.com/lablup/backend.ai-manager/issues/421))
-* Improve stability and synchronization of container-databse states
+* Improve stability and synchronization of container-databse states ([#425](https://github.com/lablup/backend.ai-manager/issues/425))
   - Now all DB transactions use the "SERIALIZABLE" isolation level with explicit retries.
   - Now DB transactions that includes only SELECT queries are marked as "read-only" so that
     the PostgreSQL engine could optimize concurrent access with the new isolation level.
@@ -77,13 +77,13 @@ No significant changes.
   - Fix some of variable binding issues with nested functions inside loops.
   - Apply event message coalescing to prevent event bursts (e.g., `DoScheduleEvent` fired after
     enqueueing new session requests) which hurts the database performance and potentially
-    break the transaction isolation guarantees. ([#425](https://github.com/lablup/backend.ai-manager/issues/425))
+    break the transaction isolation guarantees.
 * Further refine the stability update with improved database transaction retries and the latest SQLAlchemy 1.4.x updates within the last month ([#429](https://github.com/lablup/backend.ai-manager/issues/429))
 * Fix a regression that destroying a cluster session generates duplicate session termination events ([#430](https://github.com/lablup/backend.ai-manager/issues/430))
 * Optimize read-only GraphQL queries to use read-only transaction isolation level, which greatly reduces the database loads when using GUI ([#431](https://github.com/lablup/backend.ai-manager/issues/431))
-* Fix `owner_access_key` related issues in creating and terminating the session
+* Fix `owner_access_key` related issues in creating and terminating the session ([#434](https://github.com/lablup/backend.ai-manager/issues/434))
   - Remove automatic removal of owner_access_key in check_api_params() since all API handlers supporting it has explicit trafaret definition of it
-  - Add `owner_access_key` in checking API parameter during session termination ([#434](https://github.com/lablup/backend.ai-manager/issues/434))
+  - Add `owner_access_key` in checking API parameter during session termination
 * Rewrite internal database connection and transaction management for GraphQL query and mutation processing, which improves overall stability and performance ([#436](https://github.com/lablup/backend.ai-manager/issues/436))
 * Handle missing root context gracefully with explicit warning during initialization of the intrinsic error monitor plugin ([#439](https://github.com/lablup/backend.ai-manager/issues/439))
 * Do not collect the data for utilization idle checker when the current time does not exceed the sum of the last collect time and the interval of the checker. ([#441](https://github.com/lablup/backend.ai-manager/issues/441))

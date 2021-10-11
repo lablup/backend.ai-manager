@@ -151,11 +151,14 @@ async def query_allowed_sgroups(
     from_keypair = {row['scaling_group'] for row in result}
 
     sgroups = from_domain | from_group | from_keypair
-    query = (sa.select([scaling_groups])
-               .where(
-                   (scaling_groups.c.name.in_(sgroups)) &
-                   (scaling_groups.c.is_active)
-               ))
+    query = (
+        sa.select([scaling_groups])
+        .where(
+            (scaling_groups.c.name.in_(sgroups)) &
+            (scaling_groups.c.is_active)
+        )
+        .order_by(scaling_groups.c.name)
+    )
     result = await db_conn.execute(query)
     return [row for row in result]
 
