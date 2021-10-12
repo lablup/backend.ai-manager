@@ -46,7 +46,6 @@ import sqlalchemy as sa
 from sqlalchemy.sql.expression import true, null
 import trafaret as t
 
-from ai.backend.manager.models.scaling_group import scaling_groups
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
@@ -96,6 +95,7 @@ from ..models import (
     association_groups_users as agus, groups,
     keypairs, kernels, query_bootstrap_script,
     keypair_resource_policies,
+    scaling_groups,
     users, UserRole,
     vfolders,
     AgentStatus, KernelStatus,
@@ -1087,7 +1087,7 @@ async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.
                .select_from(scaling_groups)
                .where((scaling_groups.c.name == kernel['scaling_group'])))
 
-    async with root_ctx.db.begin() as conn:
+    async with root_ctx.db.begin_readonly() as conn:
         result = await conn.execute(query)
         sgroup = result.first()
     wsproxy_address = sgroup['wsproxy_address']
