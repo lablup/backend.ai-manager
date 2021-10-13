@@ -1,0 +1,1 @@
+Remove `deferrable=True` option from the DB transaction to read session usage statistics. Since the manager now keeps repeatedly creating implicitly started DB transactions to acquire advisory locks (#482) and deferrable transactions barely can be started.
