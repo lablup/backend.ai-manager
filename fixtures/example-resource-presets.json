@@ -1,55 +1,33 @@
 {
   "resource_presets": [
     {
-      "name": "small",
+      "name": "01-small",
       "resource_slots": {
-        "cpu": "1",
-        "mem": "2147483648"
-      }
-    },
-    {
-      "name": "small-gpu",
-      "resource_slots": {
-        "cpu": "1",
-        "mem": "2147483648",
+        "cpu": "8",
+        "mem": "34359738368",
         "cuda.device": "1",
-        "cuda.shares": "0.3"
+        "cuda.shares": "0.5"
       }
     },
     {
-      "name": "medium",
+      "name": "02-medium",
       "resource_slots": {
-        "cpu": "2",
-        "mem": "4294967296"
-      }
-    },
-    {
-      "name": "medium-gpu",
-      "resource_slots": {
-        "cpu": "2",
-        "mem": "4294967296",
-        "cuda.device": "1",
-        "cuda.shares": "1.0"
-      },
-      "shared_memory": "536870912"
-    },
-    {
-      "name": "large",
-      "resource_slots": {
-        "cpu": "4",
-        "mem": "8589934592"
-      },
-      "shared_memory": "1073741824"
-    },
-    {
-      "name": "large-gpu",
-      "resource_slots": {
-        "cpu": "4",
-        "mem": "8589934592",
+        "cpu": "24",
+        "mem": "171798691840",
         "cuda.device": "2",
         "cuda.shares": "2.0"
       },
       "shared_memory": "1073741824"
+    },
+    {
+      "name": "03-large",
+      "resource_slots": {
+        "cpu": "64",
+        "mem": "343597383680",
+        "cuda.device": "4",
+        "cuda.shares": "4.0"
+      },
+      "shared_memory": "2147483648"
     }
   ]
 }
