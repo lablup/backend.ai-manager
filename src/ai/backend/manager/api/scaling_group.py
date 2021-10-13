@@ -7,11 +7,14 @@ from typing import (
 )
 
 from aiohttp import web
+import aiohttp
 import aiohttp_cors
 import trafaret as t
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
+
+from ai.backend.manager.api.exceptions import GenericNotFound
 
 from ..models import (
     query_allowed_sgroups,
@@ -52,6 +55,45 @@ async def list_available_sgroups(request: web.Request, params: Any) -> web.Respo
             ],
         }, status=200)
 
+@auth_required
+@server_status_required(READ_ALLOWED)
+async def get_wsproxy_version(request: web.Request) -> web.Response:
+    root_ctx: RootContext = request.app['_root.context']
+    redis_live = root_ctx.redis_image
+    access_key = request['keypair']['access_key']
+    domain_name = request['user']['domain_name']
+    group_id_or_name = request.match_info['scaling_group']
+
+    try:
+        wsproxy_version = await redis_live.get(f'scaling_group.{group_id_or_name}.wsproxy_version')
+        if wsproxy_version == '':
+            raise GenericNotFound
+
+        return web.json_response({
+            'version': wsproxy_version
+        })
+    except KeyError:
+        async with redis_live.db.begin_readonly() as conn:
+            sgroups = await query_allowed_sgroups(
+                conn, domain_name, group_id_or_name, access_key)
+
+        if len(sgroups) == 0:
+            await redis_live.set(f'scaling_group.{group_id_or_name}.wsproxy_version', '', expire=60 * 60)
+            raise GenericNotFound
+
+        wsproxy_address = sgroups[0]['wsproxy_address']
+        if wsproxy_address is None:
+            wsproxy_version = 'v1'
+        else:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(wsproxy_address + '/status') as resp:
+                    version_json = await resp.json()
+                    wsproxy_version = version_json['version']
+
+        await redis_live.set(f'scaling_group.{group_id_or_name}.wsproxy_version', wsproxy_version, expire=60 * 60)
+        return web.json_response({
+            'version': wsproxy_version
+        })
 
 async def init(app: web.Application) -> None:
     pass
@@ -70,4 +112,5 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     root_resource = cors.add(app.router.add_resource(r''))
     cors.add(root_resource.add_route('GET',  list_available_sgroups))
+    cors.add(app.router.add_route('GET',  '/{scaling_group}/wsproxy-version', get_wsproxy_version))
     return app, []
