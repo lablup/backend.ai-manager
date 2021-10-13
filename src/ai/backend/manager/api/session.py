@@ -565,6 +565,10 @@ async def _create(request: web.Request, params: Any) -> web.Response:
         raise
     except UnknownImageReference:
         raise InvalidAPIParameters(f"Unknown image reference: {params['image']}")
+    except sa.exc.IntegrityError as e:
+        error_log = str(e.orig)
+        error = error_log.split('>: ')[1]
+        raise InvalidAPIParameters("no such agent", error)
     except Exception:
         await root_ctx.error_monitor.capture_exception(context={'user': owner_uuid})
         log.exception('GET_OR_CREATE: unexpected error!')

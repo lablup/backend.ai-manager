@@ -884,6 +884,7 @@ class AgentRegistry:
                     sub_kernel_config = cast(KernelEnqueueingConfig, {**kernel_enqueue_configs[0]})
                     sub_kernel_config['cluster_role'] = 'sub'
                     sub_kernel_config['cluster_idx'] = i + 1
+                    sub_kernel_config['cluster_hostname'] = sub_kernel_config['cluster_role'] + str(sub_kernel_config['cluster_idx'])
                     kernel_enqueue_configs.append(sub_kernel_config)
             elif len(kernel_enqueue_configs) > 1:
                 # each container should have its own kernel_config
@@ -905,7 +906,7 @@ class AgentRegistry:
         if hook_result.status != PASSED:
             raise RejectedByHook.from_hook_result(hook_result)
 
-        for kernel in kernel_enqueue_configs:
+        for idx, kernel in enumerate(kernel_enqueue_configs):
             kernel_id: KernelId
             if kernel['cluster_role'] == DEFAULT_ROLE:
                 kernel_id = cast(KernelId, session_id)
@@ -1078,8 +1079,7 @@ class AgentRegistry:
                 pass
             else:
                 mapped_agent = ''
-                for agent in agent_list:
-                    mapped_agent += (f"{kernel['cluster_hostname']} : {agent}, ")
+                mapped_agent += (f"{kernel['cluster_hostname']} : {agent_list[idx]}, ")
                 mapped_agent = mapped_agent[:-2]
             try:
                 async def _enqueue() -> None:
