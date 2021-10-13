@@ -884,8 +884,8 @@ class AgentRegistry:
                     sub_kernel_config = cast(KernelEnqueueingConfig, {**kernel_enqueue_configs[0]})
                     sub_kernel_config['cluster_role'] = 'sub'
                     sub_kernel_config['cluster_idx'] = i + 1
-                    sub_kernel_config['cluster_hostname'] = (sub_kernel_config['cluster_role'] + 
-                                                             str(sub_kernel_config['cluster_idx']))
+                    sub_kernel_config['cluster_hostname'] = sub_kernel_config['cluster_role'] + \
+                                                            str(sub_kernel_config['cluster_idx'])
                     kernel_enqueue_configs.append(sub_kernel_config)
             elif len(kernel_enqueue_configs) > 1:
                 # each container should have its own kernel_config
