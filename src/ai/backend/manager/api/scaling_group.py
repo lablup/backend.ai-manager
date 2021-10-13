@@ -59,41 +59,41 @@ async def list_available_sgroups(request: web.Request, params: Any) -> web.Respo
 @server_status_required(READ_ALLOWED)
 async def get_wsproxy_version(request: web.Request) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
-    redis_live = root_ctx.redis_image
+    redis_live = root_ctx.redis_live
     access_key = request['keypair']['access_key']
     domain_name = request['user']['domain_name']
     group_id_or_name = request.match_info['scaling_group']
 
-    try:
-        wsproxy_version = await redis_live.get(f'scaling_group.{group_id_or_name}.wsproxy_version')
+    wsproxy_version = await redis_live.get(f'scaling_group.{group_id_or_name}.wsproxy_version')
+    if wsproxy_version:
         if wsproxy_version == '':
             raise GenericNotFound
-
+        
         return web.json_response({
             'version': wsproxy_version
         })
-    except KeyError:
-        async with redis_live.db.begin_readonly() as conn:
-            sgroups = await query_allowed_sgroups(
-                conn, domain_name, group_id_or_name, access_key)
 
-        if len(sgroups) == 0:
-            await redis_live.set(f'scaling_group.{group_id_or_name}.wsproxy_version', '', expire=60 * 60)
-            raise GenericNotFound
+    async with root_ctx.db.begin_readonly() as conn:
+        sgroups = await query_allowed_sgroups(
+            conn, domain_name, group_id_or_name, access_key)
 
-        wsproxy_address = sgroups[0]['wsproxy_address']
-        if wsproxy_address is None:
-            wsproxy_version = 'v1'
-        else:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(wsproxy_address + '/status') as resp:
-                    version_json = await resp.json()
-                    wsproxy_version = version_json['version']
+    if len(sgroups) == 0:
+        await redis_live.set(f'scaling_group.{group_id_or_name}.wsproxy_version', '', expire=60 * 60)
+        raise GenericNotFound
 
-        await redis_live.set(f'scaling_group.{group_id_or_name}.wsproxy_version', wsproxy_version, expire=60 * 60)
-        return web.json_response({
-            'version': wsproxy_version
-        })
+    wsproxy_address = sgroups[0]['wsproxy_address']
+    if wsproxy_address is None:
+        wsproxy_version = 'v1'
+    else:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(wsproxy_address + '/status') as resp:
+                version_json = await resp.json()
+                wsproxy_version = version_json['api_version']
+
+    await redis_live.set(f'scaling_group.{group_id_or_name}.wsproxy_version', wsproxy_version, expire=60 * 60)
+    return web.json_response({
+        'version': wsproxy_version
+    })
 
 async def init(app: web.Application) -> None:
     pass
