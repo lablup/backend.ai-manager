@@ -161,6 +161,7 @@ async def query_accessible_session_templates(
                 session_templates.c.created_at,
                 session_templates.c.user_uuid,
                 session_templates.c.group_id,
+                session_templates.c.type,
                 session_templates.c.template,
                 users.c.email
             ])
@@ -184,6 +185,7 @@ async def query_accessible_session_templates(
                 'group': str(row.group_id) if row.group_id else None,
                 'user_email': row.email,
                 'group_name': None,
+                'type': row.type,
                 'template': row.template,
             })
     if 'group' in allowed_types:
@@ -215,6 +217,7 @@ async def query_accessible_session_templates(
                 session_templates.c.created_at,
                 session_templates.c.user_uuid,
                 session_templates.c.group_id,
+                session_templates.c.type,
                 session_templates.c.template,
                 groups.c.name
             ], use_labels=True)
@@ -242,6 +245,7 @@ async def query_accessible_session_templates(
                 'group': str(row.session_templates_group_id) if row.session_templates_group_id else None,
                 'user_email': None,
                 'group_name': row.groups_name,
+                'type': row.session_templates_type,
                 'template': row.template,
             })
     return entries

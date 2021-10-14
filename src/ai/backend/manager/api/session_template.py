@@ -224,6 +224,7 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
                     'user_email': row.users_email,
                     'group_name': row.groups_name,
                     'domain_name': domain_name,
+                    'type': row.session_templates_type,
                     'template': row.session_templates_template,
                 })
         else:
@@ -249,8 +250,8 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
                 'group': str(entry['group']),
                 'user_email': entry['user_email'],
                 'group_name': entry['group_name'],
-                'type': 'user' if entry['user'] is not None else 'group',
                 'domain_name': domain_name,
+                'type': entry['type'],
                 'template': entry['template'],
             })
         return web.json_response(resp)
@@ -297,8 +298,8 @@ async def get(request: web.Request, params: Any) -> web.Response:
             resp.update({
                 'template': row.template,
                 'name': row.name,
-                'user_uuid': row.user_uuid.hex,
-                'group_id': row.group_id.hex,
+                'user_uuid': str(row.user_uuid),
+                'group_id': str(row.group_id),
                 'domain_name': domain_name
             })
         if isinstance(resp, str):
