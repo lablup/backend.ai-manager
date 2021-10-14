@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 from decimal import Decimal
 import queue
-import random
 import threading
 import time
 from typing import (
@@ -18,8 +17,9 @@ import attr
 
 from ai.backend.common.events import AbstractEvent, EventDispatcher, EventProducer
 
-from ai.backend.manager.defs import REDIS_STREAM_DB
+from ai.backend.manager.defs import REDIS_STREAM_DB, AdvisoryLock
 from ai.backend.manager.distributed import GlobalTimer
+from ai.backend.manager.models.utils import connect_database
 
 if TYPE_CHECKING:
     from ai.backend.common.types import AgentId
@@ -58,10 +58,11 @@ class NoopEvent(AbstractEvent):
 
 class TimerNode(threading.Thread):
 
+    stop_event: Optional[asyncio.Event]
+    loop: Optional[asyncio.AbstractEventLoop]
+
     def __init__(
         self,
-        join_delay: float,
-        leave_delay: float,
         interval: float,
         thread_idx: int,
         test_id: str,
@@ -70,16 +71,18 @@ class TimerNode(threading.Thread):
         event_records: queue.Queue[float],
     ) -> None:
         super().__init__()
-        self.join_delay = join_delay
-        self.leave_delay = leave_delay
         self.interval = interval
         self.thread_idx = thread_idx
         self.test_id = test_id
         self.local_config = local_config
         self.shared_config = shared_config
         self.event_records = event_records
+        self.stop_event = None
+        self.loop = None
 
     async def timer_node_async(self) -> None:
+        self.loop = asyncio.get_running_loop()
+        self.stop_event = asyncio.Event()
 
         def redis_connector():
             redis_url = self.shared_config.get_redis_url(db=REDIS_STREAM_DB)
@@ -88,75 +91,41 @@ class TimerNode(threading.Thread):
         async def _tick(context: Any, source: AgentId, event: NoopEvent) -> None:
             self.event_records.put(time.monotonic())
 
-        redis = await redis_connector()
         event_dispatcher = await EventDispatcher.new(redis_connector)
         event_producer = await EventProducer.new(redis_connector)
         event_dispatcher.consume(NoopEvent, None, _tick)
 
-        await asyncio.sleep(self.join_delay)
-        timer = GlobalTimer(
-            redis,
-            "testing",
-            event_producer,
-            lambda: NoopEvent(self.test_id),
-            self.interval,
-        )
-        try:
-            await timer.join()
-            await asyncio.sleep(self.leave_delay)
-        finally:
-            await timer.leave()
-            redis.close()
-            await redis.wait_closed()
-            await event_producer.close()
-            await event_dispatcher.close()
+        async with connect_database(self.local_config) as db:
+            timer = GlobalTimer(
+                db,
+                AdvisoryLock.LOCKID_TEST,
+                event_producer,
+                lambda: NoopEvent(self.test_id),
+                self.interval,
+            )
+            try:
+                await timer.join()
+                await self.stop_event.wait()
+            finally:
+                await timer.leave()
+                await event_producer.close()
+                await event_dispatcher.close()
 
     def run(self) -> None:
         asyncio.run(self.timer_node_async())
 
 
-def test_global_timer(test_id, local_config, shared_config) -> None:
+async def test_global_timer(test_id, local_config, shared_config, database_engine) -> None:
     event_records: queue.Queue[float] = queue.Queue()
     num_threads = 7
     num_records = 0
-    q = Decimal('0.00')
-    interval = Decimal('1')
-    join_delays = [
-        interval * x.quantize(q)
-        for x in dslice(Decimal('0'), Decimal('2'), num_threads)
-    ]
-    leave_delays = [
-        interval * (x.quantize(q) + Decimal('2.5'))
-        for x in dslice(Decimal('1'), Decimal('3'), num_threads)
-    ]
-    random.shuffle(join_delays)
-    random.shuffle(leave_delays)
-    print('')
-    print(join_delays)
-    print(leave_delays)
-
-    active_ticks = {
-        str(Decimal(t).quantize(q)): 0
-        for t in drange(
-            min(join_delays),
-            max(Decimal(j + leave_delays[i]) for i, j in enumerate(join_delays)),
-            interval,
-        )
-    }
-    print(list(active_ticks.keys()))
-    for idx, j in enumerate(join_delays):
-        for t in drange(j, j + leave_delays[idx], interval):
-            quantized_tick = t - (t % interval)
-            active_ticks[str(quantized_tick.quantize(q))] += 1
-    target_count = len([*filter(lambda v: v > 0, active_ticks.values())])
-    print(f"{target_count=}")
-
+    delay = 3.0
+    interval = 0.5
+    target_count = (delay / interval)
     threads = []
     for thread_idx in range(num_threads):
         timer_node = TimerNode(
-            float(join_delays[thread_idx]),
-            float(leave_delays[thread_idx]),
-            float(interval),
+            interval,
             thread_idx,
             test_id,
             local_config,
@@ -165,18 +134,23 @@ def test_global_timer(test_id, local_config, shared_config) -> None:
         )
         threads.append(timer_node)
         timer_node.start()
+    print(f"spawned {num_threads} timers")
+    time.sleep(delay)
+    print("stopping timers")
+    for timer_node in threads:
+        assert timer_node.loop is not None
+        assert timer_node.stop_event is not None
+        timer_node.loop.call_soon_threadsafe(timer_node.stop_event.set)
+    print("joining timer threads")
     for timer_node in threads:
         timer_node.join()
-    prev_record: Optional[float] = None
+    print("checking records")
     while True:
         try:
             tick = event_records.get_nowait()
             print(tick)
-            if prev_record is not None:
-                assert tick - prev_record < interval * Decimal('1.8')
-            prev_record = tick
         except queue.Empty:
             break
         num_records += 1
     print(f"{num_records=}")
-    assert target_count - 1 <= num_records <= target_count + 3
+    assert target_count - 2 <= num_records <= target_count + 2

@@ -173,15 +173,15 @@ class SchedulerDispatcher(aobject):
         self.schedule_timer_redis = aioredis.Redis(connection_pool=self.schedule_timer_redis_pool)
         self.prepare_timer_redis = aioredis.Redis(connection_pool=self.prepare_timer_redis_pool)
         self.schedule_timer = GlobalTimer(
-            self.schedule_timer_redis,
-            "scheduler_tick",
+            self.db,
+            AdvisoryLock.LOCKID_SCHEDULE_TIMER,
             self.event_producer,
             lambda: DoScheduleEvent(),
             interval=10.0,
         )
         self.prepare_timer = GlobalTimer(
-            self.prepare_timer_redis,
-            "prepare_tick",
+            self.db,
+            AdvisoryLock.LOCKID_PREPARE_TIMER,
             self.event_producer,
             lambda: DoPrepareEvent(),
             interval=10.0,
@@ -221,10 +221,9 @@ class SchedulerDispatcher(aobject):
             known_slot_types=known_slot_types,
         )
 
-        # We use short transaction blocks to prevent deadlock timeouts under heavy loads
-        # because this scheduling handler will be executed by only one process.
-        # It is executed under a globally exclusive context using aioredlock.
         try:
+            # The schedule() method should be executed with a global lock
+            # as its individual steps are composed of many short-lived transactions.
             async with self.db.advisory_lock(AdvisoryLock.LOCKID_SCHEDULE):
                 async with self.db.begin_readonly() as conn:
                     query = (

@@ -1,1 +1,0 @@
-Fix a regression of `Agent.batch_load()` GraphQL resolver due to internal argument name changes

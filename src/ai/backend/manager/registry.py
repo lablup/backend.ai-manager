@@ -45,6 +45,7 @@ import snappy
 import sqlalchemy as sa
 from sqlalchemy.sql.expression import true
 from yarl import URL
+import zmq
 
 from ai.backend.common import msgpack, redis
 from ai.backend.common.docker import get_registry_info, get_known_registries, ImageRef
@@ -182,20 +183,39 @@ class PeerInvoker(Peer):
 
 
 @aiotools.actxmgr
-async def RPCContext(agent_id, addr, timeout=None, *, order_key: str = None):
+async def RPCContext(
+    agent_id: AgentId,
+    addr,
+    *,
+    invoke_timeout: float = None,
+    order_key: str = None,
+    keepalive_timeout: int = 60,
+) -> AsyncIterator[PeerInvoker]:
     global agent_peers
     peer = agent_peers.get(addr, None)
     if peer is None:
+        keepalive_retry_count = 3
+        keepalive_interval = keepalive_timeout // keepalive_retry_count
+        if keepalive_interval < 2:
+            keepalive_interval = 2
         peer = PeerInvoker(
             connect=ZeroMQAddress(addr),
             transport=ZeroMQRPCTransport,
+            transport_opts={
+                'zsock_opts': {
+                    zmq.TCP_KEEPALIVE: 1,
+                    zmq.TCP_KEEPALIVE_IDLE: keepalive_timeout,
+                    zmq.TCP_KEEPALIVE_INTVL: keepalive_interval,
+                    zmq.TCP_KEEPALIVE_CNT: keepalive_retry_count,
+                },
+            },
             serializer=msgpack.packb,
             deserializer=msgpack.unpackb,
         )
         await peer.__aenter__()
         agent_peers[addr] = peer
     try:
-        with _timeout(timeout):
+        with _timeout(invoke_timeout):
             okey_token = peer.call.order_key.set('')
             try:
                 yield peer
@@ -251,6 +271,8 @@ class AgentRegistry:
         self.hook_plugin_ctx = hook_plugin_ctx
         self.kernel_creation_tracker = {}
         self._post_kernel_creation_tasks = weakref.WeakValueDictionary()
+        self.rpc_keepalive_timeout = \
+            int(shared_config.get("config/network/rpc/keepalive-timeout", "60"))
 
     async def init(self) -> None:
         self.heartbeat_lock = asyncio.Lock()
@@ -296,7 +318,11 @@ class AgentRegistry:
 
     async def gather_agent_hwinfo(self, instance_id: AgentId) -> Mapping[str, HardwareMetadata]:
         agent = await self.get_instance(instance_id, agents.c.addr)
-        async with RPCContext(agent['id'], agent['addr'], None) as rpc:
+        async with RPCContext(
+            agent['id'], agent['addr'],
+            invoke_timeout=None,
+            keepalive_timeout=self.rpc_keepalive_timeout,
+        ) as rpc:
             result = await rpc.call.gather_hwinfo()
             return {
                 k: check_typed_dict(v, HardwareMetadata)  # type: ignore  # (python/mypy#9827)
@@ -1163,8 +1189,9 @@ class AgentRegistry:
                     async with RPCContext(
                         kernel_agent_bindings[0].agent_alloc_ctx.agent_id,
                         kernel_agent_bindings[0].agent_alloc_ctx.agent_addr,
-                        None,
+                        invoke_timeout=None,
                         order_key=scheduled_session.session_id,
+                        keepalive_timeout=self.rpc_keepalive_timeout,
                     ) as rpc:
                         await rpc.call.create_local_network(network_name)
                 except Exception:
@@ -1330,8 +1357,9 @@ class AgentRegistry:
         async with RPCContext(
             agent_alloc_ctx.agent_id,
             agent_alloc_ctx.agent_addr,
-            None,
+            invoke_timeout=None,
             order_key=scheduled_session.session_id,
+            keepalive_timeout=self.rpc_keepalive_timeout,
         ) as rpc:
             kernel_creation_id = secrets.token_urlsafe(16)
             # Prepare kernel_started event handling
@@ -1598,8 +1626,9 @@ class AgentRegistry:
             async with RPCContext(
                 destroyed_kernels[0]['agent'],
                 destroyed_kernels[0]['agent_addr'],
-                None,
+                invoke_timeout=None,
                 order_key=session_id,
+                keepalive_timeout=self.rpc_keepalive_timeout,
             ) as rpc:
                 for kernel in destroyed_kernels:
                     # internally it enqueues a "destroy" lifecycle event.
@@ -1793,8 +1822,9 @@ class AgentRegistry:
                     async with RPCContext(
                         destroyed_kernels[0]['agent'],
                         destroyed_kernels[0]['agent_addr'],
-                        None,
+                        invoke_timeout=None,
                         order_key=session['session_id'],
+                        keepalive_timeout=self.rpc_keepalive_timeout,
                     ) as rpc:
                         rpc_coros = []
                         for kernel in destroyed_kernels:
@@ -1876,8 +1906,9 @@ class AgentRegistry:
                 async with RPCContext(
                     session['agent'],       # the main-container's agent
                     session['agent_addr'],
-                    None,
+                    invoke_timeout=None,
                     order_key=session['session_id'],
+                    keepalive_timeout=self.rpc_keepalive_timeout,
                 ) as rpc:
                     await rpc.call.destroy_local_network(network_name)
             except Exception:
@@ -1945,8 +1976,9 @@ class AgentRegistry:
                     async with RPCContext(
                         kernel['agent'],       # the main-container's agent
                         kernel['agent_addr'],
-                        None,
+                        invoke_timeout=None,
                         order_key=None,
+                        keepalive_timeout=self.rpc_keepalive_timeout,
                     ) as rpc:
                         updated_config: Dict[str, Any] = {
                             # TODO: support resacling of sub-containers
@@ -2016,8 +2048,9 @@ class AgentRegistry:
             async with RPCContext(
                 kernel['agent'],
                 kernel['agent_addr'],
-                30,
+                invoke_timeout=30,
                 order_key=kernel['id'],
+                keepalive_timeout=self.rpc_keepalive_timeout,
             ) as rpc:
                 return await rpc.call.execute(
                     str(kernel['id']),
@@ -2036,8 +2069,9 @@ class AgentRegistry:
             async with RPCContext(
                 kernel['agent'],
                 kernel['agent_addr'],
-                30,
+                invoke_timeout=30,
                 order_key=kernel['id'],
+                keepalive_timeout=self.rpc_keepalive_timeout,
             ) as rpc:
                 return await rpc.call.interrupt_kernel(str(kernel['id']))
 
@@ -2053,8 +2087,9 @@ class AgentRegistry:
             async with RPCContext(
                 kernel['agent'],
                 kernel['agent_addr'],
-                10,
+                invoke_timeout=10,
                 order_key=kernel['id'],
+                keepalive_timeout=self.rpc_keepalive_timeout,
             ) as rpc:
                 return await rpc.call.get_completions(str(kernel['id']), text, opts)
 
@@ -2070,8 +2105,9 @@ class AgentRegistry:
             async with RPCContext(
                 kernel['agent'],
                 kernel['agent_addr'],
-                None,
+                invoke_timeout=None,
                 order_key=kernel['id'],
+                keepalive_timeout=self.rpc_keepalive_timeout,
             ) as rpc:
                 return await rpc.call.start_service(str(kernel['id']), service, opts)
 
@@ -2086,8 +2122,9 @@ class AgentRegistry:
             async with RPCContext(
                 kernel['agent'],
                 kernel['agent_addr'],
-                None,
+                invoke_timeout=None,
                 order_key=kernel['id'],
+                keepalive_timeout=self.rpc_keepalive_timeout,
             ) as rpc:
                 return await rpc.call.shutdown_service(str(kernel['id']), service)
 
@@ -2103,8 +2140,9 @@ class AgentRegistry:
             async with RPCContext(
                 kernel['agent'],
                 kernel['agent_addr'],
-                None,
+                invoke_timeout=None,
                 order_key=kernel['id'],
+                keepalive_timeout=self.rpc_keepalive_timeout,
             ) as rpc:
                 return await rpc.call.upload_file(str(kernel['id']), filename, payload)
 
@@ -2120,8 +2158,9 @@ class AgentRegistry:
             async with RPCContext(
                 kernel['agent'],
                 kernel['agent_addr'],
-                None,
+                invoke_timeout=None,
                 order_key=kernel['id'],
+                keepalive_timeout=self.rpc_keepalive_timeout,
             ) as rpc:
                 return await rpc.call.download_file(str(kernel['id']), filepath)
 
@@ -2136,8 +2175,9 @@ class AgentRegistry:
             async with RPCContext(
                 kernel['agent'],
                 kernel['agent_addr'],
-                30,
+                invoke_timeout=30,
                 order_key=kernel['id'],
+                keepalive_timeout=self.rpc_keepalive_timeout,
             ) as rpc:
                 return await rpc.call.list_files(str(kernel['id']), path)
 
@@ -2151,8 +2191,9 @@ class AgentRegistry:
             async with RPCContext(
                 kernel['agent'],
                 kernel['agent_addr'],
-                30,
+                invoke_timeout=30,
                 order_key=kernel['id'],
+                keepalive_timeout=self.rpc_keepalive_timeout,
             ) as rpc:
                 reply = await rpc.call.get_logs(str(kernel['id']))
                 return reply['logs']
@@ -2177,7 +2218,12 @@ class AgentRegistry:
         #     await execute_with_retry(conn, query)
 
     async def kill_all_sessions_in_agent(self, agent_id, agent_addr):
-        async with RPCContext(agent_id, agent_addr, None) as rpc:
+        async with RPCContext(
+            agent_id,
+            agent_addr,
+            invoke_timeout=None,
+            keepalive_timeout=self.rpc_keepalive_timeout,
+        ) as rpc:
             coro = rpc.call.clean_all_kernels('manager-freeze-force-kill')
             return await coro
 
