@@ -355,13 +355,10 @@ async def database_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 @aiotools.actxmgr
 async def event_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 
-    def redis_connector():
-        redis_url = root_ctx.shared_config.get_redis_url(db=REDIS_STREAM_DB)
-        return aioredis.ConnectionPool.from_url(str(redis_url))
-
-    root_ctx.event_producer = await EventProducer.new(redis_connector)
+    redis = aioredis.from_url(root_ctx.shared_config.get_redis_url(db=REDIS_STREAM_DB))
+    root_ctx.event_producer = await EventProducer.new(redis)
     root_ctx.event_dispatcher = await EventDispatcher.new(
-        redis_connector,
+        redis,
         log_events=root_ctx.local_config['debug']['log-events'],
     )
     yield
