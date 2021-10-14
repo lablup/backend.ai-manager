@@ -568,8 +568,7 @@ class ComputeContainer(graphene.ObjectType):
         if KernelStatus[self.status] in LIVE_STATUS:
             raw_live_stat = await redis.execute(
                 graph_ctx.redis_stat,
-                lambda r: r.get(str(self.id)),
-                encoding='utf-8')
+                lambda r: r.get(str(self.id)))
             if raw_live_stat is not None:
                 live_stat = msgpack.unpackb(raw_live_stat)
                 return live_stat
@@ -1157,8 +1156,7 @@ class LegacyComputeSession(graphene.ObjectType):
     ) -> Optional[Mapping[str, Any]]:
         cstat = await redis.execute(
             redis_stat,
-            lambda r: r.get(kernel_id),
-            encoding='utf-8')
+            lambda r: r.get(kernel_id))
         if cstat is not None:
             cstat = msgpack.unpackb(cstat)
         return cstat

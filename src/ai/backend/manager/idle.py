@@ -502,7 +502,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
         # Update utilization time-series data.
         not_enough_data = False
-        raw_util_series = await redis.execute(self._redis, lambda r: r.get(util_series_key), do_encode=True)
+        raw_util_series = await redis.execute(self._redis, lambda r: r.get(util_series_key))
 
         try:
             util_series = msgpack.unpackb(raw_util_series, use_list=True)
@@ -560,7 +560,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         try:
             utilizations = {k: 0.0 for k in self.resource_thresholds.keys()}
             for kernel_id in kernel_ids:
-                raw_live_stat = await redis.execute(self._redis_stat, lambda r: r.get(str(kernel_id)), encoding='utf-8')
+                raw_live_stat = await redis.execute(self._redis_stat, lambda r: r.get(str(kernel_id)))
                 live_stat = msgpack.unpackb(raw_live_stat)
                 kernel_utils = {
                     k: float(nmget(live_stat, f"{k}.pct", 0.0))

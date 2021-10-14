@@ -1847,8 +1847,7 @@ class AgentRegistry:
                             try:
                                 raw_last_stat = await redis.execute(
                                     self.redis_stat,
-                                    lambda r: r.get(str(kernel['id'])),
-                                    encoding='utf-8')
+                                    lambda r: r.get(str(kernel['id'])))
                                 if raw_last_stat is not None:
                                     last_stat = msgpack.unpackb(raw_last_stat)
                                     last_stat['version'] = 2
