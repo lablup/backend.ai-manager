@@ -180,7 +180,11 @@ async def push_background_task_events(
     log.info('PUSH_BACKGROUND_TASK_EVENTS (ak:{}, t:{})', access_key, task_id)
 
     tracker_key = f'bgtask.{task_id}'
-    task_info = await redis.execute(root_ctx.redis_stream, lambda r: r.hgetall(tracker_key), encoding='utf-8')
+    task_info = await redis.execute(
+        root_ctx.redis_stream,
+        lambda r: r.hgetall(tracker_key),
+        encoding='utf-8'
+    )
 
     log.debug('task info: {}', task_info)
     if task_info is None:

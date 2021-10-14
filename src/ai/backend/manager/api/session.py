@@ -1240,10 +1240,7 @@ async def handle_kernel_log(
     event: DoSyncKernelLogsEvent
 ) -> None:
     root_ctx: RootContext = app['_root.context']
-    redis_conn: aioredis.Redis = aioredis.Redis.from_url(
-        str(root_ctx.shared_config.get_redis_url(db=REDIS_STREAM_DB)),
-        encoding=None,
-    )
+    redis_conn = redis.get_redis_object(root_ctx.shared_config.data['redis'], db=REDIS_STREAM_DB)
     # The log data is at most 10 MiB.
     log_buffer = BytesIO()
     log_key = f'containerlog.{event.container_id}'
@@ -1260,7 +1257,7 @@ async def handle_kernel_log(
             return
         for _ in range(list_size):
             # Read chunk-by-chunk to allow interleaving with other Redis operations.
-            chunk = await redis.execute(lambda: redis_conn.lpop(log_key))
+            chunk = await redis.execute(redis_conn, lambda r: r.lpop(log_key))
             if chunk is None:  # maybe missing
                 log_buffer.write(b"(container log unavailable)\n")
                 break
@@ -1286,8 +1283,6 @@ async def handle_kernel_log(
             )
     finally:
         log_buffer.close()
-        redis_conn.close()
-        await redis_conn.wait_closed()
 
 
 async def report_stats(root_ctx: RootContext) -> None:

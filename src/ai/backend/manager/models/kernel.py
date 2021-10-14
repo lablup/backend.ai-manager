@@ -22,6 +22,7 @@ from uuid import UUID
 import uuid
 
 from aioredis import Redis
+from aioredis.sentinel import Sentinel
 from dateutil.parser import parse as dtparse
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -1151,7 +1152,7 @@ class LegacyComputeSession(graphene.ObjectType):
     @classmethod
     async def _resolve_live_stat(
         cls,
-        redis_stat: Redis,
+        redis_stat: Redis | Sentinel,
         kernel_id: str,
     ) -> Optional[Mapping[str, Any]]:
         cstat = await redis.execute(

@@ -34,6 +34,7 @@ import aiohttp
 import aioredis
 import aiotools
 from aioredis import Redis
+from aioredis.sentinel import Sentinel
 from async_timeout import timeout as _timeout
 from callosum.rpc import Peer, RPCUserError
 from callosum.lower.zeromq import ZeroMQAddress, ZeroMQRPCTransport
@@ -251,9 +252,9 @@ class AgentRegistry:
         self,
         shared_config: SharedConfig,
         db: ExtendedAsyncSAEngine,
-        redis_stat: Redis,
-        redis_live: Redis,
-        redis_image: Redis,
+        redis_stat: Redis | Sentinel,
+        redis_live: Redis | Sentinel,
+        redis_image: Redis | Sentinel,
         event_dispatcher: EventDispatcher,
         event_producer: EventProducer,
         storage_manager:  StorageSessionManager,
@@ -2367,7 +2368,7 @@ class AgentRegistry:
 
     async def mark_agent_terminated(self, agent_id: AgentId, status: AgentStatus) -> None:
         global agent_peers
-        await self.redis_live.hdel('agent.last_seen', agent_id)
+        await redis.execute(self.redis_live, lambda r: r.hdel('agent.last_seen', agent_id))
 
         async def _pipe_builder(r: aioredis.Redis):
             pipe = r.pipeline()

@@ -84,15 +84,11 @@ class TimerNode(threading.Thread):
         self.loop = asyncio.get_running_loop()
         self.stop_event = asyncio.Event()
 
-        def redis_connector():
-            redis_url = self.shared_config.get_redis_url(db=REDIS_STREAM_DB)
-            return aioredis.ConnectionPool.from_url(str(redis_url))
-
         async def _tick(context: Any, source: AgentId, event: NoopEvent) -> None:
             self.event_records.put(time.monotonic())
 
-        event_dispatcher = await EventDispatcher.new(redis_connector)
-        event_producer = await EventProducer.new(redis_connector)
+        event_dispatcher = await EventDispatcher.new(self.shared_config.data['redis'], db=REDIS_STREAM_DB)
+        event_producer = await EventProducer.new(self.shared_config.data['redis'], db=REDIS_STREAM_DB)
         event_dispatcher.consume(NoopEvent, None, _tick)
 
         async with connect_database(self.local_config) as db:

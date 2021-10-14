@@ -14,7 +14,7 @@ import sqlalchemy as sa
 import trafaret as t
 from typing import Any, TYPE_CHECKING, Tuple, MutableMapping
 
-from ai.backend.common import validators as tx
+from ai.backend.common import redis, validators as tx
 from ai.backend.common.events import AbstractEvent, EmptyEventArgs
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import AgentId, LogSeverity
@@ -241,8 +241,7 @@ async def log_cleanup_task(app: web.Application, src: AgentId, event: DoLogClean
 @attr.s(slots=True, auto_attribs=True, init=False)
 class PrivateContext:
     log_cleanup_timer: GlobalTimer
-    log_cleanup_timer_redis: aioredis.Redis
-    log_cleanup_timer_redis_pool: aioredis.ConnectionPool
+    log_cleanup_timer_redis: aioredis.Redis | aioredis.sentinel.Sentinel
     log_cleanup_timer_evh: EventHandler[web.Application, DoLogCleanupEvent]
 
 
@@ -252,10 +251,8 @@ async def init(app: web.Application) -> None:
     app_ctx.log_cleanup_timer_evh = root_ctx.event_dispatcher.consume(
         DoLogCleanupEvent, app, log_cleanup_task,
     )
-    app_ctx.log_cleanup_timer_redis_pool = aioredis.ConnectionPool.from_url(
-        str(root_ctx.shared_config.get_redis_url(db=REDIS_LIVE_DB))
-    )
-    app_ctx.log_cleanup_timer_redis = aioredis.Redis(connection_pool=app_ctx.log_cleanup_timer_redis_pool)
+    app_ctx.log_cleanup_timer_redis = \
+        redis.get_redis_object(root_ctx.shared_config.data['redis'], db=REDIS_LIVE_DB)
     app_ctx.log_cleanup_timer = GlobalTimer(
         root_ctx.db,
         AdvisoryLock.LOCKID_LOG_CLEANUP_TIMER,
@@ -271,7 +268,6 @@ async def shutdown(app: web.Application) -> None:
     root_ctx: RootContext = app['_root.context']
     app_ctx: PrivateContext = app['logs.context']
     await app_ctx.log_cleanup_timer.leave()
-    await app_ctx.log_cleanup_timer_redis_pool.disconnect()
     root_ctx.event_dispatcher.unconsume(app_ctx.log_cleanup_timer_evh)
 
 
