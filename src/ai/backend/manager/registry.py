@@ -1075,12 +1075,17 @@ class AgentRegistry:
                             raise BackendError(
                                 f'There is a vfolder whose name conflicts with '
                                 f'dotfile {dotfile["path"]}')
+            mapped_agent = None
+            if not agent_list:
+                pass
+            else:
+                mapped_agent = agent_list[idx]
             try:
                 async def _enqueue() -> None:
                     nonlocal ids
                     async with self.db.begin() as conn:
                         query = kernels.insert().values({
-                            'agent': agent_list[idx],
+                            'agent': mapped_agent,
                             'id': kernel_id,
                             'status': KernelStatus.PENDING,
                             'session_creation_id': session_creation_id,
@@ -1123,7 +1128,7 @@ class AgentRegistry:
             except DBAPIError as e:
                 log.exception('ForeignKeyViolationError: violates foreign key constraint')
                 error_msg = re.sub(r"\\\\\D{1}|\\\'\)", ' ',
-                                   repr(" ".join(re.findall('(?<=\>: ).+', repr(e.orig)))))
+                                   repr(" ".join(re.findall('(?<=>: ).+', repr(e.orig)))))
                 raise InvalidAPIParameters("No such agent", error_msg)
         await self.hook_plugin_ctx.notify(
             'POST_ENQUEUE_SESSION',
