@@ -509,7 +509,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             startup_command=params['startup_command'],
             session_tag=params['tag'],
             starts_at=starts_at,
-            agent_list=params['config']['agent_list']
+            agent_list=params['config']['agent_list'],
         ))
         resp['sessionId'] = str(kernel_id)  # changed since API v5
         resp['sessionName'] = str(params['session_name'])
@@ -565,10 +565,6 @@ async def _create(request: web.Request, params: Any) -> web.Response:
         raise
     except UnknownImageReference:
         raise InvalidAPIParameters(f"Unknown image reference: {params['image']}")
-    except sa.exc.IntegrityError as e:
-        error_log = str(e.orig)
-        error = error_log.split('>: ')[1]
-        raise InvalidAPIParameters("no such agent", error)
     except Exception:
         await root_ctx.error_monitor.capture_exception(context={'user': owner_uuid})
         log.exception('GET_OR_CREATE: unexpected error!')
@@ -797,6 +793,7 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
         if not params['config']['agent_list']:
             pass
         else:
+            log.info('TARGET_AGENT_LIST : {0}', params['config']['agent_list'])
             if params['cluster_size'] != len(params['config']['agent_list']):
                 raise InvalidAPIParameters('cluster_size and length of agent_list are not match')
 

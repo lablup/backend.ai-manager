@@ -10,6 +10,7 @@ import itertools
 import logging
 import secrets
 import time
+import re
 from typing import (
     Any,
     AsyncIterator,
@@ -780,7 +781,7 @@ class AgentRegistry:
         session_tag: str = None,
         internal_data: dict = None,
         starts_at: datetime = None,
-        agent_list: List[str] = None,
+        agent_list: Sequence[str] = None,
     ) -> SessionId:
 
         mounts = kernel_enqueue_configs[0]['creation_config'].get('mounts') or []
@@ -1074,20 +1075,12 @@ class AgentRegistry:
                             raise BackendError(
                                 f'There is a vfolder whose name conflicts with '
                                 f'dotfile {dotfile["path"]}')
-            # map agent with container
-            mapped_agent = None
-            if not agent_list:
-                pass
-            else:
-                mapped_agent = ''
-                mapped_agent += (f"{kernel['cluster_hostname']} : {agent_list[idx]}, ")
-                mapped_agent = mapped_agent[:-2]
             try:
                 async def _enqueue() -> None:
                     nonlocal ids
                     async with self.db.begin() as conn:
                         query = kernels.insert().values({
-                            'agent': mapped_agent,
+                            'agent': agent_list[idx],
                             'id': kernel_id,
                             'status': KernelStatus.PENDING,
                             'session_creation_id': session_creation_id,
@@ -1127,9 +1120,11 @@ class AgentRegistry:
                         ids.append(kernel_id)
 
                 await execute_with_retry(_enqueue)
-            except DBAPIError:
+            except DBAPIError as e:
                 log.exception('ForeignKeyViolationError: violates foreign key constraint')
-                raise
+                error_msg = re.sub(r"\\\\\D{1}|\\\'\)", ' ',
+                                   repr(" ".join(re.findall('(?<=\>: ).+', repr(e.orig)))))
+                raise InvalidAPIParameters("No such agent", error_msg)
         await self.hook_plugin_ctx.notify(
             'POST_ENQUEUE_SESSION',
             (session_id, session_name, access_key),

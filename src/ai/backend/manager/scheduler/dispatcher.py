@@ -15,7 +15,7 @@ from typing import (
     Tuple,
     Union,
     TYPE_CHECKING,
-    Optional
+    Optional,
 )
 
 import aioredis
