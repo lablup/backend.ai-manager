@@ -246,6 +246,6 @@ async def query_accessible_session_templates(
                 'user_email': None,
                 'group_name': row.groups_name,
                 'type': row.session_templates_type,
-                'template': row.template,
+                'template': row.session_templates_template,
             })
     return entries

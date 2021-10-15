@@ -157,9 +157,9 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 'user': user_uuid.hex,
             }
             name = st['name'] if st['name'] else template_data['metadata']['name']
-            if st['group_id'] is not None:
+            if 'group_id' in st:
                 group_id = st['group_id']
-            if st['user_uuid'] is not None:
+            if 'user_uuid' in st:
                 user_uuid = st['user_uuid']
             query = session_templates.insert().values({
                 'id': template_id,
