@@ -169,15 +169,15 @@ class SchedulerDispatcher(aobject):
         self.schedule_timer_redis = await aioredis.create_redis(str(redis_url))
         self.prepare_timer_redis = await aioredis.create_redis(str(redis_url))
         self.schedule_timer = GlobalTimer(
-            self.schedule_timer_redis,
-            "scheduler_tick",
+            self.db,
+            AdvisoryLock.LOCKID_SCHEDULE_TIMER,
             self.event_producer,
             lambda: DoScheduleEvent(),
             interval=10.0,
         )
         self.prepare_timer = GlobalTimer(
-            self.prepare_timer_redis,
-            "prepare_tick",
+            self.db,
+            AdvisoryLock.LOCKID_PREPARE_TIMER,
             self.event_producer,
             lambda: DoPrepareEvent(),
             interval=10.0,
@@ -219,10 +219,9 @@ class SchedulerDispatcher(aobject):
             known_slot_types=known_slot_types,
         )
 
-        # We use short transaction blocks to prevent deadlock timeouts under heavy loads
-        # because this scheduling handler will be executed by only one process.
-        # It is executed under a globally exclusive context using aioredlock.
         try:
+            # The schedule() method should be executed with a global lock
+            # as its individual steps are composed of many short-lived transactions.
             async with self.db.advisory_lock(AdvisoryLock.LOCKID_SCHEDULE):
                 async with self.db.begin_readonly() as conn:
                     query = (
@@ -791,8 +790,7 @@ async def _list_pending_sessions(
         .where(
             (kernels.c.status == KernelStatus.PENDING) &
             (
-                (kernels.c.scaling_group == sgroup_name) |
-                (kernels.c.scaling_group.is_(None))
+                (kernels.c.scaling_group == sgroup_name)
             )
         )
     )
@@ -802,13 +800,13 @@ async def _list_pending_sessions(
 
 async def _list_existing_sessions(
     db_conn: SAConnection,
-    sgroup: str,
+    sgroup_name: str,
 ) -> List[ExistingSession]:
     query = (
         ExistingSession.base_query()
         .where(
             (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)) &
-            (kernels.c.scaling_group == sgroup)
+            (kernels.c.scaling_group == sgroup_name)
         )
     )
     rows = (await db_conn.execute(query)).fetchall()

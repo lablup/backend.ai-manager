@@ -58,7 +58,7 @@ async def check_concurrency(
     sess_ctx: PendingSession,
 ) -> PredicateResult:
 
-    async def _check():
+    async def _check() -> PredicateResult:
         async with db_conn.begin_nested():
             select_query = (
                 sa.select([keypair_resource_policies])
@@ -93,9 +93,9 @@ async def check_concurrency(
                 .where(keypairs.c.access_key == sess_ctx.access_key)
             )
             await db_conn.execute(update_query)
+            return PredicateResult(True)
 
-    await execute_with_retry(_check)
-    return PredicateResult(True)
+    return await execute_with_retry(_check)
 
 
 async def check_dependencies(

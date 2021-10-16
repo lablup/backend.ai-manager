@@ -1,3 +1,0 @@
-Fix `owner_access_key` related issues in creating and terminating the session
-- Remove automatic removal of owner_access_key in check_api_params() since all API handlers supporting it has explicit trafaret definition of it
-- Add `owner_access_key` in checking API parameter during session termination

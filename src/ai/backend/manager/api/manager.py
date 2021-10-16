@@ -5,6 +5,7 @@ import enum
 import functools
 import json
 import logging
+import socket
 import sqlalchemy as sa
 import trafaret as t
 from typing import (
@@ -107,7 +108,7 @@ async def fetch_manager_status(request: web.Request) -> web.Response:
     log.info('MANAGER.FETCH_MANAGER_STATUS ()')
     try:
         status = await root_ctx.shared_config.get_manager_status()
-        etcd_info = await root_ctx.shared_config.get_manager_nodes_info()
+        # etcd_info = await root_ctx.shared_config.get_manager_nodes_info()
         configs = root_ctx.local_config['manager']
 
         async with root_ctx.db.begin() as conn:
@@ -121,13 +122,7 @@ async def fetch_manager_status(request: web.Request) -> web.Response:
             )
             active_sessions_num = await conn.scalar(query)
 
-            # TODO: update logic to return information for multiple managers (HA)
-            if '' in etcd_info:
-                _id = etcd_info['']
-            elif etcd_info:
-                _id = list(etcd_info.keys())[0]
-            else:
-                _id = ''
+            _id = configs['id'] if configs.get('id') else socket.gethostname()
             nodes = [
                 {
                     'id': _id,

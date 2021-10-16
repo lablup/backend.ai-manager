@@ -4,7 +4,6 @@ import asyncio
 from datetime import datetime
 import functools
 import importlib
-import json
 import logging
 import os
 import pwd, grp
@@ -22,7 +21,6 @@ from typing import (
     Sequence,
     cast,
 )
-from urllib.parse import quote_plus as urlquote
 
 from aiohttp import web
 import aiohttp_cors
@@ -31,13 +29,12 @@ import aiotools
 import click
 from pathlib import Path
 from setproctitle import setproctitle
-import sqlalchemy as sa
+import aiomonitor
 
 from ai.backend.common import redis
 from ai.backend.common.cli import LazyGroup
 from ai.backend.common.events import EventDispatcher, EventProducer
 from ai.backend.common.utils import env_info, current_loop
-from ai.backend.common.json import ExtendedJSONEncoder
 from ai.backend.common.logging import Logger, BraceStyleAdapter
 from ai.backend.common.plugin.hook import HookPluginContext, ALL_COMPLETED, PASSED
 from ai.backend.common.plugin.monitor import (
@@ -72,9 +69,8 @@ from .config import (
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB, REDIS_STREAM_DB
 from .exceptions import InvalidArgument
 from .idle import create_idle_checkers
-from .models.base import pgsql_connect_opts
 from .models.storage import StorageSessionManager
-from .models.utils import create_async_engine
+from .models.utils import connect_database
 from .plugin.webapp import WebappPluginContext
 from .registry import AgentRegistry
 from .scheduler.dispatcher import SchedulerDispatcher
@@ -106,7 +102,10 @@ VALID_VERSIONS: Final = frozenset([
     'v6.20200815',
 
     # added standard-compliant /admin/gql endpoint
-    # deprecated /admin/graphql endpoint
+    # deprecated /admin/graphql endpoint (still present for backward compatibility)
+    # added "groups_by_name" GQL query
+    # added "filter" and "order" arg to all paginated GQL queries with their own expression mini-langs
+    # removed "order_key" and "order_asc" arguments from all paginated GQL queries (never used!)
     'v6.20210815',
 ])
 LATEST_REV_DATES: Final = {
@@ -323,31 +322,9 @@ async def redis_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 
 @aiotools.actxmgr
 async def database_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
-    username = root_ctx.local_config['db']['user']
-    password = root_ctx.local_config['db']['password']
-    address = root_ctx.local_config['db']['addr']
-    dbname = root_ctx.local_config['db']['name']
-    url = f"postgresql+asyncpg://{urlquote(username)}:{urlquote(password)}@{address}/{urlquote(dbname)}"
-
-    version_check_db = create_async_engine(url)
-    async with version_check_db.begin() as conn:
-        result = await conn.execute(sa.text("show server_version"))
-        major, minor, *_ = map(int, result.scalar().split("."))
-        if (major, minor) < (11, 0):
-            pgsql_connect_opts['server_settings'].pop("jit")
-    await version_check_db.dispose()
-
-    root_ctx.db = create_async_engine(
-        url,
-        connect_args=pgsql_connect_opts,
-        pool_size=8,
-        max_overflow=64,
-        json_serializer=functools.partial(json.dumps, cls=ExtendedJSONEncoder),
-        isolation_level="SERIALIZABLE",
-        future=True,
-    )
-    yield
-    await root_ctx.db.dispose()
+    async with connect_database(root_ctx.local_config) as db:
+        root_ctx.db = db
+        yield
 
 
 @aiotools.actxmgr
@@ -633,6 +610,17 @@ async def server_main(loop: asyncio.AbstractEventLoop,
                 str(root_ctx.local_config['manager']['ssl-cert']),
                 str(root_ctx.local_config['manager']['ssl-privkey']),
             )
+
+        # Start aiomonitor.
+        # Port is set by config (default=50001).
+        m = aiomonitor.Monitor(
+            loop,
+            port=root_ctx.local_config['manager']['aiomonitor-port'],
+            console_enabled=False
+        )
+        m.prompt = "monitor (manager) >>> "
+        m.start()
+
         runner = web.AppRunner(root_app)
         await runner.setup()
         service_addr = root_ctx.local_config['manager']['service-addr']
@@ -661,6 +649,7 @@ async def server_main(loop: asyncio.AbstractEventLoop,
         try:
             yield
         finally:
+            m.close()
             log.info('shutting down...')
             await runner.cleanup()
 
@@ -706,7 +695,6 @@ def main(ctx: click.Context, config_path: Path, debug: bool) -> None:
                 log.info('runtime: {0}', env_info())
                 log_config = logging.getLogger('ai.backend.manager.config')
                 log_config.debug('debug mode enabled.')
-
                 if cfg['manager']['event-loop'] == 'uvloop':
                     import uvloop
                     uvloop.install()

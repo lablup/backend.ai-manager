@@ -21,6 +21,7 @@ from typing import (
     Set,
     Type,
     TYPE_CHECKING,
+    Union,
 )
 
 import aioredis
@@ -45,11 +46,11 @@ from ai.backend.common.events import (
     SessionStartedEvent,
 )
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.types import AccessKey, aobject
+from ai.backend.common.types import AccessKey, aobject, SessionTypes
 from ai.backend.common.utils import nmget
 from ai.backend.manager.models.utils import ExtendedAsyncSAEngine
 
-from .defs import DEFAULT_ROLE, REDIS_LIVE_DB, REDIS_STAT_DB
+from .defs import DEFAULT_ROLE, REDIS_LIVE_DB, REDIS_STAT_DB, AdvisoryLock
 from .distributed import GlobalTimer
 from .models import kernels, keypair_resource_policies, keypairs
 from .models.kernel import LIVE_STATUS
@@ -106,8 +107,8 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
         )
         await self.populate_config(raw_config or {})
         self.timer = GlobalTimer(
-            self._redis,
-            "idle_check",
+            self._db,
+            AdvisoryLock.LOCKID_IDLE_CHECK_TIMER,
             self._event_producer,
             lambda: DoIdleCheckEvent(),
             self.check_interval,
@@ -280,6 +281,8 @@ class TimeoutIdleChecker(BaseIdleChecker):
 
     async def check_session(self, session: Row, dbconn: SAConnection) -> bool:
         session_id = session["id"]
+        if session["session_type"] == SessionTypes.BATCH:
+            return True
         active_streams = await self._redis.zcount(
             f"session.{session_id}.active_app_connections"
         )
@@ -353,7 +356,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         }
     ).allow_extra("*")
 
-    resource_thresholds: MutableMapping[str, Any]
+    resource_thresholds: MutableMapping[str, Union[int, float, Decimal]]
     thresholds_check_operator: str
     time_window: timedelta
     initial_grace_period: timedelta
@@ -528,7 +531,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         sufficiently_utilized = {
             k: (float(avg_utils[k]) >= float(threshold))
             for k, threshold in self.resource_thresholds.items()
-            if (threshold is not None) and (threshold not in unavailable_resources)
+            if (threshold is not None) and (k not in unavailable_resources)
         }
 
         if len(sufficiently_utilized) < 1:
@@ -537,6 +540,9 @@ class UtilizationIdleChecker(BaseIdleChecker):
             check_result = all(sufficiently_utilized.values())
         else:  # "and" operation is the default
             check_result = any(sufficiently_utilized.values())
+        if not check_result:
+            log.info("utilization timeout: {} ({}, {})",
+                     session_id, avg_utils, self.thresholds_check_operator)
         return check_result
 
     async def get_current_utilization(

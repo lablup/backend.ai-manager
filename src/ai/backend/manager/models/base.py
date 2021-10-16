@@ -82,7 +82,12 @@ convention = {
 metadata = sa.MetaData(naming_convention=convention)
 
 pgsql_connect_opts = {
-    'server_settings': {'jit': 'off'}
+    'server_settings': {
+        'jit': 'off',
+        # 'deadlock_timeout': '10000',  # FIXME: AWS RDS forbids settings this via connection arguments
+        'lock_timeout': '60000',  # 60 secs
+        'idle_in_transaction_session_timeout': '60000',  # 60 secs
+    },
 }
 
 
