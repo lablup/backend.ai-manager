@@ -273,6 +273,11 @@ async def create(request: web.Request, params: Any) -> web.Response:
             if result >= resource_policy['max_vfolder_count']:
                 raise InvalidAPIParameters('You cannot create more vfolders.')
 
+        # Limit vfolder size quota if it is larger than max_vfolder_size of the resource policy.
+        max_vfolder_size = resource_policy.get('max_vfolder_size', 0)
+        if max_vfolder_size > 0 and (params['quota'] is None or params['quota'] > max_vfolder_size):
+            params['quota'] = max_vfolder_size
+
         # Prevent creation of vfolder with duplicated name.
         extra_vf_conds = [vfolders.c.name == params['name']]
         if not unmanaged_path:
