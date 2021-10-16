@@ -1,1 +1,1 @@
-If the size quota is set in the keypair resource policy (`max_vfolder_size`), the requested disk quota cannot exceed that value when creating a vfolder.
+Limit the maximum configurable value of per-vfolder quota when creating a vfolder to the size quota specified in the keypair resource policy (`max_vfolder_size`)
