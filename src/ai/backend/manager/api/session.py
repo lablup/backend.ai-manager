@@ -1133,7 +1133,7 @@ async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.
         opts['envs'] = json.loads(params['envs'])
 
     result = await asyncio.shield(
-        root_ctx.registry.start_service(session_name, access_key, service, opts)
+        root_ctx.registry.start_service(session_name, access_key, service, opts),
     )
     if result['status'] == 'failed':
         raise InternalServerError(

@@ -70,9 +70,7 @@ async def get_wsproxy_version(request: web.Request) -> web.Response:
         if wsproxy_version == '':
             raise GenericNotFound
 
-        return web.json_response({
-            'version': wsproxy_version
-        })
+        return web.json_response({'version': wsproxy_version})
 
     async with root_ctx.db.begin_readonly() as conn:
         sgroups = await query_allowed_sgroups(
@@ -94,9 +92,7 @@ async def get_wsproxy_version(request: web.Request) -> web.Response:
     await redis_live.set(f'scaling_group.{group_id_or_name}.wsproxy_version',
                          wsproxy_version,
                          expire=60 * 60)
-    return web.json_response({
-        'version': wsproxy_version
-    })
+    return web.json_response({'version': wsproxy_version})
 
 
 async def init(app: web.Application) -> None:
