@@ -291,7 +291,7 @@ DEFAULT_SESSION_ORDERING = [
         kernels.c.created_at,
         kernels.c.terminated_at,
         kernels.c.status_changed,
-    ))
+    )),
 ]
 
 
@@ -345,14 +345,14 @@ async def match_session_ids(
         .where(
             (kernels.c.session_id.in_(
                 sa.select(
-                    [kernels.c.session_id]
+                    [kernels.c.session_id],
                 )
                 .select_from(kernels)
                 .where(cond_id)
                 .group_by(kernels.c.session_id)
-                .limit(max_matches).offset(0)
+                .limit(max_matches).offset(0),
             )) &
-            (kernels.c.cluster_role == DEFAULT_ROLE)
+            (kernels.c.cluster_role == DEFAULT_ROLE),
         )
         .order_by(sa.desc(kernels.c.created_at))
     )
@@ -364,14 +364,14 @@ async def match_session_ids(
         .where(
             (kernels.c.session_id.in_(
                 sa.select(
-                    [kernels.c.session_id]
+                    [kernels.c.session_id],
                 )
                 .select_from(kernels)
                 .where(cond_name)
                 .group_by(kernels.c.session_id)
-                .limit(max_matches).offset(0)
+                .limit(max_matches).offset(0),
             )) &
-            (kernels.c.cluster_role == DEFAULT_ROLE)
+            (kernels.c.cluster_role == DEFAULT_ROLE),
         )
         .order_by(sa.desc(kernels.c.created_at))
     )
@@ -383,14 +383,14 @@ async def match_session_ids(
         .where(
             (kernels.c.session_id.in_(
                 sa.select(
-                    [kernels.c.session_id]
+                    [kernels.c.session_id],
                 )
                 .select_from(kernels)
                 .where(cond_session_id)
                 .group_by(kernels.c.session_id)
-                .limit(max_matches).offset(0)
+                .limit(max_matches).offset(0),
             )) &
-            (kernels.c.cluster_role == DEFAULT_ROLE)
+            (kernels.c.cluster_role == DEFAULT_ROLE),
         )
         .order_by(sa.desc(kernels.c.created_at))
     )
@@ -434,7 +434,7 @@ async def get_main_kernels(
         .select_from(kernels)
         .where(
             (kernels.c.session_id.in_(session_ids)) &
-            (kernels.c.cluster_role == DEFAULT_ROLE)
+            (kernels.c.cluster_role == DEFAULT_ROLE),
         )
     )
     result = await db_connection.execute(query)
@@ -464,7 +464,7 @@ async def get_all_kernels(
             sa.select([sa.text('*')])
             .select_from(kernels)
             .where(
-                (kernels.c.session_id == session_id)
+                (kernels.c.session_id == session_id),
             )
         )
         result = await db_connection.execute(query)
@@ -710,7 +710,7 @@ class ComputeContainer(graphene.ObjectType):
             sa.select([kernels])
             .select_from(j)
             .where(
-                (kernels.c.id.in_(container_ids))
+                (kernels.c.id.in_(container_ids)),
             ))
         if domain_name is not None:
             query = query.where(kernels.c.domain_name == domain_name)
@@ -1019,7 +1019,7 @@ class ComputeSession(graphene.ObjectType):
             .select_from(j)
             .where(
                 (kernels.c.cluster_role == DEFAULT_ROLE) &
-                (session_dependencies.c.session_id.in_(session_ids))
+                (session_dependencies.c.session_id.in_(session_ids)),
             )
         )
         async with ctx.db.begin_readonly() as conn:
@@ -1051,7 +1051,7 @@ class ComputeSession(graphene.ObjectType):
             .select_from(j)
             .where(
                 (kernels.c.cluster_role == DEFAULT_ROLE) &
-                (kernels.c.id.in_(session_ids))
+                (kernels.c.id.in_(session_ids)),
             ))
         if domain_name is not None:
             query = query.where(kernels.c.domain_name == domain_name)
@@ -1345,7 +1345,7 @@ class LegacyComputeSession(graphene.ObjectType):
         access_key: AccessKey = None,
         status: str = None,
         order_key: str = None,
-        order_asc: bool = True
+        order_asc: bool = True,
     ) -> Sequence[LegacyComputeSession]:
         if isinstance(status, str):
             status_list = [KernelStatus[s] for s in status.split(',')]
@@ -1397,14 +1397,14 @@ class LegacyComputeSession(graphene.ObjectType):
             .select_from(j)
             .where(
                 (kernels.c.access_key.in_(access_keys)) &
-                (kernels.c.cluster_role == DEFAULT_ROLE)
+                (kernels.c.cluster_role == DEFAULT_ROLE),
             )
             .order_by(
                 sa.desc(sa.func.greatest(
                     kernels.c.created_at,
                     kernels.c.terminated_at,
                     kernels.c.status_changed,
-                ))
+                )),
             )
             .limit(100))
         if domain_name is not None:
@@ -1472,7 +1472,7 @@ async def recalc_concurrency_used(db_conn: SAConnection, access_key: AccessKey) 
                     .select_from(kernels)
                     .where(
                         (kernels.c.access_key == access_key) &
-                        (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES))
+                        (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
                     )
                     .scalar_subquery()
                 ),

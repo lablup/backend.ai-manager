@@ -118,7 +118,7 @@ from .exceptions import (
 from .auth import auth_required
 from .types import CORSOptions, WebMiddleware
 from .utils import (
-    catch_unexpected, check_api_params, get_access_key_scopes, undefined
+    catch_unexpected, check_api_params, get_access_key_scopes, undefined,
 )
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
 if TYPE_CHECKING:
@@ -273,8 +273,10 @@ async def _query_userinfo(
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
     scopes_param = {
-        'owner_access_key': (None if params['owner_access_key'] is undefined
-                             else params['owner_access_key'])
+        'owner_access_key': (
+            None if params['owner_access_key'] is undefined
+            else params['owner_access_key']
+        ),
     }
     requester_access_key, owner_access_key = await get_access_key_scopes(request, scopes_param)
     requester_uuid = request['user']['uuid']
@@ -316,7 +318,7 @@ async def _query_userinfo(
         .select_from(domains)
         .where(
             (domains.c.name == owner_domain) &
-            (domains.c.is_active)
+            (domains.c.is_active),
         )
     )
     qresult = await conn.execute(query)
@@ -332,7 +334,7 @@ async def _query_userinfo(
             .where(
                 (groups.c.domain_name == params['domain']) &
                 (groups.c.name == params['group']) &
-                (groups.c.is_active)
+                (groups.c.is_active),
             ))
         qresult = await conn.execute(query)
         group_id = qresult.scalar()
@@ -346,7 +348,7 @@ async def _query_userinfo(
             .where(
                 (groups.c.domain_name == owner_domain) &
                 (groups.c.name == params['group']) &
-                (groups.c.is_active)
+                (groups.c.is_active),
             ))
         qresult = await conn.execute(query)
         group_id = qresult.scalar()
@@ -361,7 +363,7 @@ async def _query_userinfo(
                 (agus.c.user_id == owner_uuid) &
                 (groups.c.domain_name == owner_domain) &
                 (groups.c.name == params['group']) &
-                (groups.c.is_active)
+                (groups.c.is_active),
             ))
         qresult = await conn.execute(query)
         group_id = qresult.scalar()
@@ -375,8 +377,10 @@ async def _create(request: web.Request, params: Any) -> web.Response:
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
     scopes_param = {
-        'owner_access_key': (None if params['owner_access_key'] is undefined
-                             else params['owner_access_key'])
+        'owner_access_key': (
+            None if params['owner_access_key'] is undefined
+            else params['owner_access_key']
+        ),
     }
     requester_access_key, owner_access_key = await get_access_key_scopes(request, scopes_param)
     log.info('GET_OR_CREATE (ak:{0}/{1}, img:{2}, s:{3})',
@@ -603,7 +607,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
         tx.AliasedKey(['bootstrap_script', 'bootstrapScript'], default=undefined):
             UndefChecker | t.Null | t.String,
         t.Key('owner_access_key', default=undefined): UndefChecker | t.Null | t.String,
-    }
+    },
 ), loads=_json_loads)
 async def create_from_template(request: web.Request, params: Any) -> web.Response:
     # TODO: we need to refactor session_template model to load the template configs
@@ -813,8 +817,10 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
     scopes_param = {
-        'owner_access_key': (None if params['owner_access_key'] is undefined
-                             else params['owner_access_key'])
+        'owner_access_key': (
+            None if params['owner_access_key'] is undefined
+            else params['owner_access_key']
+        ),
     }
     requester_access_key, owner_access_key = await get_access_key_scopes(request, scopes_param)
     log.info('CREAT_CLUSTER (ak:{0}/{1}, s:{3})',
@@ -841,7 +847,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
             .select_from(session_templates)
             .where(
                 (session_templates.c.id == params['template_id']) &
-                session_templates.c.is_active
+                session_templates.c.is_active,
             )
         )
         template = await conn.scalar(query)
@@ -871,7 +877,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
                 .select_from(session_templates)
                 .where(
                     (session_templates.c.id == node['session_template']) &
-                    session_templates.c.is_active
+                    session_templates.c.is_active,
                 )
             )
             session_template = await conn.scalar(query)
@@ -884,7 +890,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
                 'creation_config': {
                     'mount': mounts,
                     'mount_map': mount_map,
-                    'environ': environ
+                    'environ': environ,
                 },
             }
 
@@ -954,7 +960,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
             for i in range(node['replicas']):
                 kernel_config['cluster_idx'] = i + 1
                 kernel_configs.append(
-                    check_typed_dict(kernel_config, KernelEnqueueingConfig)  # type: ignore
+                    check_typed_dict(kernel_config, KernelEnqueueingConfig),  # type: ignore
                 )
 
     session_creation_id = secrets.token_urlsafe(16)
@@ -1237,7 +1243,7 @@ async def check_agent_lost(root_ctx: RootContext, interval: float) -> None:
 async def handle_kernel_log(
     app: web.Application,
     source: AgentId,
-    event: DoSyncKernelLogsEvent
+    event: DoSyncKernelLogsEvent,
 ) -> None:
     root_ctx: RootContext = app['_root.context']
     redis_conn: aioredis.Redis = await redis.connect_with_retries(
@@ -1249,7 +1255,7 @@ async def handle_kernel_log(
     log_key = f'containerlog.{event.container_id}'
     try:
         list_size = await redis.execute_with_retries(
-            lambda: redis_conn.llen(log_key)
+            lambda: redis_conn.llen(log_key),
         )
         if list_size is None:
             # The log data is expired due to a very slow event delivery.
@@ -1280,7 +1286,7 @@ async def handle_kernel_log(
         finally:
             # Clear the log data from Redis when done.
             await redis.execute_with_retries(
-                lambda: redis_conn.delete(log_key)
+                lambda: redis_conn.delete(log_key),
             )
     finally:
         log_buffer.close()
@@ -1592,7 +1598,7 @@ async def complete(request: web.Request) -> web.Response:
         'result': {
             'status': 'finished',
             'completions': [],
-        }
+        },
     }
     root_ctx: RootContext = request.app['_root.context']
     session_name = request.match_info['session_name']
@@ -1708,7 +1714,7 @@ async def download_files(request: web.Request, params: Any) -> web.Response:
             *map(
                 functools.partial(root_ctx.registry.download_file, session_name, owner_access_key),
                 files,
-            )
+            ),
         )
         log.debug('file(s) inside container retrieved')
     except asyncio.CancelledError:
@@ -1877,7 +1883,7 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
                 'relpath': str(
                     PurePosixPath('task')
                     / kernel_id_str[:2] / kernel_id_str[2:4]
-                    / f'{kernel_id_str[4:]}.log'
+                    / f'{kernel_id_str[4:]}.log',
                 ),
             },
             raise_for_status=True,

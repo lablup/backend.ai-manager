@@ -97,7 +97,7 @@ class ExtendedAsyncSAEngine(SAEngine):
                 #  - asyncpg does not support parameter interpolation with raw SQL statements.
                 while not lock_acquired:
                     result = await lock_conn.exec_driver_sql(
-                        f"SELECT pg_try_advisory_lock({lock_id:d});"
+                        f"SELECT pg_try_advisory_lock({lock_id:d});",
                     )
                     lock_acquired = result.scalar()
                     if not lock_acquired:
@@ -114,7 +114,7 @@ class ExtendedAsyncSAEngine(SAEngine):
             finally:
                 if lock_acquired:
                     await lock_conn.exec_driver_sql(
-                        f"SELECT pg_advisory_unlock({lock_id:d})"
+                        f"SELECT pg_advisory_unlock({lock_id:d})",
                     )
 
 
@@ -217,8 +217,8 @@ def sql_json_merge(
                 .concat(sa.func.cast(obj, psql.JSONB))
                 if _depth == len(key) - 1
                 else sql_json_merge(col, key, obj=obj, _depth=_depth + 1)
-            )
-        )
+            ),
+        ),
     )
     return expr
 
@@ -248,8 +248,8 @@ def sql_json_increment(
                 sa.func.coalesce(col[key].as_integer(), 0) + 1
                 if _depth == len(key) - 1
                 else sql_json_increment(col, key, parent_updates=parent_updates, _depth=_depth + 1)
-            )
-        )
+            ),
+        ),
     )
     if _depth == len(key) - 1 and parent_updates is not None:
         expr = expr.concat(sa.func.cast(parent_updates, psql.JSONB))

@@ -558,7 +558,7 @@ def build_root_app(
     app.on_shutdown.append(_call_cleanup_context_shutdown_handlers)
     for cleanup_ctx in cleanup_contexts:
         app.cleanup_ctx.append(
-            functools.partial(_cleanup_context_wrapper, cleanup_ctx)
+            functools.partial(_cleanup_context_wrapper, cleanup_ctx),
         )
     aiojobs.aiohttp.setup(app, **app['scheduler_opts'])
     cors = aiohttp_cors.setup(app, defaults=root_ctx.cors_options)
@@ -616,7 +616,7 @@ async def server_main(loop: asyncio.AbstractEventLoop,
         m = aiomonitor.Monitor(
             loop,
             port=root_ctx.local_config['manager']['aiomonitor-port'],
-            console_enabled=False
+            console_enabled=False,
         )
         m.prompt = "monitor (manager) >>> "
         m.start()

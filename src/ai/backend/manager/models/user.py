@@ -581,7 +581,7 @@ class CreateUser(graphene.Mutation):
             return created_user
 
         return await simple_db_mutate_returning_item(
-            cls, graph_ctx, user_insert_query, item_cls=User, post_func=_post_func
+            cls, graph_ctx, user_insert_query, item_cls=User, post_func=_post_func,
         )
 
 
@@ -633,7 +633,7 @@ class ModifyUser(graphene.Mutation):
                     users.c.status,
                 ])
                 .select_from(users)
-                .where(users.c.email == email)
+                .where(users.c.email == email),
             )
             row = result.first()
             prev_domain_name = row.domain_name
@@ -663,7 +663,7 @@ class ModifyUser(graphene.Mutation):
                     .select_from(keypairs)
                     .where(keypairs.c.user == updated_user.uuid)
                     .order_by(sa.desc(keypairs.c.is_admin))
-                    .order_by(sa.desc(keypairs.c.is_active))
+                    .order_by(sa.desc(keypairs.c.is_active)),
                 )
                 if data['role'] in [UserRole.SUPERADMIN, UserRole.ADMIN]:
                     # User's becomes admin. Set the keypair as active admin.
@@ -677,7 +677,7 @@ class ModifyUser(graphene.Mutation):
                         await conn.execute(
                             sa.update(keypairs)
                             .values(kp_data)
-                            .where(keypairs.c.user == updated_user.uuid)
+                            .where(keypairs.c.user == updated_user.uuid),
                         )
                 else:
                     # User becomes non-admin. Make the keypair non-admin as well.
@@ -716,7 +716,7 @@ class ModifyUser(graphene.Mutation):
                 from .group import association_groups_users, groups
                 await conn.execute(
                     sa.delete(association_groups_users)
-                    .where(association_groups_users.c.user_id == updated_user.uuid)
+                    .where(association_groups_users.c.user_id == updated_user.uuid),
                 )
 
             # Update user's group if group_ids parameter is provided.
@@ -725,14 +725,14 @@ class ModifyUser(graphene.Mutation):
                 # Clear previous groups associated with the user.
                 await conn.execute(
                     sa.delete(association_groups_users)
-                    .where(association_groups_users.c.user_id == updated_user.uuid)
+                    .where(association_groups_users.c.user_id == updated_user.uuid),
                 )
                 # Add user to new groups.
                 result = await conn.execute(
                     sa.select([groups.c.id])
                     .select_from(groups)
                     .where(groups.c.domain_name == updated_user.domain_name)
-                    .where(groups.c.id.in_(props.group_ids))
+                    .where(groups.c.id.in_(props.group_ids)),
                 )
                 grps = result.fetchall()
                 if grps:
@@ -741,7 +741,7 @@ class ModifyUser(graphene.Mutation):
                         for grp in grps
                     ]
                     await conn.execute(
-                        sa.insert(association_groups_users).values(values)
+                        sa.insert(association_groups_users).values(values),
                     )
 
             return updated_user
@@ -782,7 +782,7 @@ class DeleteUser(graphene.Mutation):
             await conn.execute(
                 sa.update(keypairs)
                 .values(is_active=False)
-                .where(keypairs.c.user_id == email)
+                .where(keypairs.c.user_id == email),
             )
 
         update_query = (
@@ -832,14 +832,14 @@ class PurgeUser(graphene.Mutation):
             user_uuid = await conn.scalar(
                 sa.select([users.c.uuid])
                 .select_from(users)
-                .where(users.c.email == email)
+                .where(users.c.email == email),
             )
             log.info("Purging all records of the user {0}...", email)
 
             if await cls.user_vfolder_mounted_to_active_kernels(conn, user_uuid):
                 raise RuntimeError(
                     "Some of user's virtual folders are mounted to active kernels. "
-                    "Terminate those kernels first."
+                    "Terminate those kernels first.",
                 )
             if await cls.user_has_active_kernels(conn, user_uuid):
                 raise RuntimeError("User has some active kernels. Terminate them first.")
@@ -895,7 +895,7 @@ class PurgeUser(graphene.Mutation):
         # append random string to the name of the migrating folder.
         j = vfolder_permissions.join(
             vfolders,
-            vfolder_permissions.c.vfolder == vfolders.c.id
+            vfolder_permissions.c.vfolder == vfolders.c.id,
         )
         query = (
             sa.select([vfolders.c.id, vfolders.c.name])
@@ -965,16 +965,16 @@ class PurgeUser(graphene.Mutation):
         from . import vfolders, vfolder_permissions
         await conn.execute(
             vfolder_permissions.delete()
-            .where(vfolder_permissions.c.user == user_uuid)
+            .where(vfolder_permissions.c.user == user_uuid),
         )
         result = await conn.execute(
             sa.select([vfolders.c.id, vfolders.c.host])
             .select_from(vfolders)
-            .where(vfolders.c.user == user_uuid)
+            .where(vfolders.c.user == user_uuid),
         )
         target_vfs = result.fetchall()
         result = await conn.execute(
-            sa.delete(vfolders).where(vfolders.c.user == user_uuid)
+            sa.delete(vfolders).where(vfolders.c.user == user_uuid),
         )
         for row in target_vfs:
             try:
@@ -1012,7 +1012,7 @@ class PurgeUser(graphene.Mutation):
         result = await conn.execute(
             sa.select([vfolders.c.id])
             .select_from(vfolders)
-            .where(vfolders.c.user == user_uuid)
+            .where(vfolders.c.user == user_uuid),
         )
         rows = result.fetchall()
         user_vfolder_ids = [row.id for row in rows]
@@ -1051,8 +1051,8 @@ class PurgeUser(graphene.Mutation):
             .select_from(kernels)
             .where(
                 (kernels.c.user_uuid == user_uuid) &
-                (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES))
-            )
+                (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
+            ),
         )
         return (active_kernel_count > 0)
 
@@ -1072,7 +1072,7 @@ class PurgeUser(graphene.Mutation):
         from . import kernels
         result = await conn.execute(
             sa.delete(kernels)
-            .where(kernels.c.user_uuid == user_uuid)
+            .where(kernels.c.user_uuid == user_uuid),
         )
         if result.rowcount > 0:
             log.info('deleted {0} user\'s kernels ({1})', result.rowcount, user_uuid)
@@ -1094,7 +1094,7 @@ class PurgeUser(graphene.Mutation):
         from . import keypairs
         result = await conn.execute(
             sa.delete(keypairs)
-            .where(keypairs.c.user == user_uuid)
+            .where(keypairs.c.user == user_uuid),
         )
         if result.rowcount > 0:
             log.info('deleted {0} user\'s keypairs ({1})', result.rowcount, user_uuid)
@@ -1121,8 +1121,8 @@ async def check_credential(
             .select_from(users)
             .where(
                 (users.c.email == email) &
-                (users.c.domain_name == domain)
-            )
+                (users.c.domain_name == domain),
+            ),
         )
     row = result.first()
     if row is None:
