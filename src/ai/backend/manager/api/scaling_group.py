@@ -83,7 +83,7 @@ async def get_wsproxy_version(request: web.Request) -> web.Response:
         raise GenericNotFound
 
     wsproxy_addr = sgroups[0]['wsproxy_addr']
-    if wsproxy_addr is None:
+    if not wsproxy_addr:
         wsproxy_version = 'v1'
     else:
         async with aiohttp.ClientSession() as session:
