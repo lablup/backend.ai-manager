@@ -100,10 +100,10 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
 
     async def __ainit__(self) -> None:
         self._redis = await aioredis.create_redis(
-            str(self._shared_config.get_redis_url(db=REDIS_LIVE_DB))
+            str(self._shared_config.get_redis_url(db=REDIS_LIVE_DB)),
         )
         raw_config = await self._shared_config.etcd.get_prefix_dict(
-            f"config/idle/checkers/{self.name}"
+            f"config/idle/checkers/{self.name}",
         )
         await self.populate_config(raw_config or {})
         self.timer = GlobalTimer(
@@ -151,7 +151,7 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
                 .select_from(kernels)
                 .where(
                     (kernels.c.status.in_(LIVE_STATUS)) &
-                    (kernels.c.cluster_role == DEFAULT_ROLE)
+                    (kernels.c.cluster_role == DEFAULT_ROLE),
                 )
             )
             result = await conn.execute(query)
@@ -159,10 +159,10 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
             for row in rows:
                 if not (await self.check_session(row, conn)):
                     log.info(
-                        f"The {self.name} idle checker triggered termination of s:{row['id']}"
+                        f"The {self.name} idle checker triggered termination of s:{row['id']}",
                     )
                     await self._event_producer.produce_event(
-                        DoTerminateSessionEvent(row["id"], f"idle-{self.name}")
+                        DoTerminateSessionEvent(row["id"], f"idle-{self.name}"),
                     )
 
     @abstractmethod
@@ -186,7 +186,7 @@ class TimeoutIdleChecker(BaseIdleChecker):
     _config_iv = t.Dict(
         {
             t.Key("threshold", default="10m"): tx.TimeDuration(),
-        }
+        },
     ).allow_extra("*")
 
     idle_timeout: timedelta
@@ -231,7 +231,7 @@ class TimeoutIdleChecker(BaseIdleChecker):
     async def _disable_timeout(self, session_id: SessionId) -> None:
         log.debug(f"TimeoutIdleChecker._disable_timeout({session_id})")
         await self._redis.set(
-            f"session.{session_id}.last_access", "0", exist=self._redis.SET_IF_EXIST
+            f"session.{session_id}.last_access", "0", exist=self._redis.SET_IF_EXIST,
         )
 
     async def _update_timeout(self, session_id: SessionId) -> None:
@@ -284,7 +284,7 @@ class TimeoutIdleChecker(BaseIdleChecker):
         if session["session_type"] == SessionTypes.BATCH:
             return True
         active_streams = await self._redis.zcount(
-            f"session.{session_id}.active_app_connections"
+            f"session.{session_id}.active_app_connections",
         )
         if active_streams is not None and active_streams > 0:
             return True
@@ -309,7 +309,7 @@ class TimeoutIdleChecker(BaseIdleChecker):
                             keypair_resource_policies.c.name
                             == keypairs.c.resource_policy
                         ),
-                    )
+                    ),
                 )
                 .where(keypairs.c.access_key == session["access_key"])
             )
@@ -351,9 +351,9 @@ class UtilizationIdleChecker(BaseIdleChecker):
                     t.Key("mem", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
                     t.Key("cuda_util", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
                     t.Key("cuda_mem", default=None): t.Null | t.Dict({t.Key("average"): t.Float}),
-                }
+                },
             ),
-        }
+        },
     ).allow_extra("*")
 
     resource_thresholds: MutableMapping[str, Union[int, float, Decimal]]
@@ -372,7 +372,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         await super().__ainit__()
         self._policy_cache = ContextVar("_policy_cache")
         self._redis_stat = await aioredis.create_redis(
-            str(self._shared_config.get_redis_url(db=REDIS_STAT_DB))
+            str(self._shared_config.get_redis_url(db=REDIS_STAT_DB)),
         )
 
     async def aclose(self) -> None:
@@ -394,7 +394,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         log.info(
             f"UtilizationIdleChecker(%): {thresholds_log} "
             f"thresholds-check-operator(\"{self.thresholds_check_operator}\"), "
-            f"time-window({self.time_window.total_seconds()}s)"
+            f"time-window({self.time_window.total_seconds()}s)",
         )
 
     async def update_app_streaming_status(
@@ -466,7 +466,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
                             keypair_resource_policies.c.name
                             == keypairs.c.resource_policy
                         ),
-                    )
+                    ),
                 )
                 .where(keypairs.c.access_key == session["access_key"])
             )
@@ -486,7 +486,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
                 .select_from(kernels)
                 .where(
                     (kernels.c.session_id == session_id) &
-                    (kernels.c.status.in_(LIVE_STATUS))
+                    (kernels.c.status.in_(LIVE_STATUS)),
                 )
             )
             result = await dbconn.execute(query)
@@ -548,7 +548,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
     async def get_current_utilization(
         self,
         kernel_ids: Sequence[KernelId],
-        occupied_slots: Mapping[str, Any]
+        occupied_slots: Mapping[str, Any],
     ) -> Mapping[str, float] | None:
         """
         Return the current utilization key-value pairs of multiple kernels, possibly the
@@ -616,7 +616,7 @@ async def create_idle_checkers(
             continue
         log.info(f"Initializing idle checker: {checker_name}")
         checker_instance = await checker_cls.new(
-            db, shared_config, event_dispatcher, event_producer
+            db, shared_config, event_dispatcher, event_producer,
         )
         instances.append(checker_instance)
     return instances

@@ -328,7 +328,7 @@ _shdefs: Mapping[str, Any] = {
     },
     'watcher': {
         'token': None,
-    }
+    },
 }
 
 container_registry_iv = t.Dict({
@@ -654,7 +654,7 @@ class SharedConfig(AbstractConfig):
     ) -> None:
         registry_config_iv = t.Mapping(t.String, container_registry_iv)
         latest_registry_config = registry_config_iv.check(
-            await self.etcd.get_prefix('config/docker/registry')
+            await self.etcd.get_prefix('config/docker/registry'),
         )
         self['docker']['registry'] = latest_registry_config
         # TODO: delete images from registries removed from the previous config?

@@ -70,7 +70,7 @@ async def get_config(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     log.info(
         'ETCD.GET_CONFIG (ak:{}, key:{}, prefix:{})',
-        request['keypair']['access_key'], params['key'], params['prefix']
+        request['keypair']['access_key'], params['key'], params['prefix'],
     )
     if params['prefix']:
         # Flatten the returned ChainMap object for JSON serialization

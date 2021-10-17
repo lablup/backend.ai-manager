@@ -23,20 +23,20 @@ async def test_lock(database_engine: ExtendedAsyncSAEngine) -> None:
             asyncio.create_task(
                 critical_section(database_engine),
                 name=f"critical-section-{idx}",
-            )
+            ),
         )
     await asyncio.sleep(0.5)
 
     async with database_engine.connect() as conn:
         result = await conn.exec_driver_sql(
             "SELECT objid, granted, pid FROM pg_locks "
-            "WHERE locktype = 'advisory' AND objid = 42;"
+            "WHERE locktype = 'advisory' AND objid = 42;",
         )
         rows = result.fetchall()
         print(rows)
         result = await conn.exec_driver_sql(
             "SELECT objid, granted FROM pg_locks "
-            "WHERE locktype = 'advisory' AND objid = 42 AND granted = 't';"
+            "WHERE locktype = 'advisory' AND objid = 42 AND granted = 't';",
         )
         rows = result.fetchall()
         assert len(rows) == 1
@@ -60,7 +60,7 @@ async def test_lock(database_engine: ExtendedAsyncSAEngine) -> None:
     async with database_engine.connect() as conn:
         result = await conn.exec_driver_sql(
             "SELECT objid, granted, pid FROM pg_locks "
-            "WHERE locktype = 'advisory' AND objid = 42 AND granted = 't';"
+            "WHERE locktype = 'advisory' AND objid = 42 AND granted = 't';",
         )
         rows = result.fetchall()
         print(rows)

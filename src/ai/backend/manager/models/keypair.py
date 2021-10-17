@@ -59,7 +59,7 @@ __all__: Sequence[str] = (
     'Dotfile', 'MAXIMUM_DOTFILE_SIZE',
     'query_owned_dotfiles',
     'query_bootstrap_script',
-    'verify_dotfile_name'
+    'verify_dotfile_name',
 )
 
 
@@ -561,16 +561,16 @@ def generate_ssh_keypair() -> Tuple[str, str]:
     key = rsa.generate_private_key(
         backend=crypto_default_backend(),
         public_exponent=65537,
-        key_size=2048
+        key_size=2048,
     )
     private_key = key.private_bytes(
         crypto_serialization.Encoding.PEM,
         crypto_serialization.PrivateFormat.TraditionalOpenSSL,
-        crypto_serialization.NoEncryption()
+        crypto_serialization.NoEncryption(),
     ).decode("utf-8")
     public_key = key.public_key().public_bytes(
         crypto_serialization.Encoding.OpenSSH,
-        crypto_serialization.PublicFormat.OpenSSH
+        crypto_serialization.PublicFormat.OpenSSH,
     ).decode("utf-8")
     return (public_key, private_key)
 
