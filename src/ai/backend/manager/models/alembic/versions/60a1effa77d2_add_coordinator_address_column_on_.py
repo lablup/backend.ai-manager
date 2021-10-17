@@ -21,4 +21,4 @@ def upgrade():
 
 
 def downgrade():
-    op.drop_colu('scaling_groups', 'wsproxy_addr')
+    op.drop_column('scaling_groups', 'wsproxy_addr')
