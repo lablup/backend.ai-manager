@@ -27,7 +27,7 @@ class ErrorMonitor(AbstractErrorReporterPlugin):
         if context is None:
             log.warning(
                 "manager.plugin.error_monitor is initialized without the root context. "
-                "The plugin is disabled."
+                "The plugin is disabled.",
             )
             self.enabled = False
             return
@@ -87,7 +87,7 @@ class ErrorMonitor(AbstractErrorReporterPlugin):
                 'message': message,
                 'context_lang': 'python',
                 'context_env': context,
-                'traceback': ''.join(traceback.format_tb(tb)).strip()
+                'traceback': ''.join(traceback.format_tb(tb)).strip(),
             })
             await conn.execute(query)
         log.debug(
@@ -111,7 +111,7 @@ class ErrorMonitor(AbstractErrorReporterPlugin):
                 'message': event.message,
                 'context_lang': 'python',
                 'context_env': event.context_env,
-                'traceback': event.traceback
+                'traceback': event.traceback,
             })
             await conn.execute(query)
         log.debug(

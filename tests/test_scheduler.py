@@ -244,7 +244,7 @@ existing_session_kernel_ids = [
         kernel_ids=[KernelId(UUID('251907d9-1290-4126-bc6c-100000000300'))]),
 ]
 
-common_image_ref = ImageRef('lablup/python:3.6-ubunt18.04'),
+common_image_ref = ImageRef('lablup/python:3.6-ubunt18.04')
 
 _common_dummy_for_pending_session: Mapping[str, Any] = dict(
     domain_name='default',

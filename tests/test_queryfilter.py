@@ -63,7 +63,7 @@ def virtual_user_db():
                     'is_active': False,
                     'data': None,
                 },
-            ]
+            ],
         )
         yield conn, users
     engine.dispose()
@@ -154,7 +154,7 @@ def test_select_queries(virtual_user_db) -> None:
 
     sa_query = parser.append_filter(
         sa.select([users.c.name, users.c.age]).select_from(users),
-        "data isnot null"
+        "data isnot null",
     )
     actual_ret = list(conn.execute(sa_query))
     test_ret = [("tester", 30), ("test\'er", 50)]
@@ -162,7 +162,7 @@ def test_select_queries(virtual_user_db) -> None:
 
     sa_query = parser.append_filter(
         sa.select([users.c.name, users.c.age]).select_from(users),
-        "data is null"
+        "data is null",
     )
     actual_ret = list(conn.execute(sa_query))
     test_ret = [("test\"er", 40), ("tester ♪", 20)]
@@ -170,14 +170,14 @@ def test_select_queries(virtual_user_db) -> None:
 
     sa_query = parser.append_filter(
         sa.select([users.c.name, users.c.age]).select_from(users),
-        "data is null | data isnot null"
+        "data is null | data isnot null",
     )
     actual_ret = list(conn.execute(sa_query))
     assert len(actual_ret) == 4  # all rows
 
     sa_query = parser.append_filter(
         sa.select([users.c.name, users.c.age]).select_from(users),
-        "data < 9.4"
+        "data < 9.4",
     )
     actual_ret = list(conn.execute(sa_query))
     test_ret = [("test\'er", 50)]  # Note: null values are not matched
@@ -197,17 +197,17 @@ def test_select_queries(virtual_user_db) -> None:
     with pytest.raises(ValueError):
         parser.append_filter(
             sa.select([users.c.name, users.c.age]).select_from(users),
-            "123"
+            "123",
         )
     with pytest.raises(ValueError):
         parser.append_filter(
             sa.select([users.c.name, users.c.age]).select_from(users),
-            "\"abc\""
+            "\"abc\"",
         )
     with pytest.raises(ValueError):
         parser.append_filter(
             sa.select([users.c.name, users.c.age]).select_from(users),
-            "name ="
+            "name =",
         )
 
     # invalid value type

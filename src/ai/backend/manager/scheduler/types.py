@@ -126,7 +126,7 @@ class ExistingSession:
     def base_query(cls) -> Select:
         return (
             sa.select(
-                list(cls.db_cols() | KernelInfo.db_cols())
+                list(cls.db_cols() | KernelInfo.db_cols()),
             )
             .select_from(kernels)
             .order_by(kernels.c.created_at)
@@ -237,11 +237,11 @@ class PendingSession:
     def base_query(cls) -> Select:
         return (
             sa.select(
-                list(cls.db_cols() | KernelInfo.db_cols())
+                list(cls.db_cols() | KernelInfo.db_cols()),
             )
             .select_from(sa.join(
                 kernels, keypairs,
-                keypairs.c.access_key == kernels.c.access_key
+                keypairs.c.access_key == kernels.c.access_key,
             ))
             .order_by(kernels.c.created_at)
         )

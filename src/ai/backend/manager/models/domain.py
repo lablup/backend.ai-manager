@@ -128,7 +128,7 @@ class Domain(graphene.ObjectType):
         ctx: GraphQueryContext,
         names: Sequence[str],
         *,
-        is_active: bool = None
+        is_active: bool = None,
     ) -> Sequence[Optional[Domain]]:
         async with ctx.db.begin_readonly() as conn:
             query = (

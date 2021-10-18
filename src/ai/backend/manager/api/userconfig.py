@@ -21,7 +21,7 @@ from ..models import (
 from .auth import auth_required
 from .exceptions import (
     InvalidAPIParameters, DotfileCreationFailed,
-    DotfileNotFound, DotfileAlreadyExists
+    DotfileNotFound, DotfileAlreadyExists,
 )
 from .manager import READ_ALLOWED, server_status_required
 from .types import CORSOptions, Iterable, WebMiddleware
@@ -41,13 +41,13 @@ log = BraceStyleAdapter(logging.getLogger(__name__))
         t.Key('path'): t.String,
         t.Key('permission'): t.Regexp(r'^[0-7]{3}$', re.ASCII),
         t.Key('owner_access_key', default=None): t.Null | t.String,
-    }
+    },
 ))
 async def create(request: web.Request, params: Any) -> web.Response:
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
     log.info(
         'USERCONFIG.CREATE (ak:{0}/{1})', requester_access_key,
-        owner_access_key if owner_access_key != requester_access_key else '*'
+        owner_access_key if owner_access_key != requester_access_key else '*',
     )
     root_ctx: RootContext = request.app['_root.context']
     user_uuid = request['user']['uuid']
@@ -73,9 +73,11 @@ async def create(request: web.Request, params: Any) -> web.Response:
         if len(dotfile_packed) > MAXIMUM_DOTFILE_SIZE:
             raise DotfileCreationFailed('No leftover space for dotfile storage')
 
-        query = (keypairs.update()
-                         .values(dotfiles=dotfile_packed)
-                         .where(keypairs.c.access_key == owner_access_key))
+        query = (
+            keypairs.update()
+            .values(dotfiles=dotfile_packed)
+            .where(keypairs.c.access_key == owner_access_key)
+        )
         await conn.execute(query)
     return web.json_response({})
 
@@ -94,7 +96,7 @@ async def list_or_get(request: web.Request, params: Any) -> web.Response:
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
     log.info(
         'USERCONFIG.LIST_OR_GET (ak:{0}/{1})', requester_access_key,
-        owner_access_key if owner_access_key != requester_access_key else '*'
+        owner_access_key if owner_access_key != requester_access_key else '*',
     )
     async with root_ctx.db.begin() as conn:
         if params['path']:
@@ -109,7 +111,7 @@ async def list_or_get(request: web.Request, params: Any) -> web.Response:
                 resp.append({
                     'path': entry['path'],
                     'permission': entry['perm'],
-                    'data': entry['data']
+                    'data': entry['data'],
                 })
             return web.json_response(resp)
 
@@ -122,13 +124,13 @@ async def list_or_get(request: web.Request, params: Any) -> web.Response:
         t.Key('path'): t.String,
         t.Key('permission'): t.Regexp(r'^[0-7]{3}$', re.ASCII),
         t.Key('owner_access_key', default=None): t.Null | t.String,
-    }
+    },
 ))
 async def update(request: web.Request, params: Any) -> web.Response:
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
     log.info(
         'USERCONFIG.CREATE (ak:{0}/{1})', requester_access_key,
-        owner_access_key if owner_access_key != requester_access_key else '*'
+        owner_access_key if owner_access_key != requester_access_key else '*',
     )
     root_ctx: RootContext = request.app['_root.context']
     async with root_ctx.db.begin() as conn:
@@ -143,9 +145,11 @@ async def update(request: web.Request, params: Any) -> web.Response:
         if len(dotfile_packed) > MAXIMUM_DOTFILE_SIZE:
             raise DotfileCreationFailed('No leftover space for dotfile storage')
 
-        query = (keypairs.update()
-                         .values(dotfiles=dotfile_packed)
-                         .where(keypairs.c.access_key == owner_access_key))
+        query = (
+            keypairs.update()
+            .values(dotfiles=dotfile_packed)
+            .where(keypairs.c.access_key == owner_access_key)
+        )
         await conn.execute(query)
     return web.json_response({})
 
@@ -156,13 +160,13 @@ async def update(request: web.Request, params: Any) -> web.Response:
     t.Dict({
         t.Key('path'): t.String,
         t.Key('owner_access_key', default=None): t.Null | t.String,
-    })
+    }),
 )
 async def delete(request: web.Request, params: Any) -> web.Response:
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
     log.info(
         'USERCONFIG.DELETE (ak:{0}/{1})', requester_access_key,
-        owner_access_key if owner_access_key != requester_access_key else '*'
+        owner_access_key if owner_access_key != requester_access_key else '*',
     )
     root_ctx: RootContext = request.app['_root.context']
     path = params['path']
@@ -184,7 +188,7 @@ async def delete(request: web.Request, params: Any) -> web.Response:
 @check_api_params(t.Dict(
     {
         t.Key('script'): t.String(allow_blank=True, max_length=MAXIMUM_DOTFILE_SIZE),
-    }
+    },
 ))
 async def update_bootstrap_script(request: web.Request, params: Any) -> web.Response:
     access_key = request['keypair']['access_key']

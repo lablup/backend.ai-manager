@@ -944,7 +944,7 @@ class Queries(graphene.ObjectType):
             return await KeyPairResourcePolicy.load_all(info.context)
         elif client_role == UserRole.USER:
             return await KeyPairResourcePolicy.load_all_user(
-                info.context, client_access_key
+                info.context, client_access_key,
             )
         else:
             raise InvalidAPIParameters('Unknown client role')
@@ -997,7 +997,7 @@ class Queries(graphene.ObjectType):
         is_active: bool = None,
     ) -> Sequence[ScalingGroup]:
         return await ScalingGroup.load_by_domain(
-            info.context, domain, is_active=is_active
+            info.context, domain, is_active=is_active,
         )
 
     @staticmethod
@@ -1006,10 +1006,10 @@ class Queries(graphene.ObjectType):
         executor: AsyncioExecutor,
         info: graphene.ResolveInfo,
         user_group,
-        is_active: bool = None
+        is_active: bool = None,
     ) -> Sequence[ScalingGroup]:
         return await ScalingGroup.load_by_group(
-            info.context, user_group, is_active=is_active
+            info.context, user_group, is_active=is_active,
         )
 
     @staticmethod
@@ -1018,10 +1018,10 @@ class Queries(graphene.ObjectType):
         executor: AsyncioExecutor,
         info: graphene.ResolveInfo,
         access_key: AccessKey,
-        is_active: bool = None
+        is_active: bool = None,
     ) -> Sequence[ScalingGroup]:
         return await ScalingGroup.load_by_keypair(
-            info.context, access_key, is_active=is_active
+            info.context, access_key, is_active=is_active,
         )
 
     @staticmethod
@@ -1199,7 +1199,7 @@ class Queries(graphene.ObjectType):
             graph_ctx,
             'ComputeSession.detail',
             domain_name=domain_name,
-            access_key=access_key
+            access_key=access_key,
         )
         return await loader.load(id)
 
@@ -1223,7 +1223,7 @@ class Queries(graphene.ObjectType):
             domain_name=domain_name,
             group_id=group_id,
             access_key=access_key,
-            status=status
+            status=status,
         )
         items = await LegacyComputeSession.load_slice(
             info.context,
@@ -1234,7 +1234,7 @@ class Queries(graphene.ObjectType):
             access_key=access_key,
             status=status,
             order_key=order_key,
-            order_asc=order_asc
+            order_asc=order_asc,
         )
         return LegacyComputeSessionList(items, total_count)
 
@@ -1259,7 +1259,7 @@ class Queries(graphene.ObjectType):
             'LegacyComputeSession.detail',
             domain_name=domain_name,
             access_key=access_key,
-            status=status
+            status=status,
         )
         matches = await loader.load(sess_id)
         if len(matches) == 0:

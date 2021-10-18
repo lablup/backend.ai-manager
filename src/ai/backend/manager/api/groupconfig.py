@@ -23,7 +23,7 @@ from .auth import auth_required, admin_required
 from .exceptions import (
     InvalidAPIParameters, DotfileCreationFailed,
     DotfileNotFound, DotfileAlreadyExists,
-    GenericForbidden, GroupNotFound
+    GenericForbidden, GroupNotFound,
 )
 from .manager import READ_ALLOWED, server_status_required
 from .types import CORSOptions, Iterable, WebMiddleware
@@ -44,7 +44,7 @@ log = BraceStyleAdapter(logging.getLogger(__name__))
         t.Key('data'): t.String(max_length=MAXIMUM_DOTFILE_SIZE),
         t.Key('path'): t.String,
         t.Key('permission'): t.Regexp(r'^[0-7]{3}$', re.ASCII),
-    }
+    },
 ))
 async def create(request: web.Request, params: Any) -> web.Response:
     log.info('GROUPCONFIG.CREATE_DOTFILE (group: {0})', params['group'])
@@ -156,7 +156,7 @@ async def list_or_get(request: web.Request, params: Any) -> web.Response:
                 resp.append({
                     'path': entry['path'],
                     'permission': entry['perm'],
-                    'data': entry['data']
+                    'data': entry['data'],
                 })
             return web.json_response(resp)
 
@@ -170,7 +170,7 @@ async def list_or_get(request: web.Request, params: Any) -> web.Response:
         t.Key('data'): t.String(max_length=MAXIMUM_DOTFILE_SIZE),
         t.Key('path'): t.String,
         t.Key('permission'): t.Regexp(r'^[0-7]{3}$', re.ASCII),
-    }
+    },
 ))
 async def update(request: web.Request, params: Any) -> web.Response:
     log.info('GROUPCONFIG.UPDATE_DOTFILE (domain:{0})', params['domain'])
@@ -220,8 +220,8 @@ async def update(request: web.Request, params: Any) -> web.Response:
     t.Dict({
         tx.AliasedKey(['group', 'groupId', 'group_id']): tx.UUID | t.String,
         t.Key('domain', default=None): t.String | t.Null,
-        t.Key('path'): t.String
-    })
+        t.Key('path'): t.String,
+    }),
 )
 async def delete(request: web.Request, params: Any) -> web.Response:
     log.info('GROUPCONFIG.DELETE_DOTFILE (domain:{0})', params['domain'])

@@ -305,7 +305,7 @@ class Agent(graphene.ObjectType):
             .select_from(agents)
             .where(agents.c.id.in_(agent_ids))
             .order_by(
-                agents.c.id
+                agents.c.id,
             )
         )
         if raw_status is not None:
@@ -332,7 +332,7 @@ async def recalc_agent_resource_occupancy(db_conn: SAConnection, agent_id: Agent
         .select_from(kernels)
         .where(
             (kernels.c.agent == agent_id) &
-            (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES))
+            (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
         )
     )
     occupied_slots = ResourceSlot()
