@@ -643,16 +643,18 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
 @check_api_params(
     t.Dict({
         t.Key('folder_host'): t.String,
+        t.Key('id'): tx.UUID,
     }))
 async def get_quota(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     proxy_name, volume_name = root_ctx.storage_manager.split_host(params['folder_host'])
-    log.info('VFOLDER.GET_QUOTA (volume_name:{})', volume_name)
+    log.info('VFOLDER.GET_QUOTA (volume_name:{}, vf:{})', volume_name, params['id'])
     try:
         async with root_ctx.storage_manager.request(
             proxy_name, 'GET', 'volume/quota',
             json={
                 'volume': volume_name,
+                'vfid': str(params['id']),
             },
             raise_for_status=True,
         ) as (_, storage_resp):
@@ -668,6 +670,7 @@ async def get_quota(request: web.Request, params: Any) -> web.Response:
 @check_api_params(
     t.Dict({
         t.Key('folder_host'): t.String,
+        t.Key('id'): tx.UUID,
         t.Key('input'): t.Mapping(t.String, t.Any),
     }),
 )
@@ -675,12 +678,13 @@ async def update_quota(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     proxy_name, volume_name = root_ctx.storage_manager.split_host(params['folder_host'])
     quota = params['input']['size_bytes']
-    log.info('VFOLDER.UPDATE_QUOTA (volume_name:{}, quota:{})', quota)
+    log.info('VFOLDER.UPDATE_QUOTA (volume_name:{}, quota:{}, vf:{})', volume_name, quota, params['id'])
     try:
         async with root_ctx.storage_manager.request(
             proxy_name, 'PATCH', 'volume/quota',
             json={
                 'volume': volume_name,
+                'vfid': str(params['id']),
                 'size_bytes': quota,
             },
             raise_for_status=True,
