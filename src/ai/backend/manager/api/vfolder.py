@@ -336,6 +336,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'usage_mode': params['usage_mode'],
             'permission': params['permission'],
             'last_used': None,
+            'max_size': int(params['quota'] / 2**20),  # in MBytes
             'host': folder_host,
             'creator': request['user']['email'],
             'ownership_type': VFolderOwnershipType(ownership_type),
@@ -350,6 +351,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'host': folder_host,
             'usage_mode': params['usage_mode'].value,
             'permission': params['permission'].value,
+            'max_size': int(params['quota'] / 2**20),  # in MBytes
             'creator': request['user']['email'],
             'ownership_type': ownership_type,
             'user': user_uuid,
@@ -628,6 +630,7 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
             'permission': permission,
             'usage_mode': row['usage_mode'],
             'cloneable': row['cloneable'],
+            'max_size': row['max_size'],
         }
     except aiohttp.ClientResponseError:
         raise VFolderOperationFailed
