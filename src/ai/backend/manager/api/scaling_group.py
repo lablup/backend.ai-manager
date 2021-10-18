@@ -47,7 +47,7 @@ class DummyHashObject(Generic[T]):
         return True
 
 
-@aiotools.lru_cache()
+@aiotools.lru_cache(expire_after=30)  # expire after 30 seconds
 async def query_wsproxy_version(
     params: DummyHashObject[dict],
     group_id_or_name: str,
