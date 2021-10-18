@@ -1,14 +1,17 @@
 import logging
 from typing import (
     Any,
+    Generic,
     Iterable,
     TYPE_CHECKING,
     Tuple,
+    TypeVar,
 )
 
 from aiohttp import web
 import aiohttp
 import aiohttp_cors
+import aiotools
 import trafaret as t
 
 from ai.backend.common import validators as tx
@@ -30,6 +33,40 @@ if TYPE_CHECKING:
     from .context import RootContext
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
+T = TypeVar('T')
+
+
+class DummyHashObject(Generic[T]):
+    def __init__(self, object: T) -> None:
+        self.object = object
+
+    def __hash__(self) -> int:
+        return 0
+
+    def __eq__(self, other) -> bool:
+        return True
+
+
+@aiotools.lru_cache()
+async def query_wsproxy_version(
+    params: DummyHashObject[dict],
+    group_id_or_name: str,
+) -> str:
+    async with params.object['db_ctx'].begin_readonly() as conn:
+        sgroups = await query_allowed_sgroups(
+            conn, params.object['domain_name'], group_id_or_name, params.object['access_key'])
+
+    if len(sgroups) == 0:
+        raise GenericNotFound
+
+    wsproxy_addr = sgroups[0]['wsproxy_addr']
+    if not wsproxy_addr:
+        return 'v1'
+    else:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(wsproxy_addr + '/status') as resp:
+                version_json = await resp.json()
+                return version_json['api_version']
 
 
 @auth_required
@@ -60,38 +97,16 @@ async def list_available_sgroups(request: web.Request, params: Any) -> web.Respo
 @server_status_required(READ_ALLOWED)
 async def get_wsproxy_version(request: web.Request) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
-    redis_live = root_ctx.redis_live
     access_key = request['keypair']['access_key']
     domain_name = request['user']['domain_name']
     group_id_or_name = request.match_info['scaling_group']
 
-    wsproxy_version = await redis_live.get(f'scaling_group.{group_id_or_name}.wsproxy_version')
-    if wsproxy_version:
-        if wsproxy_version == '':
-            raise GenericNotFound
-
-        return web.json_response({'version': wsproxy_version})
-
-    async with root_ctx.db.begin_readonly() as conn:
-        sgroups = await query_allowed_sgroups(
-            conn, domain_name, group_id_or_name, access_key)
-
-    if len(sgroups) == 0:
-        await redis_live.set(f'scaling_group.{group_id_or_name}.wsproxy_version', '', expire=60 * 60)
-        raise GenericNotFound
-
-    wsproxy_addr = sgroups[0]['wsproxy_addr']
-    if not wsproxy_addr:
-        wsproxy_version = 'v1'
-    else:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(wsproxy_addr + '/status') as resp:
-                version_json = await resp.json()
-                wsproxy_version = version_json['api_version']
-
-    await redis_live.set(f'scaling_group.{group_id_or_name}.wsproxy_version',
-                         wsproxy_version,
-                         expire=60 * 60)
+    params = DummyHashObject({
+        'db_ctx': root_ctx.db,
+        'access_key': access_key,
+        'domain_name': domain_name,
+    })
+    wsproxy_version = await query_wsproxy_version(params, group_id_or_name)
     return web.json_response({'version': wsproxy_version})
 
 
