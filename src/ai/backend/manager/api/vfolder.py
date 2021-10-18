@@ -679,6 +679,13 @@ async def update_quota(request: web.Request, params: Any) -> web.Response:
     proxy_name, volume_name = root_ctx.storage_manager.split_host(params['folder_host'])
     quota = params['input']['size_bytes']
     log.info('VFOLDER.UPDATE_QUOTA (volume_name:{}, quota:{}, vf:{})', volume_name, quota, params['id'])
+
+    # Limit vfolder size quota if it is larger than max_vfolder_size of the resource policy.
+    resource_policy = request['keypair']['resource_policy']
+    max_vfolder_size = resource_policy.get('max_vfolder_size', 0)
+    if max_vfolder_size > 0 and (quota is None or quota > max_vfolder_size):
+        quota = max_vfolder_size
+
     try:
         async with root_ctx.storage_manager.request(
             proxy_name, 'PATCH', 'volume/quota',
