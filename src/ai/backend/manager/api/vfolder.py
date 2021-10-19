@@ -699,6 +699,17 @@ async def update_quota(request: web.Request, params: Any) -> web.Response:
             pass
     except aiohttp.ClientResponseError:
         raise VFolderOperationFailed
+
+    # Update the quota for the vfolder in DB.
+    async with root_ctx.db.begin() as conn:
+        query = (
+            sa.update(vfolders)
+            .values(max_size=quota)
+            .where(vfolders.c.id == params['id'])
+        )
+        result = await conn.execute(query)
+        assert result.rowcount == 1
+
     return web.json_response({}, status=200)
 
 
