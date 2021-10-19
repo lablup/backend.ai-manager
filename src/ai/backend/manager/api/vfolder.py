@@ -3,6 +3,7 @@ from datetime import datetime
 import functools
 import json
 import logging
+import math
 from pathlib import Path
 import stat
 from typing import (
@@ -681,7 +682,7 @@ async def get_quota(request: web.Request, params: Any) -> web.Response:
 async def update_quota(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     proxy_name, volume_name = root_ctx.storage_manager.split_host(params['folder_host'])
-    quota = params['input']['size_bytes']
+    quota = int(params['input']['size_bytes'])
     log.info('VFOLDER.UPDATE_QUOTA (volume_name:{}, quota:{}, vf:{})', volume_name, quota, params['id'])
 
     # Limit vfolder size quota if it is larger than max_vfolder_size of the resource policy.
@@ -708,7 +709,7 @@ async def update_quota(request: web.Request, params: Any) -> web.Response:
     async with root_ctx.db.begin() as conn:
         query = (
             sa.update(vfolders)
-            .values(max_size=quota)
+            .values(max_size=math.ceil(quota / 2**20))  # in Mbytes
             .where(vfolders.c.id == params['id'])
         )
         result = await conn.execute(query)
