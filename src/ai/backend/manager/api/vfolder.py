@@ -276,8 +276,14 @@ async def create(request: web.Request, params: Any) -> web.Response:
 
         # Limit vfolder size quota if it is larger than max_vfolder_size of the resource policy.
         max_vfolder_size = resource_policy.get('max_vfolder_size', 0)
-        if max_vfolder_size > 0 and \
-                (params['quota'] is None or params['quota'] <= 0 or params['quota'] > max_vfolder_size):
+        if (
+            max_vfolder_size > 0
+            and (
+                params['quota'] is None
+                or params['quota'] <= 0
+                or params['quota'] > max_vfolder_size
+            )
+        ):
             params['quota'] = max_vfolder_size
 
         # Prevent creation of vfolder with duplicated name.
@@ -338,7 +344,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'usage_mode': params['usage_mode'],
             'permission': params['permission'],
             'last_used': None,
-            'max_size': int(params['quota'] / 2**20),  # in MBytes
+            'max_size': int(params['quota'] / (2**20)),  # in MBytes
             'host': folder_host,
             'creator': request['user']['email'],
             'ownership_type': VFolderOwnershipType(ownership_type),
@@ -353,7 +359,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'host': folder_host,
             'usage_mode': params['usage_mode'].value,
             'permission': params['permission'].value,
-            'max_size': int(params['quota'] / 2**20),  # in MBytes
+            'max_size': int(params['quota'] / (2**20)),  # in MBytes
             'creator': request['user']['email'],
             'ownership_type': ownership_type,
             'user': user_uuid,
@@ -689,7 +695,13 @@ async def update_quota(request: web.Request, params: Any) -> web.Response:
     # Limit vfolder size quota if it is larger than max_vfolder_size of the resource policy.
     resource_policy = request['keypair']['resource_policy']
     max_vfolder_size = resource_policy.get('max_vfolder_size', 0)
-    if max_vfolder_size > 0 and (quota <= 0 or quota > max_vfolder_size):
+    if (
+        max_vfolder_size > 0
+        and (
+            quota <= 0
+            or quota > max_vfolder_size
+        )
+    ):
         quota = max_vfolder_size
 
     try:

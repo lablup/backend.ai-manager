@@ -462,7 +462,7 @@ class VirtualFolder(graphene.ObjectType):
     permission = graphene.String()
     ownership_type = graphene.String()
     max_files = graphene.Int()
-    max_size = graphene.Int()    # in MiB
+    max_size = BigInt()          # in MiB
     created_at = GQLDateTime()
     last_used = GQLDateTime()
 
