@@ -276,7 +276,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
 
         # Limit vfolder size quota if it is larger than max_vfolder_size of the resource policy.
         max_vfolder_size = resource_policy.get('max_vfolder_size', 0)
-        if max_vfolder_size > 0 and (params['quota'] is None or params['quota'] > max_vfolder_size):
+        if max_vfolder_size > 0 and \
+                (params['quota'] is None or params['quota'] <= 0 or params['quota'] > max_vfolder_size):
             params['quota'] = max_vfolder_size
 
         # Prevent creation of vfolder with duplicated name.
@@ -688,7 +689,7 @@ async def update_quota(request: web.Request, params: Any) -> web.Response:
     # Limit vfolder size quota if it is larger than max_vfolder_size of the resource policy.
     resource_policy = request['keypair']['resource_policy']
     max_vfolder_size = resource_policy.get('max_vfolder_size', 0)
-    if max_vfolder_size > 0 and (quota is None or quota > max_vfolder_size):
+    if max_vfolder_size > 0 and (quota <= 0 or quota > max_vfolder_size):
         quota = max_vfolder_size
 
     try:
