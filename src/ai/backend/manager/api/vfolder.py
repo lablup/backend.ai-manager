@@ -422,6 +422,8 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
                     'type': row.vfolders_ownership_type,  # legacy
                     'unmanaged_path': row.vfolders_unmanaged_path,
                     'cloneable': row.vfolders_cloneable if row.vfolders_cloneable else False,
+                    'max_files': row.vfolder_max_files,
+                    'max_size': row.vfolders_max_size,
                 })
         else:
             extra_vf_conds = None
@@ -454,6 +456,8 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
                 'ownership_type': entry['ownership_type'].value,
                 'type': entry['ownership_type'].value,  # legacy
                 'cloneable': entry['cloneable'],
+                'max_files': entry['max_files'],
+                'max_size': entry['max_size'],
             })
     return web.json_response(resp, status=200)
 
