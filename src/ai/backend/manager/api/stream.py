@@ -438,7 +438,7 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
             apartial(
                 redis.execute,
                 redis_live,
-                lambda r: r.zadd(conn_tracker_key, now, conn_tracker_val)
+                lambda r: r.zadd(conn_tracker_key, now, conn_tracker_val),
             ),
             max_bursts=64, max_idle=2000,
         ))
@@ -455,7 +455,7 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
             now = await redis.execute(redis_live, lambda r: r.time())
             await redis.execute(
                 redis_live,
-                lambda r: r.zadd(conn_tracker_key, {now: conn_tracker_val})
+                lambda r: r.zadd(conn_tracker_key, {now: conn_tracker_val}),
             )
             for idle_checker in root_ctx.idle_checkers:
                 await idle_checker.update_app_streaming_status(
@@ -473,8 +473,8 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
                 redis_live,
                 lambda r: r.zcount(
                     conn_tracker_key,
-                    float('-inf'), float('+inf')
-                )
+                    float('-inf'), float('+inf'),
+                ),
             )
             if remaining_count == 0:
                 for idle_checker in root_ctx.idle_checkers:
@@ -594,17 +594,17 @@ async def stream_conn_tracker_gc(root_ctx: RootContext, app_ctx: PrivateContext)
                     conn_tracker_key = f"session.{session_id}.active_app_connections"
                     prev_remaining_count = await redis.execute(
                         redis_live,
-                        lambda r: r.zcount(conn_tracker_key, float('-inf'), float('+inf'))
+                        lambda r: r.zcount(conn_tracker_key, float('-inf'), float('+inf')),
                     )
                     removed_count = await redis.execute(
                         redis_live,
                         lambda r: r.zremrangebyscore(
                             conn_tracker_key, float('-inf'), now - no_packet_timeout.total_seconds(),
-                        )
+                        ),
                     )
                     remaining_count = await redis.execute(
                         redis_live,
-                        lambda r: r.zcount(conn_tracker_key, float('-inf'), float('+inf'))
+                        lambda r: r.zcount(conn_tracker_key, float('-inf'), float('+inf')),
                     )
                     log.debug(f"conn_tracker: gc {session_id} "
                               f"removed/remaining = {removed_count}/{remaining_count}")
