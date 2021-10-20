@@ -183,7 +183,7 @@ async def push_background_task_events(
     task_info = await redis.execute(
         root_ctx.redis_stream,
         lambda r: r.hgetall(tracker_key),
-        encoding='utf-8'
+        encoding='utf-8',
     )
 
     log.debug('task info: {}', task_info)

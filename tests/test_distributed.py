@@ -12,7 +12,6 @@ from typing import (
     TYPE_CHECKING,
 )
 
-import aioredis
 import attr
 
 from ai.backend.common.events import AbstractEvent, EventDispatcher, EventProducer
@@ -87,7 +86,8 @@ class TimerNode(threading.Thread):
         async def _tick(context: Any, source: AgentId, event: NoopEvent) -> None:
             self.event_records.put(time.monotonic())
 
-        event_dispatcher = await EventDispatcher.new(self.shared_config.data['redis'], db=REDIS_STREAM_DB)
+        event_dispatcher = await EventDispatcher.new(self.shared_config.data['redis'],
+                                                     db=REDIS_STREAM_DB)
         event_producer = await EventProducer.new(self.shared_config.data['redis'], db=REDIS_STREAM_DB)
         event_dispatcher.consume(NoopEvent, None, _tick)
 

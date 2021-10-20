@@ -293,10 +293,10 @@ async def redis_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     root_ctx.redis_live = redis.get_redis_object(root_ctx.shared_config.data['redis'], db=REDIS_LIVE_DB)
     root_ctx.redis_stat = redis.get_redis_object(root_ctx.shared_config.data['redis'], db=REDIS_STAT_DB)
     root_ctx.redis_image = redis.get_redis_object(
-        root_ctx.shared_config.data['redis'], db=REDIS_IMAGE_DB
+        root_ctx.shared_config.data['redis'], db=REDIS_IMAGE_DB,
     )
     root_ctx.redis_stream = redis.get_redis_object(
-        root_ctx.shared_config.data['redis'], db=REDIS_STREAM_DB
+        root_ctx.shared_config.data['redis'], db=REDIS_STREAM_DB,
     )
     yield
 

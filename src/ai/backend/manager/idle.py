@@ -231,7 +231,7 @@ class TimeoutIdleChecker(BaseIdleChecker):
         await redis.execute(
             self._redis,
             lambda r: r.set(
-                f"session.{session_id}.last_access", "0", xx=True
+                f"session.{session_id}.last_access", "0", xx=True,
             ),
         )
 
@@ -244,7 +244,7 @@ class TimeoutIdleChecker(BaseIdleChecker):
                 f"session.{session_id}.last_access",
                 f"{t:.06f}",
                 ex=max(86400, int(self.idle_timeout.total_seconds() * 2)),
-            )
+            ),
         )
 
     async def _session_started_cb(
@@ -291,7 +291,7 @@ class TimeoutIdleChecker(BaseIdleChecker):
             self._redis,
             lambda r: r.zcount(
                 f"session.{session_id}.active_app_connections",
-                float('-inf'), float('+inf')
+                float('-inf'), float('+inf'),
             ),
         )
         if active_streams is not None and active_streams > 0:
@@ -437,7 +437,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         t = await redis.execute(self._redis, lambda r: r.time())
         raw_util_last_collected = await redis.execute(
             self._redis,
-            lambda r: r.get(util_last_collected_key)
+            lambda r: r.get(util_last_collected_key),
         )
         util_last_collected = float(raw_util_last_collected) if raw_util_last_collected else 0
         if t - util_last_collected < interval:
@@ -529,7 +529,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
                 util_series_key,
                 msgpack.packb(util_series),
                 ex=max(86400, int(self.time_window.total_seconds() * 2)),
-            )
+            ),
         )
         await redis.execute(
             self._redis,
@@ -537,7 +537,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
                 util_last_collected_key,
                 f"{t:.06f}",
                 ex=max(86400, int(self.time_window.total_seconds() * 2)),
-            )
+            ),
         )
 
         if not_enough_data:

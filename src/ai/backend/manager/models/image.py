@@ -62,7 +62,7 @@ class Image(graphene.ObjectType):
         ) > 0
         installed_agents = await redis.execute(
             ctx.redis_image,
-            lambda r: r.smembers(data['canonical_ref'])
+            lambda r: r.smembers(data['canonical_ref']),
         )
         if installed_agents is None:
             installed_agents = []

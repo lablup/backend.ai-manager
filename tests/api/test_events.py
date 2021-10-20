@@ -74,7 +74,7 @@ async def test_dispatch(etcd_fixture, create_app_and_client) -> None:
     await asyncio.sleep(0.2)
     assert records == {'async', 'sync'}
 
-    await producer.redis_producer.flushdb()
+    await producer.redis_client.flushdb()
     await producer.close()
     await dispatcher.close()
 
@@ -121,7 +121,7 @@ async def test_error_on_dispatch(etcd_fixture, create_app_and_client, event_loop
 
     event_loop.set_exception_handler(old_handler)
 
-    await producer.redis_producer.flushdb()
+    await producer.redis_client.flushdb()
     await producer.close()
     await dispatcher.close()
 
@@ -183,7 +183,7 @@ async def test_background_task(etcd_fixture, create_app_and_client) -> None:
         assert done_handler_ctx['event_name'] == 'bgtask_done'
         assert done_handler_ctx['message'] == 'hooray'
     finally:
-        await producer.redis_producer.flushdb()
+        await producer.redis_client.flushdb()
         await producer.close()
         await dispatcher.close()
 
@@ -222,6 +222,6 @@ async def test_background_task_fail(etcd_fixture, create_app_and_client) -> None
         assert fail_handler_ctx['message'] is not None
         assert 'ZeroDivisionError' in fail_handler_ctx['message']
     finally:
-        await producer.redis_producer.flushdb()
+        await producer.redis_client.flushdb()
         await producer.close()
         await dispatcher.close()
