@@ -3,6 +3,7 @@ from datetime import datetime
 import functools
 import json
 import logging
+import math
 from pathlib import Path
 import stat
 from typing import (
@@ -275,7 +276,14 @@ async def create(request: web.Request, params: Any) -> web.Response:
 
         # Limit vfolder size quota if it is larger than max_vfolder_size of the resource policy.
         max_vfolder_size = resource_policy.get('max_vfolder_size', 0)
-        if max_vfolder_size > 0 and (params['quota'] is None or params['quota'] > max_vfolder_size):
+        if (
+            max_vfolder_size > 0
+            and (
+                params['quota'] is None
+                or params['quota'] <= 0
+                or params['quota'] > max_vfolder_size
+            )
+        ):
             params['quota'] = max_vfolder_size
 
         # Prevent creation of vfolder with duplicated name.
@@ -336,6 +344,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'usage_mode': params['usage_mode'],
             'permission': params['permission'],
             'last_used': None,
+            'max_size': int(params['quota'] / (2**20)),  # in MBytes
             'host': folder_host,
             'creator': request['user']['email'],
             'ownership_type': VFolderOwnershipType(ownership_type),
@@ -350,6 +359,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'host': folder_host,
             'usage_mode': params['usage_mode'].value,
             'permission': params['permission'].value,
+            'max_size': int(params['quota'] / (2**20)),  # in MBytes
             'creator': request['user']['email'],
             'ownership_type': ownership_type,
             'user': user_uuid,
@@ -419,7 +429,9 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
                     'ownership_type': row.vfolders_ownership_type,
                     'type': row.vfolders_ownership_type,  # legacy
                     'unmanaged_path': row.vfolders_unmanaged_path,
-                    'cloneable': row.vfolders_cloneable if row.vfolders_cloneable else False
+                    'cloneable': row.vfolders_cloneable if row.vfolders_cloneable else False,
+                    'max_files': row.vfolder_max_files,
+                    'max_size': row.vfolders_max_size,
                 })
         else:
             extra_vf_conds = None
@@ -451,7 +463,9 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
                 'group_name': entry['group_name'],
                 'ownership_type': entry['ownership_type'].value,
                 'type': entry['ownership_type'].value,  # legacy
-                'cloneable': entry['cloneable']
+                'cloneable': entry['cloneable'],
+                'max_files': entry['max_files'],
+                'max_size': entry['max_size'],
             })
     return web.json_response(resp, status=200)
 
@@ -627,7 +641,8 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
             'is_owner': is_owner,
             'permission': permission,
             'usage_mode': row['usage_mode'],
-            'cloneable': row['cloneable']
+            'cloneable': row['cloneable'],
+            'max_size': row['max_size'],
         }
     except aiohttp.ClientResponseError:
         raise VFolderOperationFailed
@@ -640,16 +655,18 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
 @check_api_params(
     t.Dict({
         t.Key('folder_host'): t.String,
+        t.Key('id'): tx.UUID,
     }))
 async def get_quota(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     proxy_name, volume_name = root_ctx.storage_manager.split_host(params['folder_host'])
-    log.info('VFOLDER.GET_QUOTA (volume_name:{})', volume_name)
+    log.info('VFOLDER.GET_QUOTA (volume_name:{}, vf:{})', volume_name, params['id'])
     try:
         async with root_ctx.storage_manager.request(
             proxy_name, 'GET', 'volume/quota',
             json={
                 'volume': volume_name,
+                'vfid': str(params['id']),
             },
             raise_for_status=True,
         ) as (_, storage_resp):
@@ -665,19 +682,34 @@ async def get_quota(request: web.Request, params: Any) -> web.Response:
 @check_api_params(
     t.Dict({
         t.Key('folder_host'): t.String,
+        t.Key('id'): tx.UUID,
         t.Key('input'): t.Mapping(t.String, t.Any),
     }),
 )
 async def update_quota(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     proxy_name, volume_name = root_ctx.storage_manager.split_host(params['folder_host'])
-    quota = params['input']['size_bytes']
-    log.info('VFOLDER.UPDATE_QUOTA (volume_name:{}, quota:{})', quota)
+    quota = int(params['input']['size_bytes'])
+    log.info('VFOLDER.UPDATE_QUOTA (volume_name:{}, quota:{}, vf:{})', volume_name, quota, params['id'])
+
+    # Limit vfolder size quota if it is larger than max_vfolder_size of the resource policy.
+    resource_policy = request['keypair']['resource_policy']
+    max_vfolder_size = resource_policy.get('max_vfolder_size', 0)
+    if (
+        max_vfolder_size > 0
+        and (
+            quota <= 0
+            or quota > max_vfolder_size
+        )
+    ):
+        quota = max_vfolder_size
+
     try:
         async with root_ctx.storage_manager.request(
             proxy_name, 'PATCH', 'volume/quota',
             json={
                 'volume': volume_name,
+                'vfid': str(params['id']),
                 'size_bytes': quota,
             },
             raise_for_status=True,
@@ -685,6 +717,17 @@ async def update_quota(request: web.Request, params: Any) -> web.Response:
             pass
     except aiohttp.ClientResponseError:
         raise VFolderOperationFailed
+
+    # Update the quota for the vfolder in DB.
+    async with root_ctx.db.begin() as conn:
+        query = (
+            sa.update(vfolders)
+            .values(max_size=math.ceil(quota / 2**20))  # in Mbytes
+            .where(vfolders.c.id == params['id'])
+        )
+        result = await conn.execute(query)
+        assert result.rowcount == 1
+
     return web.json_response({}, status=200)
 
 

@@ -109,7 +109,7 @@ vfolders = sa.Table(
     sa.Column('permission', EnumValueType(VFolderPermission),
               default=VFolderPermission.READ_WRITE),
     sa.Column('max_files', sa.Integer(), default=1000),
-    sa.Column('max_size', sa.Integer(), default=1048576),  # in KBytes
+    sa.Column('max_size', sa.Integer(), default=None),  # in MBytes
     sa.Column('num_files', sa.Integer(), default=0),
     sa.Column('cur_size', sa.Integer(), default=0),  # in KBytes
     sa.Column('created_at', sa.DateTime(timezone=True),
@@ -462,7 +462,7 @@ class VirtualFolder(graphene.ObjectType):
     permission = graphene.String()
     ownership_type = graphene.String()
     max_files = graphene.Int()
-    max_size = graphene.Int()
+    max_size = BigInt()          # in MiB
     created_at = GQLDateTime()
     last_used = GQLDateTime()
 
@@ -487,7 +487,7 @@ class VirtualFolder(graphene.ObjectType):
             permission=row['permission'],
             ownership_type=row['ownership_type'],
             max_files=row['max_files'],
-            max_size=row['max_size'],    # in KiB
+            max_size=row['max_size'],    # in MiB
             created_at=row['created_at'],
             last_used=row['last_used'],
             # num_attached=row['num_attached'],
