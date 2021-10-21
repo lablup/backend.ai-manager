@@ -344,7 +344,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'usage_mode': params['usage_mode'],
             'permission': params['permission'],
             'last_used': None,
-            'max_size': int(params['quota'] / (2**20)),  # in MBytes
+            'max_size': int(params['quota'] / (2**20)) if params['quota'] else None,  # in MBytes
             'host': folder_host,
             'creator': request['user']['email'],
             'ownership_type': VFolderOwnershipType(ownership_type),
@@ -359,7 +359,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'host': folder_host,
             'usage_mode': params['usage_mode'].value,
             'permission': params['permission'].value,
-            'max_size': int(params['quota'] / (2**20)),  # in MBytes
+            'max_size': int(params['quota'] / (2**20)) if params['quota'] else None,  # in MBytes
             'creator': request['user']['email'],
             'ownership_type': ownership_type,
             'user': user_uuid,
@@ -430,7 +430,7 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
                     'type': row.vfolders_ownership_type,  # legacy
                     'unmanaged_path': row.vfolders_unmanaged_path,
                     'cloneable': row.vfolders_cloneable if row.vfolders_cloneable else False,
-                    'max_files': row.vfolder_max_files,
+                    'max_files': row.vfolders_max_files,
                     'max_size': row.vfolders_max_size,
                 })
         else:
