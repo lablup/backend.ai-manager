@@ -1,1 +1,1 @@
-Set vfolder's max_size in creating it or returning its information. The unit of max_size is changed from KBytes to MBytes.
+Properly implement vfolder's max_size property with storage proxy (21.03.1+ required) and change the unit of the field from KBytes to MBytes.
