@@ -16,6 +16,18 @@ Changes
 
 .. towncrier release notes start
 
+21.03.23 (2021-10-21)
+---------------------
+
+### Features
+* Add the get/set APIs for size-based quota of vfolder hosts via storage proxy ([#474](https://github.com/lablup/backend.ai-manager/issues/474))
+* Limit the maximum configurable value of per-vfolder quota when creating a vfolder to the size quota specified in the keypair resource policy (`max_vfolder_size`) ([#488](https://github.com/lablup/backend.ai-manager/issues/488))
+* Properly implement vfolder's max_size property with storage proxy (21.03.1+ required) and change the unit of the field from KBytes to MBytes. ([#489](https://github.com/lablup/backend.ai-manager/issues/489))
+
+### Fixes
+* Fix an error in creating a virtual folder when quota is not delivered. ([#490](https://github.com/lablup/backend.ai-manager/issues/490))
+
+
 21.03.22 (2021-10-07)
 ---------------------
 

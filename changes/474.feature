@@ -1,1 +1,0 @@
-Add the get/set APIs for size-based quota of vfolder hosts via storage proxy
