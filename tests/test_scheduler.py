@@ -930,7 +930,7 @@ async def test_manually_assign_agent_available(example_agents, example_pending_s
         shared_config=mock_shared_config,
         event_dispatcher=mock_event_dispatcher,
         event_producer=mock_event_producer,
-        registry=registry
+        registry=registry,
     )
 
     # manually assigned agent is None
@@ -941,7 +941,7 @@ async def test_manually_assign_agent_available(example_agents, example_pending_s
         sgroup_name,
         candidate_agents,
         sess_ctx,
-        mock_check_result
+        mock_check_result,
     )
     result = mock_dbresult.scalar()
     assert result is None
@@ -959,7 +959,7 @@ async def test_manually_assign_agent_available(example_agents, example_pending_s
         sgroup_name,
         candidate_agents,
         sess_ctx,
-        mock_check_result
+        mock_check_result,
     )
     result = mock_dbresult.scalar()
     for key in result:
@@ -978,7 +978,7 @@ async def test_manually_assign_agent_available(example_agents, example_pending_s
         sgroup_name,
         candidate_agents,
         sess_ctx,
-        mock_check_result
+        mock_check_result,
     )
     result = mock_dbresult.scalar()
     for key in result:

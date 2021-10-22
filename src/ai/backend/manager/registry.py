@@ -1128,8 +1128,11 @@ class AgentRegistry:
             except DBAPIError as e:
                 if 'ForeignKeyViolationError' in e.orig:
                     log.exception('ForeignKeyViolationError: violates foreign key constraint')
-                    error_msg = re.sub(r"\\\\\D{1}|\\\'\)", ' ',
-                                    repr(" ".join(re.findall('(?<=>: ).+', repr(e.orig)))))
+                    error_msg = re.sub(
+                        r"\\\\\D{1}|\\\'\)",
+                        ' ',
+                        repr(" ".join(re.findall('(?<=>: ).+', repr(e.orig)))),
+                    )
                     raise InvalidAPIParameters("No such agent", error_msg)
                 else:
                     raise InvalidAPIParameters("No such agent", e)

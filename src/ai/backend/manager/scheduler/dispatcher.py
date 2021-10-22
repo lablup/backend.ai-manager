@@ -491,7 +491,7 @@ class SchedulerDispatcher(aobject):
                         continue
                     else:
                         raise InstanceNotAvailable(
-                            "The resource slot does not have the enough remaining capacity."
+                            "The resource slot does not have the enough remaining capacity.",
                         )
                 agent_alloc_ctx = await _reserve_agent(
                     sched_ctx, agent_db_conn, sgroup_name, agent_id, sess_ctx.requested_slots,
@@ -601,7 +601,7 @@ class SchedulerDispatcher(aobject):
                             continue
                         else:
                             raise InstanceNotAvailable(
-                                "The resource slot does not have the enough remaining capacity."
+                                "The resource slot does not have the enough remaining capacity.",
                             )
                     if available_test_pass:
 
@@ -614,7 +614,7 @@ class SchedulerDispatcher(aobject):
                                     extra_conds=agent_query_extra_conds,
                                 )
                                 candidate_agents = await _list_agents_by_sgroup(
-                                    agent_db_conn, sgroup_name
+                                    agent_db_conn, sgroup_name,
                                 )
 
                         await execute_with_retry(_reserve)

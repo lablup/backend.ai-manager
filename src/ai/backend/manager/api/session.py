@@ -207,7 +207,7 @@ creation_config_v5 = t.Dict({
     t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any),
     tx.AliasedKey(['resource_opts', 'resourceOpts'], default=None): t.Null | t.Mapping(t.String, t.Any),
     tx.AliasedKey(['preopen_ports', 'preopenPorts'], default=None): t.Null | t.List(t.Int[1024:65535]),
-    tx.AliasedKey(['agent_list', 'agentList'], default=None): t.Null | t.List(t.String)
+    tx.AliasedKey(['agent_list', 'agentList'], default=None): t.Null | t.List(t.String),
 })
 creation_config_v5_template = t.Dict({
     t.Key('mounts', default=undefined): UndefChecker | t.Null | t.List(t.String),
