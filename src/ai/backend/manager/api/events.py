@@ -255,7 +255,7 @@ async def enqueue_kernel_creation_status_update(
                 ])
                 .select_from(kernels)
                 .where(
-                    (kernels.c.id == event.kernel_id)
+                    (kernels.c.id == event.kernel_id),
                 )
             )
             result = await conn.execute(query)
@@ -292,7 +292,7 @@ async def enqueue_kernel_termination_status_update(
                 ])
                 .select_from(kernels)
                 .where(
-                    (kernels.c.id == event.kernel_id)
+                    (kernels.c.id == event.kernel_id),
                 )
             )
             result = await conn.execute(query)
@@ -327,7 +327,7 @@ async def enqueue_session_creation_status_update(
                 ])
                 .select_from(kernels)
                 .where(
-                    (kernels.c.id == event.session_id)
+                    (kernels.c.id == event.session_id),
                     # for the main kernel, kernel ID == session ID
                 )
             )
@@ -363,7 +363,7 @@ async def enqueue_session_termination_status_update(
                 ])
                 .select_from(kernels)
                 .where(
-                    (kernels.c.id == event.session_id)
+                    (kernels.c.id == event.session_id),
                     # for the main kernel, kernel ID == session ID
                 )
             )
@@ -399,7 +399,7 @@ async def enqueue_batch_task_result_update(
                 ])
                 .select_from(kernels)
                 .where(
-                    (kernels.c.id == event.session_id)
+                    (kernels.c.id == event.session_id),
                 )
             )
             result = await conn.execute(query)

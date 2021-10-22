@@ -17,17 +17,17 @@ import aiohttp_cors
 
 WebRequestHandler = Callable[
     [web.Request],
-    Awaitable[web.StreamResponse]
+    Awaitable[web.StreamResponse],
 ]
 WebMiddleware = Callable[
     [web.Request, WebRequestHandler],
-    Awaitable[web.StreamResponse]
+    Awaitable[web.StreamResponse],
 ]
 
 CORSOptions = Mapping[str, aiohttp_cors.ResourceOptions]
 AppCreator = Callable[
     [CORSOptions],
-    Tuple[web.Application, Iterable[WebMiddleware]]
+    Tuple[web.Application, Iterable[WebMiddleware]],
 ]
 
 # CleanupContext = Callable[[RootContext], AsyncIterator[None]]

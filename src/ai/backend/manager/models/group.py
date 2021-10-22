@@ -71,7 +71,7 @@ association_groups_users = sa.Table(
     sa.Column('group_id', GUID,
               sa.ForeignKey('groups.id', onupdate='CASCADE', ondelete='CASCADE'),
               nullable=False),
-    sa.UniqueConstraint('user_id', 'group_id', name='uq_association_user_id_group_id')
+    sa.UniqueConstraint('user_id', 'group_id', name='uq_association_user_id_group_id'),
 )
 
 
@@ -110,7 +110,7 @@ async def resolve_group_name_or_id(
             .select_from(groups)
             .where(
                 (groups.c.name == value) &
-                (groups.c.domain_name == domain_name)
+                (groups.c.domain_name == domain_name),
             )
         )
         return await db_conn.scalar(query)
@@ -120,7 +120,7 @@ async def resolve_group_name_or_id(
             .select_from(groups)
             .where(
                 (groups.c.id == value) &
-                (groups.c.domain_name == domain_name)
+                (groups.c.domain_name == domain_name),
             )
         )
         return await db_conn.scalar(query)
@@ -195,7 +195,7 @@ class Group(graphene.ObjectType):
         graph_ctx: GraphQueryContext,
         group_ids: Sequence[uuid.UUID],
         *,
-        domain_name: str = None
+        domain_name: str = None,
     ) -> Sequence[Group | None]:
         query = (
             sa.select([groups])
@@ -216,7 +216,7 @@ class Group(graphene.ObjectType):
         graph_ctx: GraphQueryContext,
         group_names: Sequence[str],
         *,
-        domain_name: str = None
+        domain_name: str = None,
     ) -> Sequence[Sequence[Group | None]]:
         query = (
             sa.select([groups])
@@ -310,7 +310,7 @@ class CreateGroup(graphene.Mutation):
     @classmethod
     @privileged_mutation(
         UserRole.ADMIN,
-        lambda name, props, **kwargs: (props.domain_name, None)
+        lambda name, props, **kwargs: (props.domain_name, None),
     )
     async def mutate(
         cls,
@@ -353,7 +353,7 @@ class ModifyGroup(graphene.Mutation):
     @classmethod
     @privileged_mutation(
         UserRole.ADMIN,
-        lambda gid, **kwargs: (None, gid)
+        lambda gid, **kwargs: (None, gid),
     )
     async def mutate(
         cls,
@@ -389,22 +389,22 @@ class ModifyGroup(graphene.Mutation):
                 if props.user_update_mode == 'add':
                     values = [{'user_id': uuid, 'group_id': gid} for uuid in props.user_uuids]
                     await conn.execute(
-                        sa.insert(association_groups_users).values(values)
+                        sa.insert(association_groups_users).values(values),
                     )
                 elif props.user_update_mode == 'remove':
                     await conn.execute(
                         sa.delete(association_groups_users)
                         .where(
                             (association_groups_users.c.user_id.in_(props.user_uuids)) &
-                            (association_groups_users.c.group_id == gid)
-                        )
+                            (association_groups_users.c.group_id == gid),
+                        ),
                     )
                 if data:
                     result = await conn.execute(
                         sa.update(groups)
                         .values(data)
                         .where(groups.c.id == gid)
-                        .returning(groups)
+                        .returning(groups),
                     )
                     if result.rowcount > 0:
                         o = Group.from_row(graph_ctx, result.first())
@@ -438,14 +438,14 @@ class DeleteGroup(graphene.Mutation):
     @classmethod
     @privileged_mutation(
         UserRole.ADMIN,
-        lambda gid, **kwargs: (None, gid)
+        lambda gid, **kwargs: (None, gid),
     )
     async def mutate(cls, root, info: graphene.ResolveInfo, gid: uuid.UUID) -> DeleteGroup:
         ctx: GraphQueryContext = info.context
         update_query = (
             sa.update(groups).values(
                 is_active=False,
-                integration_id=None
+                integration_id=None,
             ).where(groups.c.id == gid)
         )
         return await simple_db_mutate(cls, ctx, update_query)
@@ -470,7 +470,7 @@ class PurgeGroup(graphene.Mutation):
     @classmethod
     @privileged_mutation(
         UserRole.ADMIN,
-        lambda gid, **kwargs: (None, gid)
+        lambda gid, **kwargs: (None, gid),
     )
     async def mutate(cls, root, info: graphene.ResolveInfo, gid: uuid.UUID) -> PurgeGroup:
         graph_ctx: GraphQueryContext = info.context
@@ -480,12 +480,12 @@ class PurgeGroup(graphene.Mutation):
                 raise RuntimeError(
                     "Some of virtual folders that belong to this group "
                     "are currently mounted to active sessions. "
-                    "Terminate them first to proceed removal."
+                    "Terminate them first to proceed removal.",
                 )
             if await cls.group_has_active_kernels(conn, gid):
                 raise RuntimeError(
                     "Group has some active session. "
-                    "Terminate them first to proceed removal."
+                    "Terminate them first to proceed removal.",
                 )
             await cls.delete_vfolders(conn, gid, graph_ctx.storage_manager)
             await cls.delete_kernels(conn, gid)
@@ -588,7 +588,7 @@ class PurgeGroup(graphene.Mutation):
             .select_from(kernels)
             .where(
                 (kernels.c.group_id == group_id) &
-                (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES))
+                (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
             )
         )
         async for row in (await db_conn.stream(query)):
@@ -650,7 +650,7 @@ async def query_group_dotfiles(
 
 async def query_group_domain(
     db_conn: SAConnection,
-    group_id: Union[GUID, uuid.UUID]
+    group_id: Union[GUID, uuid.UUID],
 ) -> str:
     query = (
         sa.select([groups.c.domain_name])

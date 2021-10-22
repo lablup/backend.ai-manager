@@ -44,8 +44,8 @@ log = BraceStyleAdapter(logging.getLogger(__name__))
         tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
         tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
         t.Key('owner_access_key', default=None): t.Null | t.String,
-        t.Key('payload'): t.String
-    }
+        t.Key('payload'): t.String,
+    },
 ))
 async def create(request: web.Request, params: Any) -> web.Response:
     if params['domain'] is None:
@@ -84,7 +84,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             .select_from(domains)
             .where(
                 (domains.c.name == owner_domain) &
-                (domains.c.is_active)
+                (domains.c.is_active),
             )
         )
         qresult = await conn.execute(query)
@@ -100,7 +100,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 .where(
                     (groups.c.domain_name == params['domain']) &
                     (groups.c.name == params['group']) &
-                    (groups.c.is_active)
+                    (groups.c.is_active),
                 )
             )
             qresult = await conn.execute(query)
@@ -115,7 +115,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 .where(
                     (groups.c.domain_name == owner_domain) &
                     (groups.c.name == params['group']) &
-                    (groups.c.is_active)
+                    (groups.c.is_active),
                 )
             )
             qresult = await conn.execute(query)
@@ -131,7 +131,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                     (agus.c.user_id == owner_uuid) &
                     (groups.c.domain_name == owner_domain) &
                     (groups.c.name == params['group']) &
-                    (groups.c.is_active)
+                    (groups.c.is_active),
                 )
             )
             qresult = await conn.execute(query)
@@ -196,7 +196,7 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
                 .select_from(j)
                 .where(
                     (session_templates.c.is_active) &
-                    (session_templates.c.type == TemplateType.TASK)
+                    (session_templates.c.type == TemplateType.TASK),
                 )
             )
             result = await conn.execute(query)
@@ -249,7 +249,7 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
     t.Dict({
         t.Key('format', default='yaml'): t.Null | t.Enum('yaml', 'json'),
         t.Key('owner_access_key', default=None): t.Null | t.String,
-    })
+    }),
 )
 async def get(request: web.Request, params: Any) -> web.Response:
     if params['format'] not in ['yaml', 'json']:
@@ -269,7 +269,7 @@ async def get(request: web.Request, params: Any) -> web.Response:
             .where(
                 (session_templates.c.id == template_id) &
                 (session_templates.c.is_active) &
-                (session_templates.c.type == TemplateType.TASK)
+                (session_templates.c.type == TemplateType.TASK),
             )
         )
         template = await conn.scalar(query)
@@ -289,7 +289,7 @@ async def get(request: web.Request, params: Any) -> web.Response:
     t.Dict({
         t.Key('payload'): t.String,
         t.Key('owner_access_key', default=None): t.Null | t.String,
-    })
+    }),
 )
 async def put(request: web.Request, params: Any) -> web.Response:
     template_id = request.match_info['template_id']
@@ -309,7 +309,7 @@ async def put(request: web.Request, params: Any) -> web.Response:
             .where(
                 (session_templates.c.id == template_id) &
                 (session_templates.c.is_active) &
-                (session_templates.c.type == TemplateType.TASK)
+                (session_templates.c.type == TemplateType.TASK),
             )
         )
         result = await conn.scalar(query)
@@ -338,7 +338,7 @@ async def put(request: web.Request, params: Any) -> web.Response:
 @check_api_params(
     t.Dict({
         t.Key('owner_access_key', default=None): t.Null | t.String,
-    })
+    }),
 )
 async def delete(request: web.Request, params: Any) -> web.Response:
     template_id = request.match_info['template_id']
@@ -346,7 +346,7 @@ async def delete(request: web.Request, params: Any) -> web.Response:
     log.info(
         'SESSION_TEMPLATE.DELETE (ak:{0}/{1})',
         requester_access_key,
-        owner_access_key if owner_access_key != requester_access_key else '*'
+        owner_access_key if owner_access_key != requester_access_key else '*',
     )
     root_ctx: RootContext = request.app['_root.context']
     async with root_ctx.db.begin() as conn:
@@ -356,7 +356,7 @@ async def delete(request: web.Request, params: Any) -> web.Response:
             .where(
                 (session_templates.c.id == template_id) &
                 (session_templates.c.is_active) &
-                (session_templates.c.type == TemplateType.TASK)
+                (session_templates.c.type == TemplateType.TASK),
             )
         )
         result = await conn.scalar(query)

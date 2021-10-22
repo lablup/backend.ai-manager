@@ -45,7 +45,7 @@ __all__: Sequence[str] = (
     'query_accessible_vfolders',
     'get_allowed_vfolder_hosts_by_group',
     'get_allowed_vfolder_hosts_by_user',
-    'verify_vfolder_name'
+    'verify_vfolder_name',
 )
 
 
@@ -109,7 +109,7 @@ vfolders = sa.Table(
     sa.Column('permission', EnumValueType(VFolderPermission),
               default=VFolderPermission.READ_WRITE),
     sa.Column('max_files', sa.Integer(), default=1000),
-    sa.Column('max_size', sa.Integer(), default=1048576),  # in KBytes
+    sa.Column('max_size', sa.Integer(), default=None),  # in MBytes
     sa.Column('num_files', sa.Integer(), default=0),
     sa.Column('cur_size', sa.Integer(), default=0),  # in KBytes
     sa.Column('created_at', sa.DateTime(timezone=True),
@@ -133,7 +133,7 @@ vfolders = sa.Table(
     sa.CheckConstraint(
         '("user" IS NULL AND "group" IS NOT NULL) OR ("user" IS NOT NULL AND "group" IS NULL)',
         name='either_one_of_user_or_group',
-    )
+    ),
 )
 
 
@@ -286,12 +286,12 @@ async def query_accessible_vfolders(
         query = (
             sa.select(
                 vfolders_selectors + [vfolder_permissions.c.permission, users.c.email],
-                use_labels=True
+                use_labels=True,
             )
             .select_from(j)
             .where(
                 (vfolder_permissions.c.user == user_uuid) &
-                (vfolders.c.ownership_type == VFolderOwnershipType.USER)
+                (vfolders.c.ownership_type == VFolderOwnershipType.USER),
             )
         )
         await _append_entries(query, _is_owner=False)
@@ -333,7 +333,7 @@ async def query_accessible_vfolders(
             .select_from(j)
             .where(
                 (vfolders.c.group.in_(group_ids)) &
-                (vfolder_permissions.c.user == user_uuid)
+                (vfolder_permissions.c.user == user_uuid),
             )
         )
         if extra_vf_conds is not None:
@@ -370,7 +370,7 @@ async def get_allowed_vfolder_hosts_by_group(
         sa.select([domains.c.allowed_vfolder_hosts])
         .where(
             (domains.c.name == domain_name) &
-            (domains.c.is_active)
+            (domains.c.is_active),
         )
     )
     allowed_hosts.update(await conn.scalar(query))
@@ -381,7 +381,7 @@ async def get_allowed_vfolder_hosts_by_group(
             .where(
                 (groups.c.domain_name == domain_name) &
                 (groups.c.id == group_id) &
-                (groups.c.is_active)
+                (groups.c.is_active),
             )
         )
         allowed_hosts.update(await conn.scalar(query))
@@ -390,7 +390,7 @@ async def get_allowed_vfolder_hosts_by_group(
             sa.select([groups.c.allowed_vfolder_hosts])
             .where(
                 (groups.c.domain_name == domain_name) &
-                (groups.c.is_active)
+                (groups.c.is_active),
             )
         )
         result = await conn.execute(query)
@@ -419,7 +419,7 @@ async def get_allowed_vfolder_hosts_by_user(
         sa.select([domains.c.allowed_vfolder_hosts])
         .where(
             (domains.c.name == domain_name) &
-            (domains.c.is_active)
+            (domains.c.is_active),
         )
     )
     allowed_hosts.update(await conn.scalar(query))
@@ -429,14 +429,14 @@ async def get_allowed_vfolder_hosts_by_user(
         (
             (groups.c.id == association_groups_users.c.group_id) &
             (association_groups_users.c.user_id == user_uuid)
-        )
+        ),
     )
     query = (
         sa.select([groups.c.allowed_vfolder_hosts])
         .select_from(j)
         .where(
             (domains.c.name == domain_name) &
-            (groups.c.is_active)
+            (groups.c.is_active),
         )
     )
     result = await conn.execute(query)
@@ -462,7 +462,7 @@ class VirtualFolder(graphene.ObjectType):
     permission = graphene.String()
     ownership_type = graphene.String()
     max_files = graphene.Int()
-    max_size = graphene.Int()
+    max_size = BigInt()          # in MiB
     created_at = GQLDateTime()
     last_used = GQLDateTime()
 
@@ -487,7 +487,7 @@ class VirtualFolder(graphene.ObjectType):
             permission=row['permission'],
             ownership_type=row['ownership_type'],
             max_files=row['max_files'],
-            max_size=row['max_size'],    # in KiB
+            max_size=row['max_size'],    # in MiB
             created_at=row['created_at'],
             last_used=row['last_used'],
             # num_attached=row['num_attached'],
@@ -633,7 +633,7 @@ class VirtualFolder(graphene.ObjectType):
         async with graph_ctx.db.begin_readonly() as conn:
             return await batch_multiresult(
                 graph_ctx, conn, query, cls,
-                user_uuids, lambda row: row['user']
+                user_uuids, lambda row: row['user'],
             )
 
 

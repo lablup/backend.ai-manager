@@ -115,7 +115,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
     ) -> Sequence[KeyPairResourcePolicy]:
         j = sa.join(
             keypairs, keypair_resource_policies,
-            keypairs.c.resource_policy == keypair_resource_policies.c.name
+            keypairs.c.resource_policy == keypair_resource_policies.c.name,
         )
         query = (
             sa.select([keypair_resource_policies])
@@ -126,7 +126,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
                     .select_from(keypairs)
                     .where(keypairs.c.access_key == access_key)
                     .as_scalar()
-                )
+                ),
             )
         )
         async with ctx.db.begin_readonly() as conn:
@@ -162,14 +162,14 @@ class KeyPairResourcePolicy(graphene.ObjectType):
         access_key = ctx.access_key
         j = sa.join(
             keypairs, keypair_resource_policies,
-            keypairs.c.resource_policy == keypair_resource_policies.c.name
+            keypairs.c.resource_policy == keypair_resource_policies.c.name,
         )
         query = (
             sa.select([keypair_resource_policies])
             .select_from(j)
             .where(
                 (keypair_resource_policies.c.name.in_(names)) &
-                (keypairs.c.access_key == access_key)
+                (keypairs.c.access_key == access_key),
             )
             .order_by(keypair_resource_policies.c.name)
         )
@@ -187,7 +187,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
     ) -> Sequence[KeyPairResourcePolicy]:
         j = sa.join(
             keypairs, keypair_resource_policies,
-            keypairs.c.resource_policy == keypair_resource_policies.c.name
+            keypairs.c.resource_policy == keypair_resource_policies.c.name,
         )
         query = (
             sa.select([keypair_resource_policies])
@@ -261,7 +261,7 @@ class CreateKeyPairResourcePolicy(graphene.Mutation):
             sa.insert(keypair_resource_policies).values(data)
         )
         return await simple_db_mutate_returning_item(
-            cls, info.context, insert_query, item_cls=KeyPairResourcePolicy
+            cls, info.context, insert_query, item_cls=KeyPairResourcePolicy,
         )
 
 

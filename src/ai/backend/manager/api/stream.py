@@ -83,7 +83,7 @@ async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
     api_version = request['api_version']
     try:
         compute_session = await asyncio.shield(
-            root_ctx.registry.get_session(session_name, access_key)
+            root_ctx.registry.get_session(session_name, access_key),
         )
     except SessionNotFound:
         raise
@@ -142,7 +142,7 @@ async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
                                 root_ctx.registry.get_session(
                                     session_name,
                                     access_key,
-                                )
+                                ),
                             )
                             stdin_sock, stdout_sock = await connect_streams(kernel)
                             socks[0] = stdin_sock
@@ -414,7 +414,7 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
     log.info(
         'STREAM_WSPROXY (ak:{}, s:{}): tunneling {}:{} to {}',
         access_key, session_name,
-        service, sport['protocol'], '{}:{}'.format(*dest)
+        service, sport['protocol'], '{}:{}'.format(*dest),
     )
     if sport['protocol'] == 'tcp':
         proxy_cls = TCPProxy
@@ -482,7 +482,7 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
             opts['envs'] = json.loads(params['envs'])
 
         result = await asyncio.shield(
-            root_ctx.registry.start_service(session_name, access_key, service, opts)
+            root_ctx.registry.start_service(session_name, access_key, service, opts),
         )
         if result['status'] == 'failed':
             raise InternalServerError(
@@ -574,7 +574,7 @@ async def stream_conn_tracker_gc(root_ctx: RootContext, app_ctx: PrivateContext)
     try:
         while True:
             no_packet_timeout: timedelta = tx.TimeDuration().check(
-                await shared_config.etcd.get('config/idle/app-streaming-packet-timeout', '5m')
+                await shared_config.etcd.get('config/idle/app-streaming-packet-timeout', '5m'),
             )
             async with app_ctx.conn_tracker_lock:
                 now = await redis_live.time()
