@@ -34,7 +34,6 @@ import aiohttp
 import aioredis
 import aiotools
 from aioredis import Redis
-from aioredis.sentinel import Sentinel
 from async_timeout import timeout as _timeout
 from callosum.rpc import Peer, RPCUserError
 from callosum.lower.zeromq import ZeroMQAddress, ZeroMQRPCTransport
@@ -77,6 +76,7 @@ from ai.backend.common.types import (
     HardwareMetadata,
     KernelEnqueueingConfig,
     KernelId,
+    RedisConnectionInfo,
     ResourceSlot,
     SessionId,
     SessionResult,
@@ -252,9 +252,9 @@ class AgentRegistry:
         self,
         shared_config: SharedConfig,
         db: ExtendedAsyncSAEngine,
-        redis_stat: Redis | Sentinel,
-        redis_live: Redis | Sentinel,
-        redis_image: Redis | Sentinel,
+        redis_stat: RedisConnectionInfo,
+        redis_live: RedisConnectionInfo,
+        redis_image: RedisConnectionInfo,
         event_dispatcher: EventDispatcher,
         event_producer: EventProducer,
         storage_manager:  StorageSessionManager,
@@ -2508,7 +2508,7 @@ class AgentRegistry:
             log.debug('sync_kernel_stats(k:{})', kernel_id)
             updates = {}
 
-            async def _get_kstats_from_redis(r: aioredis.Redis):
+            async def _get_kstats_from_redis(r: Redis):
                 stat_type = await redis.execute(r, lambda r: r.type(raw_kernel_id), encoding='utf-8')
                 if stat_type == 'string':
                     kern_stat = await r.get(raw_kernel_id)

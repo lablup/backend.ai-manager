@@ -8,7 +8,6 @@ from ai.backend.common.events import EventHandler
 
 from aiohttp import web
 import aiohttp_cors
-import aioredis
 import attr
 import sqlalchemy as sa
 import trafaret as t
@@ -17,7 +16,7 @@ from typing import Any, TYPE_CHECKING, Tuple, MutableMapping
 from ai.backend.common import redis, validators as tx
 from ai.backend.common.events import AbstractEvent, EmptyEventArgs
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.types import AgentId, LogSeverity
+from ai.backend.common.types import AgentId, LogSeverity, RedisConnectionInfo
 
 from ..defs import REDIS_LIVE_DB, AdvisoryLock
 from ..distributed import GlobalTimer
@@ -241,7 +240,7 @@ async def log_cleanup_task(app: web.Application, src: AgentId, event: DoLogClean
 @attr.s(slots=True, auto_attribs=True, init=False)
 class PrivateContext:
     log_cleanup_timer: GlobalTimer
-    log_cleanup_timer_redis: aioredis.Redis | aioredis.sentinel.Sentinel
+    log_cleanup_timer_redis: RedisConnectionInfo
     log_cleanup_timer_evh: EventHandler[web.Application, DoLogCleanupEvent]
 
 

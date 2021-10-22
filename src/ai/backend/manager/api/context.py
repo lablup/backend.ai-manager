@@ -5,12 +5,10 @@ from typing import Sequence, TYPE_CHECKING
 import attr
 
 if TYPE_CHECKING:
-    from aioredis import Redis
-    from aioredis.sentinel import Sentinel
-
     from ai.backend.common.events import EventDispatcher, EventProducer
     from ai.backend.common.plugin.hook import HookPluginContext
     from ai.backend.common.plugin.monitor import ErrorPluginContext, StatsPluginContext
+    from ai.backend.common.types import RedisConnectionInfo
 
     from ..background import BackgroundTaskManager
     from ..models.storage import StorageSessionManager
@@ -32,10 +30,10 @@ class RootContext(BaseContext):
     db: ExtendedAsyncSAEngine
     event_dispatcher: EventDispatcher
     event_producer: EventProducer
-    redis_live: Redis | Sentinel
-    redis_stat: Redis | Sentinel
-    redis_image: Redis | Sentinel
-    redis_stream: Redis | Sentinel
+    redis_live: RedisConnectionInfo
+    redis_stat: RedisConnectionInfo
+    redis_image: RedisConnectionInfo
+    redis_stream: RedisConnectionInfo
     shared_config: SharedConfig
     local_config: LocalConfig
     cors_options: CORSOptions

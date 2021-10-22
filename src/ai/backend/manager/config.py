@@ -354,7 +354,7 @@ shared_config_iv = t.Dict({
     }).allow_extra('*'),
     t.Key('redis', default=_shdefs['redis']): t.Dict({
         t.Key('addr', default=_shdefs['redis']['addr']): t.Null | tx.HostPortPair,
-        t.Key('sentinel', default=None): t.Null | tx.StringList,
+        t.Key('sentinel', default=None): t.Null | tx.DelimiterSeperatedList(tx.HostPortPair),
         t.Key('service_name', default=None): t.Null | t.String,
         t.Key('password', default=_shdefs['redis']['password']): t.Null | t.String,
     }).allow_extra('*'),

@@ -11,12 +11,11 @@ from typing import (
 
 from aiohttp import web
 from aiotools import apartial
-from aioredis import Redis
-from aioredis.sentinel import Sentinel
 import attr
 
 from ai.backend.common import redis
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.types import RedisConnectionInfo
 
 from ..defs import REDIS_RLIM_DB
 from .context import RootContext
@@ -89,7 +88,7 @@ async def rlim_middleware(
 
 @attr.s(slots=True, auto_attribs=True, init=False)
 class PrivateContext:
-    redis_rlim: Redis | Sentinel
+    redis_rlim: RedisConnectionInfo
     redis_rlim_script: str
 
 

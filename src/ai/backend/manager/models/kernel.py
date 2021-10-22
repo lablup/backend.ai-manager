@@ -21,8 +21,6 @@ from typing import (
 from uuid import UUID
 import uuid
 
-from aioredis import Redis
-from aioredis.sentinel import Sentinel
 from dateutil.parser import parse as dtparse
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -41,6 +39,7 @@ from ai.backend.common.types import (
     SessionTypes,
     SessionResult,
     SlotName,
+    RedisConnectionInfo,
     ResourceSlot,
 )
 
@@ -1152,7 +1151,7 @@ class LegacyComputeSession(graphene.ObjectType):
     @classmethod
     async def _resolve_live_stat(
         cls,
-        redis_stat: Redis | Sentinel,
+        redis_stat: RedisConnectionInfo,
         kernel_id: str,
     ) -> Optional[Mapping[str, Any]]:
         cstat = await redis.execute(

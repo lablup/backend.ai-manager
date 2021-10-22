@@ -7,14 +7,13 @@ import attr
 import graphene
 
 if TYPE_CHECKING:
-    from aioredis import Redis
-    from aioredis.sentinel import Sentinel
     from graphql.execution.executors.asyncio import AsyncioExecutor
 
     from ai.backend.common.etcd import AsyncEtcd
     from ai.backend.common.types import (
         AccessKey,
         AgentId,
+        RedisConnectionInfo,
         SlotName,
         SlotTypes,
         SessionId,
@@ -133,8 +132,8 @@ class GraphQueryContext:
     user: Mapping[str, Any]  # TODO: express using typed dict
     access_key: str
     db: ExtendedAsyncSAEngine
-    redis_stat: Redis | Sentinel
-    redis_image: Redis | Sentinel
+    redis_stat: RedisConnectionInfo
+    redis_image: RedisConnectionInfo
     manager_status: ManagerStatus
     known_slot_types: Mapping[SlotName, SlotTypes]
     background_task_manager: BackgroundTaskManager
