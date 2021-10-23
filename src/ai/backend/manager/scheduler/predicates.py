@@ -47,7 +47,7 @@ async def check_reserved_batch_session(
         if starts_at is not None and datetime.now(tzutc()) < starts_at:
             return PredicateResult(
                 False,
-                'Before start time'
+                'Before start time',
             )
     return PredicateResult(True)
 
@@ -83,7 +83,7 @@ async def check_concurrency(
                 return PredicateResult(
                     False,
                     "You cannot run more than "
-                    f"{resource_policy['max_concurrent_sessions']} concurrent sessions"
+                    f"{resource_policy['max_concurrent_sessions']} concurrent sessions",
                 )
 
             # Increment concurrency usage of keypair.
@@ -167,7 +167,7 @@ async def check_group_resource_limit(
             .format(' '.join(
                 f'{k}={v}' for k, v in
                 total_group_allowed.to_humanized(sched_ctx.known_slot_types).items()
-            ))
+            )),
         )
     return PredicateResult(True)
 
@@ -182,7 +182,7 @@ async def check_domain_resource_limit(
     domain_resource_slots = await db_conn.scalar(query)
     domain_resource_policy = {
         'total_resource_slots': domain_resource_slots,
-        'default_for_unspecified': DefaultForUnspecified.UNLIMITED
+        'default_for_unspecified': DefaultForUnspecified.UNLIMITED,
     }
     total_domain_allowed = ResourceSlot.from_policy(domain_resource_policy,
                                                     sched_ctx.known_slot_types)

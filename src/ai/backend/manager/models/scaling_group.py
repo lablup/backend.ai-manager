@@ -139,7 +139,7 @@ async def query_allowed_sgroups(
         query = (
             sa.select([sgroups_for_groups])
             .where(
-                (sgroups_for_groups.c.group == group_id)
+                (sgroups_for_groups.c.group == group_id),
             )
         )
         result = await db_conn.execute(query)
@@ -155,7 +155,7 @@ async def query_allowed_sgroups(
         sa.select([scaling_groups])
         .where(
             (scaling_groups.c.name.in_(sgroups)) &
-            (scaling_groups.c.is_active)
+            (scaling_groups.c.is_active),
         )
         .order_by(scaling_groups.c.name)
     )
@@ -242,7 +242,7 @@ class ScalingGroup(graphene.ObjectType):
     ) -> Sequence[ScalingGroup]:
         j = sa.join(
             scaling_groups, sgroups_for_groups,
-            scaling_groups.c.name == sgroups_for_groups.c.scaling_group
+            scaling_groups.c.name == sgroups_for_groups.c.scaling_group,
         )
         query = (
             sa.select([scaling_groups])
@@ -267,7 +267,7 @@ class ScalingGroup(graphene.ObjectType):
     ) -> Sequence[ScalingGroup]:
         j = sa.join(
             scaling_groups, sgroups_for_keypairs,
-            scaling_groups.c.name == sgroups_for_keypairs.c.scaling_group
+            scaling_groups.c.name == sgroups_for_keypairs.c.scaling_group,
         )
         query = (
             sa.select([scaling_groups])
@@ -290,7 +290,7 @@ class ScalingGroup(graphene.ObjectType):
     ) -> Sequence[Sequence[ScalingGroup | None]]:
         j = sa.join(
             scaling_groups, sgroups_for_groups,
-            scaling_groups.c.name == sgroups_for_groups.c.scaling_group
+            scaling_groups.c.name == sgroups_for_groups.c.scaling_group,
         )
         query = (
             sa.select([scaling_groups, sgroups_for_groups.c.group])
@@ -372,7 +372,7 @@ class CreateScalingGroup(graphene.Mutation):
             sa.insert(scaling_groups).values(data)
         )
         return await simple_db_mutate_returning_item(
-            cls, info.context, insert_query, item_cls=ScalingGroup
+            cls, info.context, insert_query, item_cls=ScalingGroup,
         )
 
 
@@ -486,7 +486,7 @@ class DisassociateScalingGroupWithDomain(graphene.Mutation):
             sa.delete(sgroups_for_domains)
             .where(
                 (sgroups_for_domains.c.scaling_group == scaling_group) &
-                (sgroups_for_domains.c.domain == domain)
+                (sgroups_for_domains.c.domain == domain),
             )
         )
         return await simple_db_mutate(cls, info.context, delete_query)
@@ -568,7 +568,7 @@ class DisassociateScalingGroupWithUserGroup(graphene.Mutation):
             sa.delete(sgroups_for_groups)
             .where(
                 (sgroups_for_groups.c.scaling_group == scaling_group) &
-                (sgroups_for_groups.c.group == user_group)
+                (sgroups_for_groups.c.group == user_group),
             )
         )
         return await simple_db_mutate(cls, info.context, delete_query)
@@ -650,7 +650,7 @@ class DisassociateScalingGroupWithKeyPair(graphene.Mutation):
             sa.delete(sgroups_for_keypairs)
             .where(
                 (sgroups_for_keypairs.c.scaling_group == scaling_group) &
-                (sgroups_for_keypairs.c.access_key == access_key)
+                (sgroups_for_keypairs.c.access_key == access_key),
             )
         )
         return await simple_db_mutate(cls, info.context, delete_query)

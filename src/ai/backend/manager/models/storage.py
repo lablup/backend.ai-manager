@@ -271,7 +271,7 @@ class StorageVolume(graphene.ObjectType):
                     return cls.from_info(proxy_name, volume_data)
             else:
                 raise ValueError(
-                    f"no such volume in the storage proxy {proxy_name!r}: {volume_name!r}"
+                    f"no such volume in the storage proxy {proxy_name!r}: {volume_name!r}",
                 )
 
 

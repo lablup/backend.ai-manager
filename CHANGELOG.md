@@ -16,6 +16,18 @@ Changes
 
 .. towncrier release notes start
 
+## 21.09.0a2 (2021-09-28)
+
+### Features
+* Add the get/set APIs for size-based quota of vfolder hosts via storage proxy ([#474](https://github.com/lablup/backend.ai-manager/issues/474))
+* Add an Etcd option to set MTU in creating an overlay network for a cluster session to support improved performance for multi-node cluster training. ([#475](https://github.com/lablup/backend.ai-manager/issues/475))
+
+### Fixes
+* Always set the scaling group when creating sessions to prevent use of non-allowed scaling groups ([#472](https://github.com/lablup/backend.ai-manager/issues/472))
+* Rearrange the order of checking vfolder mount aliases to fix emptiness and null checks to come at the right order ([#473](https://github.com/lablup/backend.ai-manager/issues/473))
+* Fix a regression of `Agent.batch_load()` GraphQL resolver due to internal argument name changes ([#476](https://github.com/lablup/backend.ai-manager/issues/476))
+
+
 ## 21.09.0a1 (2021-08-25)
 
 ### Breaking Changes

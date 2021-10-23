@@ -1,0 +1,1 @@
+A follow-up fix for #482 to silence bogus DB API error upon service shutdown

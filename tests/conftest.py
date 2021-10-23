@@ -46,6 +46,7 @@ from ai.backend.manager.models import (
     agents,
     kernels, keypairs, vfolders,
 )
+from ai.backend.manager.models.utils import connect_database
 
 here = Path(__file__).parent
 
@@ -131,8 +132,8 @@ def etcd_fixture(test_id, local_config, vfolder_mount, vfolder_fsprefix, vfolder
                         'base_url': '127.0.0.1:8090',
                         'user': 'fake-cloudia-user@lablup.com',
                         'password': 'fake-password',
-                    }
-                }
+                    },
+                },
             },
         }
         json.dump(etcd_fixture, f)
@@ -226,6 +227,12 @@ def database(request, local_config, test_db):
             'schema', 'oneshot',
             '-f', alembic_cfg.name,
         ])
+
+
+@pytest.fixture()
+async def database_engine(local_config, database):
+    async with connect_database(local_config) as db:
+        yield db
 
 
 @pytest.fixture()
@@ -379,7 +386,7 @@ async def create_app_and_client(local_config, event_loop) -> AsyncIterator:
             subapp_pkgs=subapp_pkgs,
             scheduler_opts={
                 'close_timeout': 10,
-                **scheduler_opts
+                **scheduler_opts,
             },
         )
         root_ctx: RootContext = app['_root.context']

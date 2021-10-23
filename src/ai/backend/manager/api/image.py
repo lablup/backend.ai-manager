@@ -101,13 +101,15 @@ async def get_import_image_form(request: web.Request) -> web.Response:
         query = (
             sa.select([groups.c.name])
             .select_from(
-                sa.join(groups, domains,
-                        groups.c.domain_name == domains.c.name)
+                sa.join(
+                    groups, domains,
+                    groups.c.domain_name == domains.c.name,
+                ),
             )
             .where(
                 (domains.c.name == request['user']['domain_name']) &
                 (domains.c.is_active) &
-                (groups.c.is_active)
+                (groups.c.is_active),
             )
         )
         result = await conn.execute(query)
@@ -117,7 +119,8 @@ async def get_import_image_form(request: web.Request) -> web.Response:
         # FIXME: Currently this only consider domain-level scaling group associations,
         #        thus ignoring the group name query.
         rows = await query_allowed_sgroups(
-            conn, request['user']['domain_name'], '', request['keypair']['access_key'])
+            conn, request['user']['domain_name'], '', request['keypair']['access_key'],
+        )
         accessible_scaling_groups = [row['name'] for row in rows]
 
     return web.json_response({
@@ -240,7 +243,7 @@ async def get_import_image_form(request: web.Request) -> web.Response:
                                 'The port number 2000-2003 are reserved by Backend.AI, and '
                                 'all port numbers must be larger than 1024 and smaller than 65535.',
                     },
-                ]
+                ],
             },
             {
                 'name': 'Import Task Options',
@@ -260,9 +263,9 @@ async def get_import_image_form(request: web.Request) -> web.Response:
                         'label': 'Scaling group to build image',
                         'help': 'The scaling group where the import task will take resources from.',
                     },
-                ]
+                ],
             },
-        ]
+        ],
     })
 
 
@@ -353,14 +356,16 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
         query = (
             sa.select([groups.c.id])
             .select_from(
-                sa.join(groups, domains,
-                        groups.c.domain_name == domains.c.name)
+                sa.join(
+                    groups, domains,
+                    groups.c.domain_name == domains.c.name,
+                ),
             )
             .where(
                 (domains.c.name == request['user']['domain_name']) &
                 (groups.c.name == params['launchOptions']['group']) &
                 (domains.c.is_active) &
-                (groups.c.is_active)
+                (groups.c.is_active),
             )
         )
         result = await conn.execute(query)
@@ -373,7 +378,7 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
             .select_from(agus)
             .where(
                 (agus.c.user_id == request['user']['uuid']) &
-                (agus.c.group_id == group_id)
+                (agus.c.group_id == group_id),
             )
         )
         result = await conn.execute(query)
@@ -414,10 +419,10 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
                     'BUILD_SCRIPT': (
                         base64.b64encode(dockerfile_content.encode('utf8')).decode('ascii')
                     ),
-                }
+                },
             },
             'startup_command': '/root/build-image.sh',
-            'bootstrap_script': ''
+            'bootstrap_script': '',
         }],
         None,
         SessionTypes.BATCH,
@@ -431,7 +436,7 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
             'docker_credentials': docker_creds,
             'prevent_vfolder_mounts': True,
             'block_service_ports': True,
-        }
+        },
     )
     return web.json_response({
         'importTask': {

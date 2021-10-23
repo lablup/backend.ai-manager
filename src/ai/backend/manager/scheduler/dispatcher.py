@@ -169,15 +169,15 @@ class SchedulerDispatcher(aobject):
         self.schedule_timer_redis = await aioredis.create_redis(str(redis_url))
         self.prepare_timer_redis = await aioredis.create_redis(str(redis_url))
         self.schedule_timer = GlobalTimer(
-            self.schedule_timer_redis,
-            "scheduler_tick",
+            self.db,
+            AdvisoryLock.LOCKID_SCHEDULE_TIMER,
             self.event_producer,
             lambda: DoScheduleEvent(),
             interval=10.0,
         )
         self.prepare_timer = GlobalTimer(
-            self.prepare_timer_redis,
-            "prepare_tick",
+            self.db,
+            AdvisoryLock.LOCKID_PREPARE_TIMER,
             self.event_producer,
             lambda: DoPrepareEvent(),
             interval=10.0,
@@ -219,10 +219,9 @@ class SchedulerDispatcher(aobject):
             known_slot_types=known_slot_types,
         )
 
-        # We use short transaction blocks to prevent deadlock timeouts under heavy loads
-        # because this scheduling handler will be executed by only one process.
-        # It is executed under a globally exclusive context using aioredlock.
         try:
+            # The schedule() method should be executed with a global lock
+            # as its individual steps are composed of many short-lived transactions.
             async with self.db.advisory_lock(AdvisoryLock.LOCKID_SCHEDULE):
                 async with self.db.begin_readonly() as conn:
                     query = (
@@ -403,7 +402,7 @@ class SchedulerDispatcher(aobject):
                                     'last_try': datetime.now(tzutc()).isoformat(),
                                     'failed_predicates': failed_predicates,
                                     'passed_predicates': passed_predicates,
-                                }
+                                },
                             ),
                         }).where(kernels.c.id == sess_ctx.session_id)
                         await conn.execute(query)
@@ -423,7 +422,7 @@ class SchedulerDispatcher(aobject):
                                     'last_try': datetime.now(tzutc()).isoformat(),
                                     'failed_predicates': failed_predicates,
                                     'passed_predicates': passed_predicates,
-                                }
+                                },
                             ),
                         }).where(kernels.c.id == sess_ctx.session_id)
                         await conn.execute(query)
@@ -450,7 +449,7 @@ class SchedulerDispatcher(aobject):
                 )
             else:
                 raise RuntimeError(
-                    f"should not reach here; unknown cluster_mode: {sess_ctx.cluster_mode}"
+                    f"should not reach here; unknown cluster_mode: {sess_ctx.cluster_mode}",
                 )
             num_scheduled += 1
         if num_scheduled > 0:
@@ -491,7 +490,7 @@ class SchedulerDispatcher(aobject):
                             ('scheduler', 'retries'),
                             parent_updates={
                                 'last_try': datetime.now(tzutc()).isoformat(),
-                            }
+                            },
                         ),
                     }).where(kernels.c.id == sess_ctx.session_id)
                     await kernel_db_conn.execute(query)
@@ -534,7 +533,7 @@ class SchedulerDispatcher(aobject):
 
         await execute_with_retry(_finalize_scheduled)
         await self.registry.event_producer.produce_event(
-            SessionScheduledEvent(sess_ctx.session_id, sess_ctx.session_creation_id)
+            SessionScheduledEvent(sess_ctx.session_id, sess_ctx.session_creation_id),
         )
 
     async def _schedule_multi_node_session(
@@ -590,7 +589,7 @@ class SchedulerDispatcher(aobject):
                                     ('scheduler', 'retries'),
                                     parent_updates={
                                         'last_try': datetime.now(tzutc()).isoformat(),
-                                    }
+                                    },
                                 ),
                             }).where(kernels.c.id == kernel.kernel_id)
                             await kernel_db_conn.execute(query)
@@ -639,7 +638,7 @@ class SchedulerDispatcher(aobject):
 
         await execute_with_retry(_finalize_scheduled)
         await self.registry.event_producer.produce_event(
-            SessionScheduledEvent(sess_ctx.session_id, sess_ctx.session_creation_id)
+            SessionScheduledEvent(sess_ctx.session_id, sess_ctx.session_creation_id),
         )
 
     async def prepare(
@@ -674,7 +673,7 @@ class SchedulerDispatcher(aobject):
                                 'status_data': {},
                             })
                             .where(
-                                (kernels.c.status == KernelStatus.SCHEDULED)
+                                (kernels.c.status == KernelStatus.SCHEDULED),
                             )
                             .returning(kernels.c.id)
                         )
@@ -685,7 +684,7 @@ class SchedulerDispatcher(aobject):
                         select_query = (
                             PendingSession.base_query()
                             .where(
-                                kernels.c.id.in_(target_kernel_ids)
+                                kernels.c.id.in_(target_kernel_ids),
                             )
                         )
                         rows = (await conn.execute(select_query)).fetchall()
@@ -699,7 +698,7 @@ class SchedulerDispatcher(aobject):
                             SessionPreparingEvent(
                                 scheduled_session.session_id,
                                 scheduled_session.session_creation_id,
-                            )
+                            ),
                         )
                         tg.create_task(self.start_session(
                             sched_ctx,
@@ -751,7 +750,7 @@ class SchedulerDispatcher(aobject):
                     session.session_id,
                     session.session_creation_id,
                     "failed-to-start",
-                )
+                ),
             )
             log.debug(log_fmt + 'cleanup-start-failure: begin', *log_args)
             try:
@@ -792,7 +791,7 @@ async def _list_pending_sessions(
             (kernels.c.status == KernelStatus.PENDING) &
             (
                 (kernels.c.scaling_group == sgroup_name)
-            )
+            ),
         )
     )
     rows = (await db_conn.execute(query)).fetchall()
@@ -807,7 +806,7 @@ async def _list_existing_sessions(
         ExistingSession.base_query()
         .where(
             (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)) &
-            (kernels.c.scaling_group == sgroup_name)
+            (kernels.c.scaling_group == sgroup_name),
         )
     )
     rows = (await db_conn.execute(query)).fetchall()
@@ -830,7 +829,7 @@ async def _list_agents_by_sgroup(
         .where(
             (agents.c.status == AgentStatus.ALIVE) &
             (agents.c.scaling_group == sgroup_name) &
-            (agents.c.schedulable == true())
+            (agents.c.schedulable == true()),
         )
     )
     items = []
@@ -868,7 +867,7 @@ async def _reserve_agent(
     update_query = (
         sa.update(agents)
         .values({
-            'occupied_slots': current_occupied_slots + requested_slots
+            'occupied_slots': current_occupied_slots + requested_slots,
         })
         .where(agents.c.id == agent_id)
     )

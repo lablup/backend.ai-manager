@@ -79,7 +79,7 @@ class ProgressReporter:
                 message=message,
                 current_progress=current,
                 total_progress=total,
-            )
+            ),
         )
 
 
@@ -171,7 +171,7 @@ class BackgroundTaskManager:
                 event_cls(
                     task_id,
                     message=message,
-                )
+                ),
             )
             log.info('Task {} ({}): {}', task_id, task_name or '', task_result)
 

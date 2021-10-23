@@ -25,7 +25,7 @@ from .user import UserRole
 from .vfolder import verify_vfolder_name
 
 __all__: Sequence[str] = (
-    'TemplateType', 'session_templates', 'query_accessible_session_templates'
+    'TemplateType', 'session_templates', 'query_accessible_session_templates',
 )
 
 
@@ -46,7 +46,7 @@ session_templates = sa.Table(
     sa.Column('type', EnumType(TemplateType), nullable=False, server_default='TASK', index=True),
 
     sa.Column('name', sa.String(length=128), nullable=True),
-    sa.Column('template', pgsql.JSONB(), nullable=False)
+    sa.Column('template', pgsql.JSONB(), nullable=False),
 )
 
 
@@ -66,7 +66,7 @@ task_template_v1 = t.Dict({
             t.Key('run', default=None): t.Null | t.Dict({
                 t.Key('bootstrap', default=None): t.Null | t.String,
                 tx.AliasedKey(['startup', 'startup_command', 'startupCommand'],
-                              default=None) >> 'startup_command': t.Null | t.String
+                              default=None) >> 'startup_command': t.Null | t.String,
             }),
             t.Key('git', default=None): t.Null | t.Dict({
                 t.Key('repository'): t.String,
@@ -74,15 +74,15 @@ task_template_v1 = t.Dict({
                 t.Key('branch', default=None): t.Null | t.String,
                 t.Key('credential', default=None): t.Null | t.Dict({
                     t.Key('username'): t.String,
-                    t.Key('password'): t.String
+                    t.Key('password'): t.String,
                 }),
                 tx.AliasedKey(['destination_dir', 'destinationDir'],
-                              default=None) >> 'dest_dir': t.Null | t.String
-            })
+                              default=None) >> 'dest_dir': t.Null | t.String,
+            }),
         }),
         t.Key('mounts', default={}): t.Null | t.Mapping(t.String, t.Any),
-        t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any)
-    })
+        t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any),
+    }),
 }).allow_extra('*')
 
 
@@ -104,7 +104,7 @@ cluster_template_v1 = t.Dict({
     t.Key('kind'): t.Enum('clusterTemplate', 'cluster_template'),
     t.Key('mode'): t.Enum('single-node', 'multi-node'),
     t.Key('metadata'): t.Dict({
-        t.Key('name'): t.String
+        t.Key('name'): t.String,
     }),
     t.Key('spec'): t.Dict({
         t.Key('environ', default={}): t.Null | t.Mapping(t.String, t.String),
@@ -112,9 +112,9 @@ cluster_template_v1 = t.Dict({
         t.Key('nodes'): t.List(t.Dict({
             t.Key('role'): t.String,
             tx.AliasedKey(['session_template', 'sessionTemplate']): tx.UUID,
-            t.Key('replicas', default=1): t.Int
-        }))
-    })
+            t.Key('replicas', default=1): t.Int,
+        })),
+    }),
 }).allow_extra('*')
 
 
@@ -127,12 +127,12 @@ def check_cluster_template(raw_data: Mapping[str, Any]) -> Mapping[str, Any]:
             raise InvalidArgument("Each role can only be defined once")
         if node['role'] == DEFAULT_ROLE and node['replicas'] != 1:
             raise InvalidArgument(
-                f"One and only one {DEFAULT_ROLE} node must be created per cluster"
+                f"One and only one {DEFAULT_ROLE} node must be created per cluster",
             )
         defined_roles.append(node['role'])
     if DEFAULT_ROLE not in defined_roles:
         raise InvalidArgument(
-            f"One and only one {DEFAULT_ROLE} node must be created per cluster"
+            f"One and only one {DEFAULT_ROLE} node must be created per cluster",
         )
     return data
 
@@ -159,13 +159,13 @@ async def query_accessible_session_templates(
                 session_templates.c.created_at,
                 session_templates.c.user_uuid,
                 session_templates.c.group_id,
-                users.c.email
+                users.c.email,
             ])
             .select_from(j)
             .where(
                 (session_templates.c.user_uuid == user_uuid) &
                 session_templates.c.is_active &
-                (session_templates.c.type == template_type)
+                (session_templates.c.type == template_type),
             )
         )
         if extra_conds is not None:
@@ -211,13 +211,13 @@ async def query_accessible_session_templates(
                 session_templates.c.created_at,
                 session_templates.c.user_uuid,
                 session_templates.c.group_id,
-                groups.c.name
+                groups.c.name,
             ], use_labels=True)
             .select_from(j)
             .where(
                 session_templates.c.group_id.in_(group_ids) &
                 session_templates.c.is_active &
-                (session_templates.c.type == template_type)
+                (session_templates.c.type == template_type),
             )
         )
         if extra_conds is not None:

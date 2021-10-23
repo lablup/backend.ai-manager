@@ -115,6 +115,8 @@ Alias keys are also URL-quoted in the same way.
          - container: "0.0.0.0/0"
        + overlay
          - mtu: 1500  # Maximum Transmission Unit
+       + rpc
+         - keepalive-timeout: 60  # seconds
      + watcher
        - token: {some-secret}
    + volumes
@@ -326,7 +328,7 @@ _shdefs: Mapping[str, Any] = {
     },
     'watcher': {
         'token': None,
-    }
+    },
 }
 
 container_registry_iv = t.Dict({
@@ -628,8 +630,11 @@ class SharedConfig(AbstractConfig):
                     if tag == '':
                         continue
                     raw_ref = f'{etcd_unquote(registry)}/{etcd_unquote(image)}:{tag}'
-                    ref = ImageRef(raw_ref, known_registries)
-                    coros.append(self._parse_image(ref, image_info, reverse_aliases))
+                    try:
+                        ref = ImageRef(raw_ref, known_registries)
+                        coros.append(self._parse_image(ref, image_info, reverse_aliases))
+                    except ValueError:
+                        log.warn('skipping image {} as it contains malformed metadata', raw_ref)
         result = await asyncio.gather(*coros)
         return result
 
@@ -649,7 +654,7 @@ class SharedConfig(AbstractConfig):
     ) -> None:
         registry_config_iv = t.Mapping(t.String, container_registry_iv)
         latest_registry_config = registry_config_iv.check(
-            await self.etcd.get_prefix('config/docker/registry')
+            await self.etcd.get_prefix('config/docker/registry'),
         )
         self['docker']['registry'] = latest_registry_config
         # TODO: delete images from registries removed from the previous config?
