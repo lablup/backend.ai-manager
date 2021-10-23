@@ -522,53 +522,11 @@ async def _create(request: web.Request, params: Any) -> web.Response:
         resp['servicePorts'] = []
         resp['created'] = True
 
-        async def monitor_kernel_preparation(reporter: ProgressReporter) -> None:
-            progress = [0, 0]
-
-            async def _get_status(kernel_id):
-                async with root_ctx.db.begin_readonly() as conn:
-                    query = (
-                        sa.select([
-                            kernels.c.id,
-                            kernels.c.status,
-                        ])
-                        .select_from(kernels)
-                        .where(kernels.c.id == kernel_id)
-                    )
-                    result = await conn.execute(query)
-
-                return result.first()
-
-            async def _update_progress(
-                app: web.Application,
-                source: AgentId,
-                event: KernelPullProgressEvent,
-            ) -> None:
-                # update both current and total
-                progress[0] = int(event.current_progress)
-                progress[1] = int(event.total_progress)
-
-            progress_handler = root_ctx.event_dispatcher.subscribe(
-                KernelPullProgressEvent,
-                request.app,
-                _update_progress
-            )
-            kernel_id = resp['sessionId']
-            try:
-                while True:
-                    result = await _get_status(kernel_id)
-                    if result is None:
-                        continue
-                    if result['status'] == KernelStatus.PREPARING:
-                        await reporter.update(0)
-                    if result['status'] == KernelStatus.RUNNING:
-                        break
-                    reporter.current_progress = progress[0]
-                    reporter.total_progress = progress[1]
-                    await reporter.update(0)
-                    await asyncio.sleep(0.5)
-            finally:
-                root_ctx.event_dispatcher.unsubscribe(progress_handler)
+        monitor_kernel_preparation = Monitor_kernel_preparation(
+            kernel_id=kernel_id,
+            root_ctx=root_ctx,
+            app=request.app,
+        )
 
         if params['enqueue_only']:
             task_id = await root_ctx.background_task_manager.start(
@@ -1282,6 +1240,69 @@ async def handle_agent_heartbeat(
 ) -> None:
     root_ctx: RootContext = app['_root.context']
     await root_ctx.registry.handle_heartbeat(source, event.agent_info)
+
+
+class Monitor_kernel_preparation:
+    kernel_id: uuid.UUID
+    root_ctx: RootContext
+    app: web.Application
+
+    def __init__(
+        self,
+        kernel_id: uuid.UUID,
+        root_ctx: RootContext,
+        app: web.Application,
+    ) -> None:
+        self.kernel_id = kernel_id
+        self.root_ctx = root_ctx
+        self.app = app
+        self.progress = [0, 0]
+
+    async def _get_status(self):
+        async with self.root_ctx.db.begin_readonly() as conn:
+            query = (
+                sa.select([
+                    kernels.c.id,
+                    kernels.c.status,
+                ])
+                .select_from(kernels)
+                .where(kernels.c.id == self.kernel_id)
+            )
+            result = await conn.execute(query)
+
+        return result.first()
+
+    async def _update_progress(
+        self,
+        app: web.Application,
+        source: AgentId,
+        event: KernelPullProgressEvent,
+    ) -> None:
+        # update both current and total
+        self.progress[0] = int(event.current_progress)
+        self.progress[1] = int(event.total_progress)
+
+    async def __call__(self, reporter: ProgressReporter):
+        progress_handler = self.root_ctx.event_dispatcher.subscribe(
+            KernelPullProgressEvent,
+            self.app,
+            self._update_progress
+        )
+        try:
+            while True:
+                result = await self._get_status()
+                if result is None:
+                    continue
+                if result['status'] == KernelStatus.PREPARING:
+                    await reporter.update(0)
+                if result['status'] == KernelStatus.RUNNING:
+                    break
+                reporter.current_progress = self.progress[0]
+                reporter.total_progress = self.progress[1]
+                await reporter.update(0)
+                await asyncio.sleep(0.5)
+        finally:
+            self.root_ctx.event_dispatcher.unsubscribe(progress_handler)
 
 
 @catch_unexpected(log)
