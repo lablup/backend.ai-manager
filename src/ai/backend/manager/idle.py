@@ -238,6 +238,7 @@ class TimeoutIdleChecker(BaseIdleChecker):
     async def _update_timeout(self, session_id: SessionId) -> None:
         log.debug(f"TimeoutIdleChecker._update_timeout({session_id})")
         t = await redis.execute(self._redis, lambda r: r.time())
+        t = t[0] + (t[1] / (10**6))
         await redis.execute(
             self._redis,
             lambda r: r.set(
@@ -297,6 +298,7 @@ class TimeoutIdleChecker(BaseIdleChecker):
         if active_streams is not None and active_streams > 0:
             return True
         t = await redis.execute(self._redis, lambda r: r.time())
+        t = t[0] + (t[1] / (10**6))
         raw_last_access = \
             await redis.execute(self._redis, lambda r: r.get(f"session.{session_id}.last_access"))
         if raw_last_access is None or raw_last_access == "0":
@@ -435,6 +437,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
         # Wait until the time "interval" is passed after the last udpated time.
         t = await redis.execute(self._redis, lambda r: r.time())
+        t = t[0] + (t[1] / (10**6))
         raw_util_last_collected = await redis.execute(
             self._redis,
             lambda r: r.get(util_last_collected_key),

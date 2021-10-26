@@ -433,12 +433,13 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
 
     async def refresh_cb(kernel_id: str, data: bytes) -> None:
         now = await redis.execute(redis_live, lambda r: r.time())
+        now = now[0] + (now[1] / (10**6))
         await asyncio.shield(call_non_bursty(
             conn_tracker_key,
             apartial(
                 redis.execute,
                 redis_live,
-                lambda r: r.zadd(conn_tracker_key, now, conn_tracker_val),
+                lambda r: r.zadd(conn_tracker_key, {conn_tracker_val: now}),
             ),
             max_bursts=64, max_idle=2000,
         ))
@@ -453,9 +454,11 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
         async with app_ctx.conn_tracker_lock:
             app_ctx.active_session_ids[kernel_id] += 1
             now = await redis.execute(redis_live, lambda r: r.time())
+            now = now[0] + (now[1] / (10**6))
             await redis.execute(
                 redis_live,
-                lambda r: r.zadd(conn_tracker_key, {now: conn_tracker_val}),
+                # aioredis' ZADD implementation flattens mapping in value-key order
+                lambda r: r.zadd(conn_tracker_key, {conn_tracker_val: now}),
             )
             for idle_checker in root_ctx.idle_checkers:
                 await idle_checker.update_app_streaming_status(
@@ -590,6 +593,7 @@ async def stream_conn_tracker_gc(root_ctx: RootContext, app_ctx: PrivateContext)
             )
             async with app_ctx.conn_tracker_lock:
                 now = await redis.execute(redis_live, lambda r: r.time())
+                now = now[0] + (now[1] / (10**6))
                 for session_id in app_ctx.active_session_ids.keys():
                     conn_tracker_key = f"session.{session_id}.active_app_connections"
                     prev_remaining_count = await redis.execute(
