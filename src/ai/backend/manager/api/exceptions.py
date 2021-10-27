@@ -314,6 +314,11 @@ class StorageProxyError(BackendError, web.HTTPError):
         return self.status_code
 
 
+class StorageProxyOperationNotAvailable(BackendError, web.HTTPServiceUnavailable):
+    error_type = 'https://api.backend.ai/probs/storage-proxy-operation-not-available'
+    error_title = 'Storage server is busy. Please try again.'
+
+
 class BackendAgentError(BackendError):
     """
     An RFC-7807 error class that wraps agent-side errors.

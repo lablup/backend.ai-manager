@@ -55,7 +55,7 @@ from .auth import admin_required, auth_required, superadmin_required
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists, VFolderOperationFailed,
     GenericForbidden, GenericNotFound, InvalidAPIParameters, ServerMisconfiguredError,
-    BackendAgentError, InternalServerError, GroupNotFound,
+    BackendAgentError, InternalServerError, GroupNotFound, StorageProxyOperationNotAvailable
 )
 from .manager import (
     READ_ALLOWED, ALL_ALLOWED,
@@ -644,8 +644,11 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
             'cloneable': row['cloneable'],
             'max_size': row['max_size'],
         }
-    except aiohttp.ClientResponseError:
-        raise VFolderOperationFailed
+    except aiohttp.ClientResponseError as err:
+        if err.status == 500:
+            raise StorageProxyOperationNotAvailable
+        else:
+            raise VFolderOperationFailed
     return web.json_response(resp, status=200)
 
 
