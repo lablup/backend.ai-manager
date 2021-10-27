@@ -2255,8 +2255,10 @@ class AgentRegistry:
             instance_rejoin = False
 
             # Update "last seen" timestamp for liveness tracking
-            await redis.execute(self.redis_live,
-                                lambda r: r.hset('agent.last_seen', agent_id, now.timestamp()))
+            await redis.execute(
+                self.redis_live,
+                lambda r: r.hset('agent.last_seen', agent_id, now.timestamp()),
+            )
 
             # Check and update status of the agent record in DB
             async def _update() -> None:
