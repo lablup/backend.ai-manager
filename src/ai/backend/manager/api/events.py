@@ -228,7 +228,9 @@ async def push_background_task_events(
                         body['current_progress'] = event.current_progress
                         body['total_progress'] = event.total_progress
                     await resp.send(json.dumps(body), event=event.name, retry=5)
-                    if event.name in ('bgtask_done', 'bgtask_failed', 'bgtask_cancelled'):
+                    if (isinstance(event, BgtaskDoneEvent) or
+                        isinstance(event, BgtaskFailedEvent) or
+                        isinstance(event, BgtaskCancelledEvent)):
                         await resp.send('{}', event="server_close")
                         break
                 finally:

@@ -1075,18 +1075,18 @@ async def handle_kernel_creation_lifecycle(
     if ck_id not in root_ctx.registry.kernel_creation_tracker:
         return
     log.debug('handle_kernel_creation_lifecycle: ev:{} k:{}', event.name, event.kernel_id)
-    if event.name == 'kernel_preparing':
+    if isinstance(event, KernelPreparingEvent):
         # State transition is done by the DoPrepareEvent handler inside the scheduler-distpacher object.
         pass
-    elif event.name == 'kernel_pulling':
+    elif isinstance(event, KernelPullingEvent):
         await root_ctx.registry.set_kernel_status(event.kernel_id, KernelStatus.PULLING, event.reason)
-    elif event.name == 'kernel_creating':
+    elif isinstance(event, KernelCreatingEvent):
         await root_ctx.registry.set_kernel_status(event.kernel_id, KernelStatus.PREPARING, event.reason)
-    elif event.name == 'kernel_started':
+    elif isinstance(event, KernelStartedEvent):
         # post_create_kernel() coroutines are waiting for the creation tracker events to be set.
         if tracker := root_ctx.registry.kernel_creation_tracker.get(ck_id):
             tracker.set_result(None)
-    elif event.name == 'kernel_cancelled':
+    elif isinstance(event, KernelCancelledEvent):
         if tracker := root_ctx.registry.kernel_creation_tracker.get(ck_id):
             tracker.cancel()
 
@@ -1097,10 +1097,10 @@ async def handle_kernel_termination_lifecycle(
     event: KernelTerminatingEvent | KernelTerminatedEvent,
 ) -> None:
     root_ctx: RootContext = app['_root.context']
-    if event.name == 'kernel_terminating':
+    if isinstance(event, KernelTerminatingEvent):
         # The destroy_kernel() API handler will set the "TERMINATING" status.
         pass
-    elif event.name == 'kernel_terminated':
+    if isinstance(event, KernelTerminatedEvent):
         await root_ctx.registry.mark_kernel_terminated(event.kernel_id, event.reason, event.exit_code)
         await root_ctx.registry.check_session_terminated(event.kernel_id, event.reason)
 
@@ -1118,10 +1118,10 @@ async def handle_session_creation_lifecycle(
     if event.creation_id not in app_ctx.session_creation_tracker:
         return
     log.debug('handle_session_creation_lifecycle: ev:{} s:{}', event.name, event.session_id)
-    if event.name == 'session_started':
+    if isinstance(event, SessionStartedEvent):
         if tracker := app_ctx.session_creation_tracker.get(event.creation_id):
             tracker.set()
-    elif event.name == 'session_cancelled':
+    elif isinstance(event, SessionCancelledEvent):
         if tracker := app_ctx.session_creation_tracker.get(event.creation_id):
             tracker.set()
 
@@ -1136,7 +1136,7 @@ async def handle_session_termination_lifecycle(
     published by the manager.
     """
     root_ctx: RootContext = app['_root.context']
-    if event.name == 'session_terminated':
+    if isinstance(event, SessionTerminatedEvent):
         await root_ctx.registry.mark_session_terminated(event.session_id, event.reason)
 
 
@@ -1174,9 +1174,9 @@ async def handle_batch_result(
     Update the database according to the batch-job completion results
     """
     root_ctx: RootContext = app['_root.context']
-    if event.name == 'session_success':
+    if isinstance(event, SessionSuccessEvent):
         await root_ctx.registry.set_session_result(event.session_id, True, event.exit_code)
-    elif event.name == 'session_failure':
+    elif isinstance(event, SessionFailureEvent):
         await root_ctx.registry.set_session_result(event.session_id, False, event.exit_code)
     await root_ctx.registry.destroy_session(
         functools.partial(
@@ -1193,12 +1193,12 @@ async def handle_agent_lifecycle(
     event: AgentStartedEvent | AgentTerminatedEvent,
 ) -> None:
     root_ctx: RootContext = app['_root.context']
-    if event.name == 'agent_started':
+    if isinstance(event, AgentStartedEvent):
         log.info('instance_lifecycle: ag:{0} joined ({1})', source, event.reason)
         await root_ctx.registry.update_instance(source, {
             'status': AgentStatus.ALIVE,
         })
-    elif event.name == 'agent_terminated':
+    if isinstance(event, AgentTerminatedEvent):
         if event.reason == 'agent-lost':
             await root_ctx.registry.mark_agent_terminated(source, AgentStatus.LOST)
         elif event.reason == 'agent-restart':
@@ -1233,7 +1233,7 @@ async def check_agent_lost(root_ctx: RootContext, interval: float) -> None:
                 if now - prev > timeout:
                     await root_ctx.event_producer.produce_event(
                         AgentTerminatedEvent("agent-lost"),
-                        source=agent_id)
+                        source=agent_id.decode())
 
         await redis.execute(root_ctx.redis_live, _check_impl)
     except asyncio.CancelledError:
