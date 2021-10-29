@@ -535,9 +535,19 @@ async def list_hosts(request: web.Request) -> web.Response:
     default_host = await root_ctx.shared_config.get_raw('volumes/default_host')
     if default_host not in allowed_hosts:
         default_host = None
+    volume_info = {
+        f"{proxy_name}:{volume_data['name']}": {
+            'backend': volume_data['backend'],
+            'capabilities': volume_data['capabilities'],
+        }
+        for proxy_name, volume_data in all_volumes
+        if f"{proxy_name}:{volume_data['name']}" in allowed_hosts
+    }
+    print('# volume_info:', volume_info, flush=True)
     resp = {
         'default': default_host,
         'allowed': sorted(allowed_hosts),
+        'volume_info': volume_info,
     }
     return web.json_response(resp, status=200)
 
