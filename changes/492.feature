@@ -1,0 +1,1 @@
+Allow users to query/update the vfolder quotas on their own. To help a client to determine whether a vfolder is on a volume which supports quota, list host API now returns the storage backend information as well.
