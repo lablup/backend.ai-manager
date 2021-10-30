@@ -16,6 +16,7 @@ from typing import (
 import uuid
 
 from aiojobs import Scheduler
+import aioredis
 
 from ai.backend.common import redis
 from ai.backend.common.events import (
@@ -26,7 +27,6 @@ from ai.backend.common.events import (
     EventProducer,
 )
 from ai.backend.common.logging import BraceStyleAdapter
-import aioredis
 
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.background'))
