@@ -123,6 +123,7 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
     async def aclose(self) -> None:
         await self.timer.leave()
         self._event_dispatcher.unconsume(self._evh_idle_check)
+        await self._redis.close()
 
     @abstractmethod
     async def populate_config(self, config: Mapping[str, Any]) -> None:
@@ -387,6 +388,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         )
 
     async def aclose(self) -> None:
+        await self._redis_stat.close()
         await super().aclose()
 
     async def populate_config(self, raw_config: Mapping[str, Any]) -> None:

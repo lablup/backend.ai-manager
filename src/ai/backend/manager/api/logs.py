@@ -270,6 +270,7 @@ async def shutdown(app: web.Application) -> None:
     app_ctx: PrivateContext = app['logs.context']
     await app_ctx.log_cleanup_timer.leave()
     root_ctx.event_dispatcher.unconsume(app_ctx.log_cleanup_timer_evh)
+    await app_ctx.log_cleanup_timer_redis.close()
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:

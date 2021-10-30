@@ -299,6 +299,10 @@ async def redis_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
         root_ctx.shared_config.data['redis'], db=REDIS_STREAM_DB,
     )
     yield
+    await root_ctx.redis_stream.close()
+    await root_ctx.redis_image.close()
+    await root_ctx.redis_stat.close()
+    await root_ctx.redis_live.close()
 
 
 @aiotools.actxmgr

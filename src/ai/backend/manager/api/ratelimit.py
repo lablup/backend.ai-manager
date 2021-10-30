@@ -102,10 +102,8 @@ async def init(app: web.Application) -> None:
 
 async def shutdown(app: web.Application) -> None:
     app_ctx: PrivateContext = app['ratelimit.context']
-    try:
-        await redis.execute(app_ctx.redis_rlim, lambda r: r.flushdb())
-    except (ConnectionResetError, ConnectionRefusedError):
-        pass
+    await redis.execute(app_ctx.redis_rlim, lambda r: r.flushdb())
+    await app_ctx.redis_rlim.close()
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:

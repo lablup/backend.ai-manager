@@ -1289,6 +1289,7 @@ async def handle_kernel_log(
             )
     finally:
         log_buffer.close()
+        await redis_conn.close()
 
 
 async def report_stats(root_ctx: RootContext) -> None:
