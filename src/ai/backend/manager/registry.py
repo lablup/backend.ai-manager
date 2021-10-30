@@ -31,6 +31,7 @@ import weakref
 
 import aiodocker
 import aiohttp
+import aioredis
 import aiotools
 from aioredis import Redis
 from async_timeout import timeout as _timeout
@@ -75,6 +76,7 @@ from ai.backend.common.types import (
     HardwareMetadata,
     KernelEnqueueingConfig,
     KernelId,
+    RedisConnectionInfo,
     ResourceSlot,
     SessionId,
     SessionResult,
@@ -250,9 +252,9 @@ class AgentRegistry:
         self,
         shared_config: SharedConfig,
         db: ExtendedAsyncSAEngine,
-        redis_stat: Redis,
-        redis_live: Redis,
-        redis_image: Redis,
+        redis_stat: RedisConnectionInfo,
+        redis_live: RedisConnectionInfo,
+        redis_image: RedisConnectionInfo,
         event_dispatcher: EventDispatcher,
         event_producer: EventProducer,
         storage_manager:  StorageSessionManager,
@@ -1844,9 +1846,9 @@ class AgentRegistry:
                             last_stat: Optional[Dict[str, Any]]
                             last_stat = None
                             try:
-                                raw_last_stat = await redis.execute_with_retries(
-                                    lambda: self.redis_stat.get(str(kernel['id']), encoding=None),
-                                    max_retries=3)
+                                raw_last_stat = await redis.execute(
+                                    self.redis_stat,
+                                    lambda r: r.get(str(kernel['id'])))
                                 if raw_last_stat is not None:
                                     last_stat = msgpack.unpackb(raw_last_stat)
                                     last_stat['version'] = 2
@@ -2253,7 +2255,10 @@ class AgentRegistry:
             instance_rejoin = False
 
             # Update "last seen" timestamp for liveness tracking
-            await self.redis_live.hset('agent.last_seen', agent_id, now.timestamp())
+            await redis.execute(
+                self.redis_live,
+                lambda r: r.hset('agent.last_seen', agent_id, now.timestamp()),
+            )
 
             # Check and update status of the agent record in DB
             async def _update() -> None:
@@ -2351,13 +2356,13 @@ class AgentRegistry:
             known_registries = await get_known_registries(self.shared_config.etcd)
             images = msgpack.unpackb(snappy.decompress(agent_info['images']))
 
-            def _pipe_builder():
-                pipe = self.redis_image.pipeline()
+            def _pipe_builder(r: aioredis.Redis):
+                pipe = r.pipeline()
                 for image in images:
                     image_ref = ImageRef(image[0], known_registries)
                     pipe.sadd(image_ref.canonical, agent_id)
                 return pipe
-            await redis.execute_with_retries(_pipe_builder)
+            await redis.execute(self.redis_image, _pipe_builder)
 
         await self.hook_plugin_ctx.notify(
             'POST_AGENT_HEARTBEAT',
@@ -2366,11 +2371,11 @@ class AgentRegistry:
 
     async def mark_agent_terminated(self, agent_id: AgentId, status: AgentStatus) -> None:
         global agent_peers
-        await self.redis_live.hdel('agent.last_seen', agent_id)
+        await redis.execute(self.redis_live, lambda r: r.hdel('agent.last_seen', agent_id))
 
-        async def _pipe_builder():
-            pipe = self.redis_image.pipeline()
-            async for imgname in self.redis_image.iscan():
+        async def _pipe_builder(r: aioredis.Redis):
+            pipe = r.pipeline()
+            async for imgname in r.scan_iter():
                 pipe.srem(imgname, agent_id)
             return pipe
 
@@ -2410,7 +2415,7 @@ class AgentRegistry:
                 )
                 await conn.execute(update_query)
 
-        await redis.execute_with_retries(_pipe_builder)
+        await redis.execute(self.redis_image, _pipe_builder)
         await execute_with_retry(_update)
 
     async def set_session_status(
@@ -2506,14 +2511,14 @@ class AgentRegistry:
             log.debug('sync_kernel_stats(k:{})', kernel_id)
             updates = {}
 
-            async def _get_kstats_from_redis():
-                stat_type = await self.redis_stat.type(raw_kernel_id)
+            async def _get_kstats_from_redis(r: Redis):
+                stat_type = await redis.execute(r, lambda r: r.type(raw_kernel_id), encoding='utf-8')
                 if stat_type == 'string':
-                    kern_stat = await self.redis_stat.get(raw_kernel_id, encoding=None)
+                    kern_stat = await r.get(raw_kernel_id)
                     if kern_stat is not None:
                         updates['last_stat'] = msgpack.unpackb(kern_stat)
                 else:
-                    kern_stat = await self.redis_stat.hgetall(raw_kernel_id)
+                    kern_stat = await r.hgetall(raw_kernel_id)
                     if kern_stat is not None and 'cpu_used' in kern_stat:
                         updates.update({
                             'cpu_used': int(float(kern_stat['cpu_used'])),
@@ -2525,9 +2530,9 @@ class AgentRegistry:
                             'io_max_scratch_size': int(kern_stat['io_max_scratch_size']),
                         })
 
-            await redis.execute_with_retries(
-                lambda: _get_kstats_from_redis(),
-                max_retries=1,
+            await redis.execute(
+                self.redis_stat,
+                _get_kstats_from_redis,
             )
             if not updates:
                 log.warning('sync_kernel_stats(k:{}): no statistics updates', kernel_id)

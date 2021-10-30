@@ -21,7 +21,6 @@ from typing import (
 from uuid import UUID
 import uuid
 
-from aioredis import Redis
 from dateutil.parser import parse as dtparse
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -40,6 +39,7 @@ from ai.backend.common.types import (
     SessionTypes,
     SessionResult,
     SlotName,
+    RedisConnectionInfo,
     ResourceSlot,
 )
 
@@ -566,8 +566,9 @@ class ComputeContainer(graphene.ObjectType):
             return None
         graph_ctx: GraphQueryContext = info.context
         if KernelStatus[self.status] in LIVE_STATUS:
-            raw_live_stat = await redis.execute_with_retries(
-                lambda: graph_ctx.redis_stat.get(str(self.id), encoding=None))
+            raw_live_stat = await redis.execute(
+                graph_ctx.redis_stat,
+                lambda r: r.get(str(self.id)))
             if raw_live_stat is not None:
                 live_stat = msgpack.unpackb(raw_live_stat)
                 return live_stat
@@ -1150,11 +1151,12 @@ class LegacyComputeSession(graphene.ObjectType):
     @classmethod
     async def _resolve_live_stat(
         cls,
-        redis_stat: Redis,
+        redis_stat: RedisConnectionInfo,
         kernel_id: str,
     ) -> Optional[Mapping[str, Any]]:
-        cstat = await redis.execute_with_retries(
-            lambda: redis_stat.get(kernel_id, encoding=None))
+        cstat = await redis.execute(
+            redis_stat,
+            lambda r: r.get(kernel_id))
         if cstat is not None:
             cstat = msgpack.unpackb(cstat)
         return cstat

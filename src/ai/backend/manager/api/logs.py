@@ -8,16 +8,15 @@ from ai.backend.common.events import EventHandler
 
 from aiohttp import web
 import aiohttp_cors
-import aioredis
 import attr
 import sqlalchemy as sa
 import trafaret as t
 from typing import Any, TYPE_CHECKING, Tuple, MutableMapping
 
-from ai.backend.common import validators as tx
+from ai.backend.common import redis, validators as tx
 from ai.backend.common.events import AbstractEvent, EmptyEventArgs
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.types import AgentId, LogSeverity
+from ai.backend.common.types import AgentId, LogSeverity, RedisConnectionInfo
 
 from ..defs import REDIS_LIVE_DB, AdvisoryLock
 from ..distributed import GlobalTimer
@@ -241,7 +240,7 @@ async def log_cleanup_task(app: web.Application, src: AgentId, event: DoLogClean
 @attr.s(slots=True, auto_attribs=True, init=False)
 class PrivateContext:
     log_cleanup_timer: GlobalTimer
-    log_cleanup_timer_redis: aioredis.Redis
+    log_cleanup_timer_redis: RedisConnectionInfo
     log_cleanup_timer_evh: EventHandler[web.Application, DoLogCleanupEvent]
 
 
@@ -251,8 +250,9 @@ async def init(app: web.Application) -> None:
     app_ctx.log_cleanup_timer_evh = root_ctx.event_dispatcher.consume(
         DoLogCleanupEvent, app, log_cleanup_task,
     )
-    app_ctx.log_cleanup_timer_redis = await aioredis.create_redis(
-        str(root_ctx.shared_config.get_redis_url(db=REDIS_LIVE_DB))
+    app_ctx.log_cleanup_timer_redis = redis.get_redis_object(
+        root_ctx.shared_config.data['redis'],
+        db=REDIS_LIVE_DB,
     )
     app_ctx.log_cleanup_timer = GlobalTimer(
         root_ctx.db,
@@ -269,9 +269,8 @@ async def shutdown(app: web.Application) -> None:
     root_ctx: RootContext = app['_root.context']
     app_ctx: PrivateContext = app['logs.context']
     await app_ctx.log_cleanup_timer.leave()
-    app_ctx.log_cleanup_timer_redis.close()
-    await app_ctx.log_cleanup_timer_redis.wait_closed()
     root_ctx.event_dispatcher.unconsume(app_ctx.log_cleanup_timer_evh)
+    await app_ctx.log_cleanup_timer_redis.close()
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:

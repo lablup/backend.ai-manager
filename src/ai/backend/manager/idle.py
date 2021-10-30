@@ -24,14 +24,13 @@ from typing import (
     Union,
 )
 
-import aioredis
 import sqlalchemy as sa
 import trafaret as t
 from dateutil.tz import tzutc
 from sqlalchemy.engine import Row
 
 import ai.backend.common.validators as tx
-from ai.backend.common import msgpack
+from ai.backend.common import msgpack, redis
 from ai.backend.common.events import (
     AbstractEvent,
     DoIdleCheckEvent,
@@ -99,8 +98,9 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
         self._event_producer = event_producer
 
     async def __ainit__(self) -> None:
-        self._redis = await aioredis.create_redis(
-            str(self._shared_config.get_redis_url(db=REDIS_LIVE_DB))
+        self._redis = redis.get_redis_object(
+            self._shared_config.data['redis'],
+            db=REDIS_LIVE_DB,
         )
         raw_config = await self._shared_config.etcd.get_prefix_dict(
             f"config/idle/checkers/{self.name}"
@@ -123,8 +123,7 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
     async def aclose(self) -> None:
         await self.timer.leave()
         self._event_dispatcher.unconsume(self._evh_idle_check)
-        self._redis.close()
-        await self._redis.wait_closed()
+        await self._redis.close()
 
     @abstractmethod
     async def populate_config(self, config: Mapping[str, Any]) -> None:
@@ -230,17 +229,24 @@ class TimeoutIdleChecker(BaseIdleChecker):
 
     async def _disable_timeout(self, session_id: SessionId) -> None:
         log.debug(f"TimeoutIdleChecker._disable_timeout({session_id})")
-        await self._redis.set(
-            f"session.{session_id}.last_access", "0", exist=self._redis.SET_IF_EXIST
+        await redis.execute(
+            self._redis,
+            lambda r: r.set(
+                f"session.{session_id}.last_access", "0", xx=True,
+            ),
         )
 
     async def _update_timeout(self, session_id: SessionId) -> None:
         log.debug(f"TimeoutIdleChecker._update_timeout({session_id})")
-        t = await self._redis.time()
-        await self._redis.set(
-            f"session.{session_id}.last_access",
-            f"{t:.06f}",
-            expire=max(86400, int(self.idle_timeout.total_seconds() * 2)),
+        t = await redis.execute(self._redis, lambda r: r.time())
+        t = t[0] + (t[1] / (10**6))
+        await redis.execute(
+            self._redis,
+            lambda r: r.set(
+                f"session.{session_id}.last_access",
+                f"{t:.06f}",
+                ex=max(86400, int(self.idle_timeout.total_seconds() * 2)),
+            ),
         )
 
     async def _session_started_cb(
@@ -283,14 +289,19 @@ class TimeoutIdleChecker(BaseIdleChecker):
         session_id = session["id"]
         if session["session_type"] == SessionTypes.BATCH:
             return True
-        active_streams = await self._redis.zcount(
-            f"session.{session_id}.active_app_connections"
+        active_streams = await redis.execute(
+            self._redis,
+            lambda r: r.zcount(
+                f"session.{session_id}.active_app_connections",
+                float('-inf'), float('+inf'),
+            ),
         )
         if active_streams is not None and active_streams > 0:
             return True
-        t = await self._redis.time()
-
-        raw_last_access = await self._redis.get(f"session.{session_id}.last_access")
+        t = await redis.execute(self._redis, lambda r: r.time())
+        t = t[0] + (t[1] / (10**6))
+        raw_last_access = \
+            await redis.execute(self._redis, lambda r: r.get(f"session.{session_id}.last_access"))
         if raw_last_access is None or raw_last_access == "0":
             return True
         last_access = float(raw_last_access)
@@ -371,13 +382,13 @@ class UtilizationIdleChecker(BaseIdleChecker):
     async def __ainit__(self) -> None:
         await super().__ainit__()
         self._policy_cache = ContextVar("_policy_cache")
-        self._redis_stat = await aioredis.create_redis(
-            str(self._shared_config.get_redis_url(db=REDIS_STAT_DB))
+        self._redis_stat = redis.get_redis_object(
+            self._shared_config.data['redis'],
+            db=REDIS_STAT_DB,
         )
 
     async def aclose(self) -> None:
-        self._redis_stat.close()
-        await self._redis_stat.wait_closed()
+        await self._redis_stat.close()
         await super().aclose()
 
     async def populate_config(self, raw_config: Mapping[str, Any]) -> None:
@@ -427,8 +438,12 @@ class UtilizationIdleChecker(BaseIdleChecker):
         util_last_collected_key = f"session.{session_id}.util_last_collected"
 
         # Wait until the time "interval" is passed after the last udpated time.
-        t = await self._redis.time()
-        raw_util_last_collected = await self._redis.get(util_last_collected_key)
+        t = await redis.execute(self._redis, lambda r: r.time())
+        t = t[0] + (t[1] / (10**6))
+        raw_util_last_collected = await redis.execute(
+            self._redis,
+            lambda r: r.get(util_last_collected_key),
+        )
         util_last_collected = float(raw_util_last_collected) if raw_util_last_collected else 0
         if t - util_last_collected < interval:
             return True
@@ -500,7 +515,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
         # Update utilization time-series data.
         not_enough_data = False
-        raw_util_series = await self._redis.get(util_series_key, encoding=None)
+        raw_util_series = await redis.execute(self._redis, lambda r: r.get(util_series_key))
 
         try:
             util_series = msgpack.unpackb(raw_util_series, use_list=True)
@@ -513,16 +528,23 @@ class UtilizationIdleChecker(BaseIdleChecker):
                 util_series[k].pop(0)
             else:
                 not_enough_data = True
-        await self._redis.set(
-            util_series_key,
-            msgpack.packb(util_series),
-            expire=max(86400, int(self.time_window.total_seconds() * 2)),
+        await redis.execute(
+            self._redis,
+            lambda r: r.set(
+                util_series_key,
+                msgpack.packb(util_series),
+                ex=max(86400, int(self.time_window.total_seconds() * 2)),
+            ),
         )
-        await self._redis.set(
-            util_last_collected_key,
-            f"{t:.06f}",
-            expire=max(86400, int(self.time_window.total_seconds() * 2)),
+        await redis.execute(
+            self._redis,
+            lambda r: r.set(
+                util_last_collected_key,
+                f"{t:.06f}",
+                ex=max(86400, int(self.time_window.total_seconds() * 2)),
+            ),
         )
+
         if not_enough_data:
             return True
 
@@ -558,7 +580,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         try:
             utilizations = {k: 0.0 for k in self.resource_thresholds.keys()}
             for kernel_id in kernel_ids:
-                raw_live_stat = await self._redis_stat.get(str(kernel_id), encoding=None)
+                raw_live_stat = await redis.execute(self._redis_stat, lambda r: r.get(str(kernel_id)))
                 live_stat = msgpack.unpackb(raw_live_stat)
                 kernel_utils = {
                     k: float(nmget(live_stat, f"{k}.pct", 0.0))
