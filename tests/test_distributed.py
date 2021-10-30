@@ -2,17 +2,17 @@ from __future__ import annotations
 
 import asyncio
 from decimal import Decimal
-import queue
 import threading
 import time
 from typing import (
     Any,
     Iterable,
-    Optional,
+    List,
     TYPE_CHECKING,
 )
 
 import attr
+import pytest
 
 from ai.backend.common.events import AbstractEvent, EventDispatcher, EventProducer
 
@@ -57,9 +57,6 @@ class NoopEvent(AbstractEvent):
 
 class TimerNode(threading.Thread):
 
-    stop_event: Optional[asyncio.Event]
-    loop: Optional[asyncio.AbstractEventLoop]
-
     def __init__(
         self,
         interval: float,
@@ -67,7 +64,7 @@ class TimerNode(threading.Thread):
         test_id: str,
         local_config: LocalConfig,
         shared_config: SharedConfig,
-        event_records: queue.Queue[float],
+        event_records: List[float],
     ) -> None:
         super().__init__()
         self.interval = interval
@@ -76,19 +73,23 @@ class TimerNode(threading.Thread):
         self.local_config = local_config
         self.shared_config = shared_config
         self.event_records = event_records
-        self.stop_event = None
-        self.loop = None
 
     async def timer_node_async(self) -> None:
         self.loop = asyncio.get_running_loop()
         self.stop_event = asyncio.Event()
 
         async def _tick(context: Any, source: AgentId, event: NoopEvent) -> None:
-            self.event_records.put(time.monotonic())
+            print("_tick")
+            self.event_records.append(time.monotonic())
 
-        event_dispatcher = await EventDispatcher.new(self.shared_config.data['redis'],
-                                                     db=REDIS_STREAM_DB)
-        event_producer = await EventProducer.new(self.shared_config.data['redis'], db=REDIS_STREAM_DB)
+        event_dispatcher = await EventDispatcher.new(
+            self.shared_config.data['redis'],
+            db=REDIS_STREAM_DB,
+        )
+        event_producer = await EventProducer.new(
+            self.shared_config.data['redis'],
+            db=REDIS_STREAM_DB,
+        )
         event_dispatcher.consume(NoopEvent, None, _tick)
 
         async with connect_database(self.local_config) as db:
@@ -111,14 +112,15 @@ class TimerNode(threading.Thread):
         asyncio.run(self.timer_node_async())
 
 
+@pytest.mark.asyncio
 async def test_global_timer(test_id, local_config, shared_config, database_engine) -> None:
-    event_records: queue.Queue[float] = queue.Queue()
+    event_records: List[float] = []
     num_threads = 7
     num_records = 0
     delay = 3.0
     interval = 0.5
     target_count = (delay / interval)
-    threads = []
+    threads: List[TimerNode] = []
     for thread_idx in range(num_threads):
         timer_node = TimerNode(
             interval,
@@ -131,22 +133,17 @@ async def test_global_timer(test_id, local_config, shared_config, database_engin
         threads.append(timer_node)
         timer_node.start()
     print(f"spawned {num_threads} timers")
+    print(threads)
+    print("waiting")
     time.sleep(delay)
     print("stopping timers")
     for timer_node in threads:
-        assert timer_node.loop is not None
-        assert timer_node.stop_event is not None
         timer_node.loop.call_soon_threadsafe(timer_node.stop_event.set)
     print("joining timer threads")
     for timer_node in threads:
         timer_node.join()
     print("checking records")
-    while True:
-        try:
-            tick = event_records.get_nowait()
-            print(tick)
-        except queue.Empty:
-            break
-        num_records += 1
+    print(event_records)
+    num_records = len(event_records)
     print(f"{num_records=}")
     assert target_count - 2 <= num_records <= target_count + 2
