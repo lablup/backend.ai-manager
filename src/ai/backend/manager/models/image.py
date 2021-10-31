@@ -13,6 +13,7 @@ import graphene
 import sqlalchemy as sa
 from graphql.execution.executors.asyncio import AsyncioExecutor
 
+from ai.backend.common import redis
 from ai.backend.common.logging import BraceStyleAdapter
 
 from .user import UserRole
@@ -57,9 +58,12 @@ class Image(graphene.ObjectType):
         data: Mapping[str, Any],
     ) -> Image:
         installed = (
-            await ctx.redis_image.scard(data['canonical_ref'])
+            await redis.execute(ctx.redis_image, lambda r: r.scard(data['canonical_ref']))
         ) > 0
-        installed_agents = await ctx.redis_image.smembers(data['canonical_ref'])
+        installed_agents = await redis.execute(
+            ctx.redis_image,
+            lambda r: r.smembers(data['canonical_ref']),
+        )
         if installed_agents is None:
             installed_agents = []
         is_superadmin = (ctx.user['role'] == UserRole.SUPERADMIN)

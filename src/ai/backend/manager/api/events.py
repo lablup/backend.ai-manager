@@ -23,7 +23,7 @@ import attr
 import sqlalchemy as sa
 import trafaret as t
 
-from ai.backend.common import validators as tx
+from ai.backend.common import redis, validators as tx
 from ai.backend.common.events import (
     BgtaskCancelledEvent,
     BgtaskDoneEvent,
@@ -180,7 +180,13 @@ async def push_background_task_events(
     log.info('PUSH_BACKGROUND_TASK_EVENTS (ak:{}, t:{})', access_key, task_id)
 
     tracker_key = f'bgtask.{task_id}'
-    task_info = await root_ctx.redis_stream.hgetall(tracker_key)
+    task_info = await redis.execute(
+        root_ctx.redis_stream,
+        lambda r: r.hgetall(tracker_key),
+        encoding='utf-8',
+    )
+
+    log.debug('task info: {}', task_info)
     if task_info is None:
         # The task ID is invalid or represents a task completed more than 24 hours ago.
         raise GenericNotFound('No such background task.')
@@ -222,7 +228,9 @@ async def push_background_task_events(
                         body['current_progress'] = event.current_progress
                         body['total_progress'] = event.total_progress
                     await resp.send(json.dumps(body), event=event.name, retry=5)
-                    if event.name in ('bgtask_done', 'bgtask_failed', 'bgtask_cancelled'):
+                    if (isinstance(event, BgtaskDoneEvent) or
+                        isinstance(event, BgtaskFailedEvent) or
+                        isinstance(event, BgtaskCancelledEvent)):
                         await resp.send('{}', event="server_close")
                         break
                 finally:
