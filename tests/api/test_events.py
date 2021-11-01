@@ -6,6 +6,7 @@ from aiohttp import web
 import attr
 import pytest
 
+from ai.backend.common import redis
 from ai.backend.common.events import (
     AbstractEvent,
     BgtaskDoneEvent,
@@ -14,12 +15,12 @@ from ai.backend.common.events import (
     EventDispatcher,
     EventProducer,
 )
+from ai.backend.common.types import (
+    AgentId,
+)
 from ai.backend.manager.api.context import RootContext
 from ai.backend.manager.server import (
     shared_config_ctx, event_dispatcher_ctx, background_task_ctx,
-)
-from ai.backend.common.types import (
-    AgentId,
 )
 
 
@@ -74,7 +75,7 @@ async def test_dispatch(etcd_fixture, create_app_and_client) -> None:
     await asyncio.sleep(0.2)
     assert records == {'async', 'sync'}
 
-    await producer.redis_producer.flushdb()
+    await redis.execute(producer.redis_client, lambda r: r.flushdb())
     await producer.close()
     await dispatcher.close()
 
@@ -121,7 +122,7 @@ async def test_error_on_dispatch(etcd_fixture, create_app_and_client, event_loop
 
     event_loop.set_exception_handler(old_handler)
 
-    await producer.redis_producer.flushdb()
+    await redis.execute(producer.redis_client, lambda r: r.flushdb())
     await producer.close()
     await dispatcher.close()
 
@@ -183,7 +184,7 @@ async def test_background_task(etcd_fixture, create_app_and_client) -> None:
         assert done_handler_ctx['event_name'] == 'bgtask_done'
         assert done_handler_ctx['message'] == 'hooray'
     finally:
-        await producer.redis_producer.flushdb()
+        await redis.execute(producer.redis_client, lambda r: r.flushdb())
         await producer.close()
         await dispatcher.close()
 
@@ -222,6 +223,6 @@ async def test_background_task_fail(etcd_fixture, create_app_and_client) -> None
         assert fail_handler_ctx['message'] is not None
         assert 'ZeroDivisionError' in fail_handler_ctx['message']
     finally:
-        await producer.redis_producer.flushdb()
+        await redis.execute(producer.redis_client, lambda r: r.flushdb())
         await producer.close()
         await dispatcher.close()

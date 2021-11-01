@@ -17,7 +17,6 @@ from typing import (
     TYPE_CHECKING,
 )
 
-import aioredis
 import aiotools
 from dateutil.tz import tzutc
 import sqlalchemy as sa
@@ -53,7 +52,6 @@ from ..api.exceptions import InstanceNotAvailable
 from ..distributed import GlobalTimer
 from ..defs import (
     AdvisoryLock,
-    REDIS_STREAM_DB,
 )
 from ..exceptions import convert_to_status_data
 from ..models import (
@@ -131,8 +129,6 @@ class SchedulerDispatcher(aobject):
     registry: AgentRegistry
     db: SAEngine
 
-    schedule_timer_redis: aioredis.Redis
-    prepare_timer_redis: aioredis.Redis
     event_dispatcher: EventDispatcher
     event_producer: EventProducer
     schedule_timer: GlobalTimer
@@ -165,9 +161,6 @@ class SchedulerDispatcher(aobject):
         evd.consume(AgentStartedEvent, None, self.schedule)
         evd.consume(DoScheduleEvent, None, self.schedule, coalescing_opts)
         evd.consume(DoPrepareEvent, None, self.prepare)
-        redis_url = self.shared_config.get_redis_url(db=REDIS_STREAM_DB)
-        self.schedule_timer_redis = await aioredis.create_redis(str(redis_url))
-        self.prepare_timer_redis = await aioredis.create_redis(str(redis_url))
         self.schedule_timer = GlobalTimer(
             self.db,
             AdvisoryLock.LOCKID_SCHEDULE_TIMER,
@@ -191,10 +184,6 @@ class SchedulerDispatcher(aobject):
         await self.prepare_timer.leave()
         await self.schedule_timer.leave()
         log.info('Session scheduler stopped')
-        self.prepare_timer_redis.close()
-        self.schedule_timer_redis.close()
-        await self.prepare_timer_redis.wait_closed()
-        await self.schedule_timer_redis.wait_closed()
 
     async def schedule(
         self,
