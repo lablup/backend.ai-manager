@@ -490,7 +490,6 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             params['bootstrap_script'] = script
 
     try:
-
         kernel_id = await asyncio.shield(root_ctx.registry.enqueue_session(
             session_creation_id,
             params['session_name'], owner_access_key,
@@ -517,6 +516,65 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             starts_at=starts_at,
         ))
         resp['sessionId'] = str(kernel_id)  # changed since API v5
+
+        async def kernelpullprogress(reporter):
+            get_and_update_lock = asyncio.Lock()
+
+            async def _get(kernel_id):
+                async with get_and_update_lock:
+                    async with root_ctx.db.begin() as conn:
+                        query = (
+                            sa.select([
+                                kernels.c.id,
+                                kernels.c.status,
+                                kernels.c.current_progress,
+                                kernels.c.total_progress,
+                            ])
+                            .select_from(kernels)
+                            .where(kernels.c.id==kernel_id)
+                        )
+                        result = await conn.execute(query)
+                await asyncio.sleep(2)
+                return result.first()
+
+            async def updatekernelpullprogress(
+                app: web.Application,
+                source: AgentId,
+                event: KernelPullProgressEvent
+                ) -> None:
+                root_ctx: RootContext = app['_root.context']
+                async def _update() -> None:
+                    async with root_ctx.db.begin() as conn:
+                        query = sa.update(kernels).values(**{
+                            'current_progress': event.current_progress,
+                            'total_progress': event.total_progress,
+                        }).where(kernels.c.id == event.kernel_id)
+                        await conn.execute(query)
+                if not get_and_update_lock.locked():
+                    await execute_with_retry(_update)
+                else:
+                    pass
+
+            root_ctx.event_dispatcher.subscribe(KernelPullProgressEvent, request.app, updatekernelpullprogress)
+            kernel_id = resp['sessionId']
+            while True:
+                cp = 0
+                tp = 0
+                result = await _get(kernel_id)
+                cp += int(result['current_progress'])
+                tp += int(result['total_progress'])
+                reporter.total_progress = tp
+                inc = cp - reporter.current_progress
+                await asyncio.sleep(0.5)
+                await reporter.update(inc)
+                if result['status']==KernelStatus.PREPARING:
+                    await reporter.update(reporter.total_progress, reporter.current_progress)
+                if result['status']==KernelStatus.RUNNING:
+                    break
+            await asyncio.sleep(0.5)
+
+        task_id = await root_ctx.background_task_manager.start(kernelpullprogress, name='uchan_test')
+        resp['background_task'] = str(task_id)
         resp['sessionName'] = str(params['session_name'])
         resp['status'] = 'PENDING'
         resp['servicePorts'] = []
@@ -582,6 +640,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
                         resp['servicePorts'].append(response_dict)
                 else:
                     resp['status'] = row['status'].name
+
     except asyncio.CancelledError:
         raise
     except BackendError:
@@ -1096,18 +1155,18 @@ async def handle_kernel_creation_lifecycle(
     if ck_id not in root_ctx.registry.kernel_creation_tracker:
         return
     log.debug('handle_kernel_creation_lifecycle: ev:{} k:{}', event.name, event.kernel_id)
-    if event.name == 'kernel_preparing':
+    if isinstance(event, KernelPreparingEvent):
         # State transition is done by the DoPrepareEvent handler inside the scheduler-distpacher object.
         pass
-    elif event.name == 'kernel_pulling':
+    elif isinstance(event, KernelPullingEvent):
         await root_ctx.registry.set_kernel_status(event.kernel_id, KernelStatus.PULLING, event.reason)
-    elif event.name == 'kernel_creating':
+    elif isinstance(event, KernelCreatingEvent):
         await root_ctx.registry.set_kernel_status(event.kernel_id, KernelStatus.PREPARING, event.reason)
-    elif event.name == 'kernel_started':
+    elif isinstance(event, KernelStartedEvent):
         # post_create_kernel() coroutines are waiting for the creation tracker events to be set.
         if tracker := root_ctx.registry.kernel_creation_tracker.get(ck_id):
             tracker.set_result(None)
-    elif event.name == 'kernel_cancelled':
+    elif isinstance(event, KernelCancelledEvent):
         if tracker := root_ctx.registry.kernel_creation_tracker.get(ck_id):
             tracker.cancel()
 
@@ -1118,10 +1177,10 @@ async def handle_kernel_termination_lifecycle(
     event: KernelTerminatingEvent | KernelTerminatedEvent,
 ) -> None:
     root_ctx: RootContext = app['_root.context']
-    if event.name == 'kernel_terminating':
+    if isinstance(event, KernelTerminatingEvent):
         # The destroy_kernel() API handler will set the "TERMINATING" status.
         pass
-    elif event.name == 'kernel_terminated':
+    if isinstance(event, KernelTerminatedEvent):
         await root_ctx.registry.mark_kernel_terminated(event.kernel_id, event.reason, event.exit_code)
         await root_ctx.registry.check_session_terminated(event.kernel_id, event.reason)
 
@@ -1139,10 +1198,10 @@ async def handle_session_creation_lifecycle(
     if event.creation_id not in app_ctx.session_creation_tracker:
         return
     log.debug('handle_session_creation_lifecycle: ev:{} s:{}', event.name, event.session_id)
-    if event.name == 'session_started':
+    if isinstance(event, SessionStartedEvent):
         if tracker := app_ctx.session_creation_tracker.get(event.creation_id):
             tracker.set()
-    elif event.name == 'session_cancelled':
+    elif isinstance(event, SessionCancelledEvent):
         if tracker := app_ctx.session_creation_tracker.get(event.creation_id):
             tracker.set()
 
@@ -1157,7 +1216,7 @@ async def handle_session_termination_lifecycle(
     published by the manager.
     """
     root_ctx: RootContext = app['_root.context']
-    if event.name == 'session_terminated':
+    if isinstance(event, SessionTerminatedEvent):
         await root_ctx.registry.mark_session_terminated(event.session_id, event.reason)
 
 
@@ -1195,9 +1254,9 @@ async def handle_batch_result(
     Update the database according to the batch-job completion results
     """
     root_ctx: RootContext = app['_root.context']
-    if event.name == 'session_success':
+    if isinstance(event, SessionSuccessEvent):
         await root_ctx.registry.set_session_result(event.session_id, True, event.exit_code)
-    elif event.name == 'session_failure':
+    elif isinstance(event, SessionFailureEvent):
         await root_ctx.registry.set_session_result(event.session_id, False, event.exit_code)
     await root_ctx.registry.destroy_session(
         functools.partial(
@@ -1214,12 +1273,12 @@ async def handle_agent_lifecycle(
     event: AgentStartedEvent | AgentTerminatedEvent,
 ) -> None:
     root_ctx: RootContext = app['_root.context']
-    if event.name == 'agent_started':
+    if isinstance(event, AgentStartedEvent):
         log.info('instance_lifecycle: ag:{0} joined ({1})', source, event.reason)
         await root_ctx.registry.update_instance(source, {
             'status': AgentStatus.ALIVE,
         })
-    elif event.name == 'agent_terminated':
+    if isinstance(event, AgentTerminatedEvent):
         if event.reason == 'agent-lost':
             await root_ctx.registry.mark_agent_terminated(source, AgentStatus.LOST)
         elif event.reason == 'agent-restart':
@@ -1311,15 +1370,15 @@ async def check_agent_lost(root_ctx: RootContext, interval: float) -> None:
         now = datetime.now(tzutc())
         timeout = timedelta(seconds=root_ctx.local_config['manager']['heartbeat-timeout'])
 
-        async def _check_impl():
-            async for agent_id, prev in root_ctx.redis_live.ihscan('agent.last_seen'):
+        async def _check_impl(r: aioredis.Redis):
+            async for agent_id, prev in r.hscan_iter('agent.last_seen'):
                 prev = datetime.fromtimestamp(float(prev), tzutc())
                 if now - prev > timeout:
                     await root_ctx.event_producer.produce_event(
                         AgentTerminatedEvent("agent-lost"),
-                        source=agent_id)
+                        source=agent_id.decode())
 
-        await redis.execute_with_retries(lambda: _check_impl())
+        await redis.execute(root_ctx.redis_live, _check_impl)
     except asyncio.CancelledError:
         pass
 
@@ -1330,16 +1389,14 @@ async def handle_kernel_log(
     event: DoSyncKernelLogsEvent,
 ) -> None:
     root_ctx: RootContext = app['_root.context']
-    redis_conn: aioredis.Redis = await redis.connect_with_retries(
-        str(root_ctx.shared_config.get_redis_url(db=REDIS_STREAM_DB)),
-        encoding=None,
-    )
+    redis_conn = redis.get_redis_object(root_ctx.shared_config.data['redis'], db=REDIS_STREAM_DB)
     # The log data is at most 10 MiB.
     log_buffer = BytesIO()
     log_key = f'containerlog.{event.container_id}'
     try:
-        list_size = await redis.execute_with_retries(
-            lambda: redis_conn.llen(log_key),
+        list_size = await redis.execute(
+            redis_conn,
+            lambda r: r.llen(log_key),
         )
         if list_size is None:
             # The log data is expired due to a very slow event delivery.
@@ -1349,7 +1406,7 @@ async def handle_kernel_log(
             return
         for _ in range(list_size):
             # Read chunk-by-chunk to allow interleaving with other Redis operations.
-            chunk = await redis.execute_with_retries(lambda: redis_conn.lpop(log_key))
+            chunk = await redis.execute(redis_conn, lambda r: r.lpop(log_key))
             if chunk is None:  # maybe missing
                 log_buffer.write(b"(container log unavailable)\n")
                 break
@@ -1369,13 +1426,13 @@ async def handle_kernel_log(
             await execute_with_retry(_update_log)
         finally:
             # Clear the log data from Redis when done.
-            await redis.execute_with_retries(
-                lambda: redis_conn.delete(log_key),
+            await redis.execute(
+                redis_conn,
+                lambda r: r.delete(log_key),
             )
     finally:
         log_buffer.close()
-        redis_conn.close()
-        await redis_conn.wait_closed()
+        await redis_conn.close()
 
 
 async def report_stats(root_ctx: RootContext) -> None:
