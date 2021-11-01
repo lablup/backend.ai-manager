@@ -8,22 +8,21 @@ from ai.backend.common.events import EventHandler
 
 from aiohttp import web
 import aiohttp_cors
-import aioredis
 import attr
 import sqlalchemy as sa
 import trafaret as t
 from typing import Any, TYPE_CHECKING, Tuple, MutableMapping
 
-from ai.backend.common import validators as tx
+from ai.backend.common import redis, validators as tx
 from ai.backend.common.events import AbstractEvent, EmptyEventArgs
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.types import AgentId, LogSeverity
+from ai.backend.common.types import AgentId, LogSeverity, RedisConnectionInfo
 
-from ..defs import REDIS_LIVE_DB
+from ..defs import REDIS_LIVE_DB, AdvisoryLock
 from ..distributed import GlobalTimer
 from ..models import (
     error_logs, UserRole, groups,
-    association_groups_users as agus
+    association_groups_users as agus,
 )
 from .auth import auth_required
 from .manager import READ_ALLOWED, server_status_required
@@ -51,8 +50,8 @@ class DoLogCleanupEvent(EmptyEventArgs, AbstractEvent):
         t.Key('context_env'): tx.JSONString,
         t.Key('request_url', default=None): t.Null | t.String,
         t.Key('request_status', default=None): t.Null | t.Int,
-        t.Key('traceback', default=None): t.Null | t.String
-    }
+        t.Key('traceback', default=None): t.Null | t.String,
+    },
 ))
 async def append(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
@@ -64,7 +63,7 @@ async def append(request: web.Request, params: Any) -> web.Response:
 
     async with root_ctx.db.begin() as conn:
         resp = {
-            'success': True
+            'success': True,
         }
         query = error_logs.insert().values({
             'severity': params['severity'],
@@ -88,7 +87,7 @@ async def append(request: web.Request, params: Any) -> web.Response:
     t.Dict({
         t.Key('mark_read', default=False): t.ToBool(),
         t.Key('page_size', default=20): t.ToInt(lt=101),
-        t.Key('page_no', default=1): t.ToInt()
+        t.Key('page_no', default=1): t.ToInt(),
     }),
 )
 async def list_logs(request: web.Request, params: Any) -> web.Response:
@@ -198,12 +197,12 @@ async def mark_cleared(request: web.Request) -> web.Response:
             user_ids = [g.id for g in usrs]
             update_query = update_query.where(
                 (error_logs.c.user.in_(user_ids)) &
-                (error_logs.c.id == log_id)
+                (error_logs.c.id == log_id),
             )
         else:
             update_query = update_query.where(
                 (error_logs.c.user == user_uuid) &
-                (error_logs.c.id == log_id)
+                (error_logs.c.id == log_id),
             )
 
         result = await conn.execute(update_query)
@@ -241,7 +240,7 @@ async def log_cleanup_task(app: web.Application, src: AgentId, event: DoLogClean
 @attr.s(slots=True, auto_attribs=True, init=False)
 class PrivateContext:
     log_cleanup_timer: GlobalTimer
-    log_cleanup_timer_redis: aioredis.Redis
+    log_cleanup_timer_redis: RedisConnectionInfo
     log_cleanup_timer_evh: EventHandler[web.Application, DoLogCleanupEvent]
 
 
@@ -251,12 +250,13 @@ async def init(app: web.Application) -> None:
     app_ctx.log_cleanup_timer_evh = root_ctx.event_dispatcher.consume(
         DoLogCleanupEvent, app, log_cleanup_task,
     )
-    app_ctx.log_cleanup_timer_redis = await aioredis.create_redis(
-        str(root_ctx.shared_config.get_redis_url(db=REDIS_LIVE_DB))
+    app_ctx.log_cleanup_timer_redis = redis.get_redis_object(
+        root_ctx.shared_config.data['redis'],
+        db=REDIS_LIVE_DB,
     )
     app_ctx.log_cleanup_timer = GlobalTimer(
-        app_ctx.log_cleanup_timer_redis,
-        "manager_log_cleanup",
+        root_ctx.db,
+        AdvisoryLock.LOCKID_LOG_CLEANUP_TIMER,
         root_ctx.event_producer,
         lambda: DoLogCleanupEvent(),
         20.0,
@@ -269,9 +269,8 @@ async def shutdown(app: web.Application) -> None:
     root_ctx: RootContext = app['_root.context']
     app_ctx: PrivateContext = app['logs.context']
     await app_ctx.log_cleanup_timer.leave()
-    app_ctx.log_cleanup_timer_redis.close()
-    await app_ctx.log_cleanup_timer_redis.wait_closed()
     root_ctx.event_dispatcher.unconsume(app_ctx.log_cleanup_timer_evh)
+    await app_ctx.log_cleanup_timer_redis.close()
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:

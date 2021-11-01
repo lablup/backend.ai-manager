@@ -17,12 +17,13 @@ from typing import (
 from aiohttp import web
 import aiohttp_cors
 from aiojobs.aiohttp import atomic
+from aioredis import Redis
 from dateutil.tz import tzutc
 from dateutil.parser import parse as dtparse
 import sqlalchemy as sa
 import trafaret as t
 
-from ai.backend.common import validators as tx
+from ai.backend.common import redis, validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.plugin.hook import (
     ALL_COMPLETED,
@@ -366,7 +367,7 @@ async def sign_request(sign_method: str, request: web.Request, secret_key: str) 
             request.method, str(request.raw_path), request['raw_date'],
             request.host, request.content_type, api_version,
             body_hash,
-            name='backendai' if new_api_version is not None else 'sorna'
+            name='backendai' if new_api_version is not None else 'sorna',
         ).encode()
         sign_key = hmac.new(secret_key.encode(),
                             request['date'].strftime('%Y%m%d').encode(),
@@ -427,7 +428,7 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
                         .select_from(j)
                         .where(
                             (keypairs.c.access_key == access_key) &
-                            (keypairs.c.is_active.is_(True))
+                            (keypairs.c.is_active.is_(True)),
                         )
                     )
                     result = await conn.execute(query)
@@ -436,11 +437,15 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
             row = await execute_with_retry(_query_cred)
             if row is None:
                 raise AuthorizationFailed('Access key not found')
-            redis = root_ctx.redis_stat.pipeline()
-            num_queries_key = f'kp:{access_key}:num_queries'
-            redis.incr(num_queries_key)
-            redis.expire(num_queries_key, 86400 * 30)  # retention: 1 month
-            await redis.execute()
+
+            async def _pipe_builder(r: Redis):
+                pipe = r.pipeline()
+                num_queries_key = f'kp:{access_key}:num_queries'
+                pipe.incr(num_queries_key)
+                pipe.expire(num_queries_key, 86400 * 30)  # retention: 1 month
+                await pipe.execute()
+
+            await redis.execute(root_ctx.redis_stat, _pipe_builder)
         else:
             # unsigned requests may be still accepted for public APIs
             pass
@@ -464,7 +469,7 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
                         .select_from(j)
                         .where(
                             (keypairs.c.access_key == access_key) &
-                            (keypairs.c.is_active.is_(True))
+                            (keypairs.c.is_active.is_(True)),
                         )
                     )
                     result = await conn.execute(query)
@@ -477,11 +482,15 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
                 await sign_request(sign_method, request, row['keypairs_secret_key'])
             if not secrets.compare_digest(my_signature, signature):
                 raise AuthorizationFailed('Signature mismatch')
-            redis = root_ctx.redis_stat.pipeline()
-            num_queries_key = f'kp:{access_key}:num_queries'
-            redis.incr(num_queries_key)
-            redis.expire(num_queries_key, 86400 * 30)  # retention: 1 month
-            await redis.execute()
+
+            async def _pipe_builder(r: Redis):
+                pipe = r.pipeline()
+                num_queries_key = f'kp:{access_key}:num_queries'
+                pipe.incr(num_queries_key)
+                pipe.expire(num_queries_key, 86400 * 30)  # retention: 1 month
+                await pipe.execute()
+
+            await redis.execute(root_ctx.redis_stat, _pipe_builder)
         else:
             # unsigned requests may be still accepted for public APIs
             pass
@@ -587,7 +596,7 @@ async def get_role(request: web.Request, params: Any) -> web.Response:
             .select_from(association_groups_users)
             .where(
                 (association_groups_users.c.group_id == params['group']) &
-                (association_groups_users.c.user_id == request['user']['uuid'])
+                (association_groups_users.c.user_id == request['user']['uuid']),
             )
         )
         async with root_ctx.db.begin() as conn:
@@ -627,7 +636,7 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
     # their own authentication steps, like LDAP authentication, etc.
     hook_result = await root_ctx.hook_plugin_ctx.dispatch(
         'AUTHORIZE',
-        (request, params,),
+        (request, params),
         return_when=FIRST_COMPLETED,
     )
     if hook_result.status != PASSED:
@@ -639,7 +648,7 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
         # No AUTHORIZE hook is defined (proceed with normal login)
         user = await check_credential(
             root_ctx.db,
-            params['domain'], params['username'], params['password']
+            params['domain'], params['username'], params['password'],
         )
     if user is None:
         raise AuthorizationFailed('User credential mismatch.')
@@ -652,7 +661,7 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
                    .select_from(keypairs)
                    .where(
                        (keypairs.c.user == user['uuid']) &
-                       (keypairs.c.is_active)
+                       (keypairs.c.is_active),
                    )
                    .order_by(sa.desc(keypairs.c.is_admin)))
         result = await conn.execute(query)
@@ -781,7 +790,7 @@ async def signup(request: web.Request, params: Any) -> web.Response:
     }
     await root_ctx.hook_plugin_ctx.notify(
         'POST_SIGNUP',
-        (params['email'], user.uuid, initial_user_prefs)
+        (params['email'], user.uuid, initial_user_prefs),
     )
     return web.json_response(resp_data, status=201)
 
@@ -842,7 +851,7 @@ async def update_full_name(request: web.Request, params: Any) -> web.Response:
             .select_from(users)
             .where(
                 (users.c.email == email) &
-                (users.c.domain_name == domain_name)
+                (users.c.domain_name == domain_name),
             )
         )
         result = await conn.execute(query)

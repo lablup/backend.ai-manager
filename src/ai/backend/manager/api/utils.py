@@ -66,7 +66,7 @@ async def get_access_key_scopes(request: web.Request, params: Any = None) -> Tup
                             keypairs.c.user == users.c.uuid))
                 .where(
                     (keypairs.c.access_key == owner_access_key)
-                    & (keypairs.c.is_active == true())
+                    & (keypairs.c.is_active == true()),
                 )
             )
             result = await conn.execute(query)

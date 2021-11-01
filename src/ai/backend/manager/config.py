@@ -113,6 +113,10 @@ Alias keys are also URL-quoted in the same way.
        + subnet
          - agent: "0.0.0.0/0"
          - container: "0.0.0.0/0"
+       + overlay
+         - mtu: 1500  # Maximum Transmission Unit
+       + rpc
+         - keepalive-timeout: 60  # seconds
      + watcher
        - token: {some-secret}
    + volumes
@@ -168,7 +172,12 @@ Alias keys are also URL-quoted in the same way.
    + manager
      - {instance-id}: "up"
      ...
-   + redis: {"tcp://redis:6379"}
+   # etcd.get("config/redis/addr") is not None => single redis node
+   # etcd.get("config/redis/sentinel") is not None => redis sentinel
+   + redis:
+     - addr: "tcp://redis:6379"
+     - sentinel: {comma-seperated list of sentinel addresses}
+     - service_name: "mymanager"
      - password: {redis-auth-password}
    + agents
      + {instance-id}: {"starting","running"}  # ConfigScopes.NODE
@@ -324,7 +333,7 @@ _shdefs: Mapping[str, Any] = {
     },
     'watcher': {
         'token': None,
-    }
+    },
 }
 
 container_registry_iv = t.Dict({
@@ -344,7 +353,9 @@ shared_config_iv = t.Dict({
         t.Key('allow-origins', default=_shdefs['api']['allow-origins']): t.String,
     }).allow_extra('*'),
     t.Key('redis', default=_shdefs['redis']): t.Dict({
-        t.Key('addr', default=_shdefs['redis']['addr']): tx.HostPortPair,
+        t.Key('addr', default=_shdefs['redis']['addr']): t.Null | tx.HostPortPair,
+        t.Key('sentinel', default=None): t.Null | tx.DelimiterSeperatedList(tx.HostPortPair),
+        t.Key('service_name', default=None): t.Null | t.String,
         t.Key('password', default=_shdefs['redis']['password']): t.Null | t.String,
     }).allow_extra('*'),
     t.Key('docker'): t.Dict({
@@ -360,6 +371,9 @@ shared_config_iv = t.Dict({
         t.Key('subnet', default=_shdefs['network']['subnet']): t.Dict({
             t.Key('agent', default=_shdefs['network']['subnet']['agent']): tx.IPNetwork,
             t.Key('container', default=_shdefs['network']['subnet']['container']): tx.IPNetwork,
+        }).allow_extra('*'),
+        t.Key('overlay', default=None): t.Null | t.Dict({
+            t.Key('mtu', default=1500): t.Int[1:],
         }).allow_extra('*'),
     }).allow_extra('*'),
     t.Key('watcher', default=_shdefs['watcher']): t.Dict({
@@ -623,8 +637,11 @@ class SharedConfig(AbstractConfig):
                     if tag == '':
                         continue
                     raw_ref = f'{etcd_unquote(registry)}/{etcd_unquote(image)}:{tag}'
-                    ref = ImageRef(raw_ref, known_registries)
-                    coros.append(self._parse_image(ref, image_info, reverse_aliases))
+                    try:
+                        ref = ImageRef(raw_ref, known_registries)
+                        coros.append(self._parse_image(ref, image_info, reverse_aliases))
+                    except ValueError:
+                        log.warn('skipping image {} as it contains malformed metadata', raw_ref)
         result = await asyncio.gather(*coros)
         return result
 
@@ -644,7 +661,7 @@ class SharedConfig(AbstractConfig):
     ) -> None:
         registry_config_iv = t.Mapping(t.String, container_registry_iv)
         latest_registry_config = registry_config_iv.check(
-            await self.etcd.get_prefix('config/docker/registry')
+            await self.etcd.get_prefix('config/docker/registry'),
         )
         self['docker']['registry'] = latest_registry_config
         # TODO: delete images from registries removed from the previous config?

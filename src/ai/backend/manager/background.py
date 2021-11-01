@@ -16,6 +16,7 @@ from typing import (
 import uuid
 
 from aiojobs import Scheduler
+import aioredis
 
 from ai.backend.common import redis
 from ai.backend.common.events import (
@@ -58,28 +59,28 @@ class ProgressReporter:
         # keep the state as local variables because they might be changed
         # due to interleaving at await statements below.
         current, total = self.current_progress, self.total_progress
-        redis_producer = self.event_producer.redis_producer
+        redis_producer = self.event_producer.redis_client
 
-        def _pipe_builder():
-            pipe = redis_producer.pipeline()
+        async def _pipe_builder(r: aioredis.Redis):
+            pipe = r.pipeline()
             tracker_key = f'bgtask.{self.task_id}'
-            pipe.hmset_dict(tracker_key, {
+            pipe.hmset(tracker_key, {
                 'current': str(current),
                 'total': str(total),
                 'msg': message or '',
                 'last_update': str(time.time()),
             })
             pipe.expire(tracker_key, MAX_BGTASK_ARCHIVE_PERIOD)
-            return pipe
+            await pipe.execute()
 
-        await redis.execute_with_retries(_pipe_builder, max_retries=2)
+        await redis.execute(redis_producer, _pipe_builder)
         await self.event_producer.produce_event(
             BgtaskUpdatedEvent(
                 self.task_id,
                 message=message,
                 current_progress=current,
                 total_progress=total,
-            )
+            ),
         )
 
 
@@ -102,13 +103,13 @@ class BackgroundTaskManager:
         sched: Scheduler = None,
     ) -> uuid.UUID:
         task_id = uuid.uuid4()
-        redis_producer = self.event_producer.redis_producer
+        redis_producer = self.event_producer.redis_client
 
-        def _pipe_builder():
-            pipe = redis_producer.pipeline()
+        async def _pipe_builder(r: aioredis.Redis):
+            pipe = r.pipeline()
             tracker_key = f'bgtask.{task_id}'
             now = str(time.time())
-            pipe.hmset_dict(tracker_key, {
+            pipe.hmset(tracker_key, {
                 'status': 'started',
                 'current': '0',
                 'total': '0',
@@ -117,9 +118,9 @@ class BackgroundTaskManager:
                 'last_update': now,
             })
             pipe.expire(tracker_key, MAX_BGTASK_ARCHIVE_PERIOD)
-            return pipe
+            await pipe.execute()
 
-        await redis.execute_with_retries(_pipe_builder)
+        await redis.execute(redis_producer, _pipe_builder)
 
         if sched:
             # aiojobs' Scheduler doesn't support add_done_callback yet
@@ -153,25 +154,25 @@ class BackgroundTaskManager:
             message = repr(e)
             log.exception("Task {} ({}): unhandled error", task_id, task_name)
         finally:
-            redis_producer = self.event_producer.redis_producer
+            redis_producer = self.event_producer.redis_client
 
-            def _pipe_builder():
-                pipe = redis_producer.pipeline()
+            async def _pipe_builder(r: aioredis.Redis):
+                pipe = r.pipeline()
                 tracker_key = f'bgtask.{task_id}'
-                pipe.hmset_dict(tracker_key, {
+                pipe.hmset(tracker_key, {
                     'status': task_result[7:],  # strip "bgtask_"
                     'msg': message,
                     'last_update': str(time.time()),
                 })
                 pipe.expire(tracker_key, MAX_BGTASK_ARCHIVE_PERIOD)
-                return pipe
+                await pipe.execute()
 
-            await redis.execute_with_retries(_pipe_builder, max_retries=2)
+            await redis.execute(redis_producer, _pipe_builder)
             await self.event_producer.produce_event(
                 event_cls(
                     task_id,
                     message=message,
-                )
+                ),
             )
             log.info('Task {} ({}): {}', task_id, task_name or '', task_result)
 

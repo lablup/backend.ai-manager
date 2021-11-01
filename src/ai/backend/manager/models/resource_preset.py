@@ -54,7 +54,7 @@ class ResourcePreset(graphene.ObjectType):
     def from_row(
         cls,
         ctx: GraphQueryContext,
-        row: Row | None
+        row: Row | None,
     ) -> ResourcePreset | None:
         if row is None:
             return None

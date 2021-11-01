@@ -27,7 +27,7 @@ class HarborRegistry_v1(BaseContainerRegistry):
             )
         project_list_url: Optional[yarl.URL]
         project_list_url = (api_url / 'projects').with_query(
-            {'page_size': '30'}
+            {'page_size': '30'},
         )
         project_ids = []
         while project_list_url is not None:
@@ -51,7 +51,7 @@ class HarborRegistry_v1(BaseContainerRegistry):
         repo_list_url: Optional[yarl.URL]
         for project_id in project_ids:
             repo_list_url = (api_url / 'repositories').with_query(
-                {'project_id': project_id, 'page_size': '30'}
+                {'project_id': project_id, 'page_size': '30'},
             )
             while repo_list_url is not None:
                 async with sess.get(repo_list_url, allow_redirects=False, **rqst_args) as resp:
@@ -87,7 +87,7 @@ class HarborRegistry_v2(BaseContainerRegistry):
         repo_list_url: Optional[yarl.URL]
         for project_name in registry_projects:
             repo_list_url = (api_url / 'projects' / project_name / 'repositories').with_query(
-                {'page_size': '30'}
+                {'page_size': '30'},
             )
             while repo_list_url is not None:
                 async with sess.get(repo_list_url, allow_redirects=False, **rqst_args) as resp:

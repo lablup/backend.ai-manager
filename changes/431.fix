@@ -1,1 +1,0 @@
-Optimize read-only GraphQL queries to use read-only transaction isolation level, which greatly reduces the database loads when using GUI

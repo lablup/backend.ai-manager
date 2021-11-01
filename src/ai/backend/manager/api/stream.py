@@ -33,13 +33,12 @@ import weakref
 import aiohttp
 from aiohttp import web
 import aiohttp_cors
-import aioredis
 from aiotools import apartial, adefer
 import attr
 import trafaret as t
 import zmq, zmq.asyncio
 
-from ai.backend.common import validators as tx
+from ai.backend.common import redis, validators as tx
 from ai.backend.common.events import KernelTerminatingEvent
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
@@ -83,7 +82,7 @@ async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
     api_version = request['api_version']
     try:
         compute_session = await asyncio.shield(
-            root_ctx.registry.get_session(session_name, access_key)
+            root_ctx.registry.get_session(session_name, access_key),
         )
     except SessionNotFound:
         raise
@@ -142,7 +141,7 @@ async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
                                 root_ctx.registry.get_session(
                                     session_name,
                                     access_key,
-                                )
+                                ),
                             )
                             stdin_sock, stdout_sock = await connect_streams(kernel)
                             socks[0] = stdin_sock
@@ -414,7 +413,7 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
     log.info(
         'STREAM_WSPROXY (ak:{}, s:{}): tunneling {}:{} to {}',
         access_key, session_name,
-        service, sport['protocol'], '{}:{}'.format(*dest)
+        service, sport['protocol'], '{}:{}'.format(*dest),
     )
     if sport['protocol'] == 'tcp':
         proxy_cls = TCPProxy
@@ -428,15 +427,20 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
         raise InvalidAPIParameters(
             f"Unsupported service protocol: {sport['protocol']}")
 
-    redis_live: aioredis.Redis = root_ctx.redis_live
+    redis_live = root_ctx.redis_live
     conn_tracker_key = f"session.{kernel['id']}.active_app_connections"
     conn_tracker_val = f"{kernel['id']}:{service}:{stream_id}"
 
     async def refresh_cb(kernel_id: str, data: bytes) -> None:
-        now = await redis_live.time()
+        now = await redis.execute(redis_live, lambda r: r.time())
+        now = now[0] + (now[1] / (10**6))
         await asyncio.shield(call_non_bursty(
             conn_tracker_key,
-            apartial(redis_live.zadd, conn_tracker_key, now, conn_tracker_val),
+            apartial(
+                redis.execute,
+                redis_live,
+                lambda r: r.zadd(conn_tracker_key, {conn_tracker_val: now}),
+            ),
             max_bursts=64, max_idle=2000,
         ))
 
@@ -449,8 +453,13 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
     async def add_conn_track() -> None:
         async with app_ctx.conn_tracker_lock:
             app_ctx.active_session_ids[kernel_id] += 1
-            now = await redis_live.time()
-            await redis_live.zadd(conn_tracker_key, now, conn_tracker_val)
+            now = await redis.execute(redis_live, lambda r: r.time())
+            now = now[0] + (now[1] / (10**6))
+            await redis.execute(
+                redis_live,
+                # aioredis' ZADD implementation flattens mapping in value-key order
+                lambda r: r.zadd(conn_tracker_key, {conn_tracker_val: now}),
+            )
             for idle_checker in root_ctx.idle_checkers:
                 await idle_checker.update_app_streaming_status(
                     kernel_id,
@@ -462,8 +471,14 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
             app_ctx.active_session_ids[kernel_id] -= 1
             if app_ctx.active_session_ids[kernel_id] <= 0:
                 del app_ctx.active_session_ids[kernel_id]
-            await redis_live.zrem(conn_tracker_key, conn_tracker_val)
-            remaining_count = await redis_live.zcount(conn_tracker_key)
+            await redis.execute(redis_live, lambda r: r.zrem(conn_tracker_key, conn_tracker_val))
+            remaining_count = await redis.execute(
+                redis_live,
+                lambda r: r.zcount(
+                    conn_tracker_key,
+                    float('-inf'), float('+inf'),
+                ),
+            )
             if remaining_count == 0:
                 for idle_checker in root_ctx.idle_checkers:
                     await idle_checker.update_app_streaming_status(
@@ -482,7 +497,7 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
             opts['envs'] = json.loads(params['envs'])
 
         result = await asyncio.shield(
-            root_ctx.registry.start_service(session_name, access_key, service, opts)
+            root_ctx.registry.start_service(session_name, access_key, service, opts),
         )
         if result['status'] == 'failed':
             raise InternalServerError(
@@ -569,22 +584,32 @@ async def handle_kernel_terminating(
 
 
 async def stream_conn_tracker_gc(root_ctx: RootContext, app_ctx: PrivateContext) -> None:
-    redis_live: aioredis.Redis = root_ctx.redis_live
+    redis_live = root_ctx.redis_live
     shared_config: SharedConfig = root_ctx.shared_config
     try:
         while True:
             no_packet_timeout: timedelta = tx.TimeDuration().check(
-                await shared_config.etcd.get('config/idle/app-streaming-packet-timeout', '5m')
+                await shared_config.etcd.get('config/idle/app-streaming-packet-timeout', '5m'),
             )
             async with app_ctx.conn_tracker_lock:
-                now = await redis_live.time()
+                now = await redis.execute(redis_live, lambda r: r.time())
+                now = now[0] + (now[1] / (10**6))
                 for session_id in app_ctx.active_session_ids.keys():
                     conn_tracker_key = f"session.{session_id}.active_app_connections"
-                    prev_remaining_count = await redis_live.zcount(conn_tracker_key)
-                    removed_count = await redis_live.zremrangebyscore(
-                        conn_tracker_key, float('-inf'), now - no_packet_timeout.total_seconds(),
+                    prev_remaining_count = await redis.execute(
+                        redis_live,
+                        lambda r: r.zcount(conn_tracker_key, float('-inf'), float('+inf')),
                     )
-                    remaining_count = await redis_live.zcount(conn_tracker_key)
+                    removed_count = await redis.execute(
+                        redis_live,
+                        lambda r: r.zremrangebyscore(
+                            conn_tracker_key, float('-inf'), now - no_packet_timeout.total_seconds(),
+                        ),
+                    )
+                    remaining_count = await redis.execute(
+                        redis_live,
+                        lambda r: r.zcount(conn_tracker_key, float('-inf'), float('+inf')),
+                    )
                     log.debug(f"conn_tracker: gc {session_id} "
                               f"removed/remaining = {removed_count}/{remaining_count}")
                     if prev_remaining_count > 0 and remaining_count == 0:

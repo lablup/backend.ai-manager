@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 from sqlalchemy.engine.row import Row
 from sqlalchemy.sql.expression import false
 
-from ai.backend.common import msgpack
+from ai.backend.common import msgpack, redis
 from ai.backend.common.types import (
     AccessKey,
     SecretKey,
@@ -59,7 +59,7 @@ __all__: Sequence[str] = (
     'Dotfile', 'MAXIMUM_DOTFILE_SIZE',
     'query_owned_dotfiles',
     'query_bootstrap_script',
-    'verify_dotfile_name'
+    'verify_dotfile_name',
 )
 
 
@@ -135,6 +135,7 @@ class KeyPair(graphene.ObjectType):
         interfaces = (Item, )
 
     user_id = graphene.String()
+    full_name = graphene.String()
     access_key = graphene.String()
     secret_key = graphene.String()
     is_active = graphene.Boolean()
@@ -179,6 +180,7 @@ class KeyPair(graphene.ObjectType):
         return cls(
             id=row['access_key'],
             user_id=row['user_id'],
+            full_name=row['full_name'] if 'full_name' in row.keys() else None,
             access_key=row['access_key'],
             secret_key=row['secret_key'],
             is_active=row['is_active'],
@@ -195,7 +197,7 @@ class KeyPair(graphene.ObjectType):
 
     async def resolve_num_queries(self, info: graphene.ResolveInfo) -> int:
         ctx: GraphQueryContext = info.context
-        n = await ctx.redis_stat.get(f"kp:{self.access_key}:num_queries")
+        n = await redis.execute(ctx.redis_stat, lambda r: r.get(f"kp:{self.access_key}:num_queries"))
         if n is not None:
             return n
         return 0
@@ -247,6 +249,7 @@ class KeyPair(graphene.ObjectType):
         "access_key": ("keypairs_access_key", None),
         "user_id": ("users_uuid", None),
         "email": ("users_email", None),
+        "full_name": ("users_full_name", None),
         "is_active": ("keypairs_is_active", None),
         "is_admin": ("keypairs_is_admin", None),
         "resource_policy": ("keypairs_resource_policy", None),
@@ -255,12 +258,14 @@ class KeyPair(graphene.ObjectType):
         "concurrency_limit": ("keypairs_concurrency_limit", None),
         "concurrency_used": ("keypairs_concurrency_used", None),
         "rate_limit": ("keypairs_rate_limit", None),
+        "num_queries": ("keypairs_num_queries", None),
         "ssh_public_key": ("keypairs_ssh_public_key", None),
     }
 
     _queryorder_colmap = {
         "access_key": "keypairs_access_key",
         "email": "users_email",
+        "full_name": "users_full_name",
         "is_active": "keypairs_is_active",
         "is_admin": "keypairs_is_admin",
         "resource_policy": "keypairs_resource_policy",
@@ -269,6 +274,7 @@ class KeyPair(graphene.ObjectType):
         "concurrency_limit": "keypairs_concurrency_limit",
         "concurrency_used": "keypairs_concurrency_used",
         "rate_limit": "keypairs_rate_limit",
+        "num_queries": "keypairs_num_queries",
     }
 
     @classmethod
@@ -316,7 +322,7 @@ class KeyPair(graphene.ObjectType):
         from .user import users
         j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
         query = (
-            sa.select([keypairs])
+            sa.select([keypairs, users.c.email, users.c.full_name])
             .select_from(j)
             .limit(limit)
             .offset(offset)
@@ -555,16 +561,16 @@ def generate_ssh_keypair() -> Tuple[str, str]:
     key = rsa.generate_private_key(
         backend=crypto_default_backend(),
         public_exponent=65537,
-        key_size=2048
+        key_size=2048,
     )
     private_key = key.private_bytes(
         crypto_serialization.Encoding.PEM,
         crypto_serialization.PrivateFormat.TraditionalOpenSSL,
-        crypto_serialization.NoEncryption()
+        crypto_serialization.NoEncryption(),
     ).decode("utf-8")
     public_key = key.public_key().public_bytes(
         crypto_serialization.Encoding.OpenSSH,
-        crypto_serialization.PublicFormat.OpenSSH
+        crypto_serialization.PublicFormat.OpenSSH,
     ).decode("utf-8")
     return (public_key, private_key)
 

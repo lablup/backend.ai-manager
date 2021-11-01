@@ -11,11 +11,11 @@ from typing import (
 
 from aiohttp import web
 from aiotools import apartial
-from aioredis import Redis
 import attr
 
 from ai.backend.common import redis
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.types import RedisConnectionInfo
 
 from ..defs import REDIS_RLIM_DB
 from .context import RootContext
@@ -88,30 +88,22 @@ async def rlim_middleware(
 
 @attr.s(slots=True, auto_attribs=True, init=False)
 class PrivateContext:
-    redis_rlim: Redis
+    redis_rlim: RedisConnectionInfo
     redis_rlim_script: str
 
 
 async def init(app: web.Application) -> None:
     root_ctx: RootContext = app['_root.context']
     app_ctx: PrivateContext = app['ratelimit.context']
-    rr = await redis.connect_with_retries(
-        str(root_ctx.shared_config.get_redis_url(db=REDIS_RLIM_DB)),
-        timeout=3.0,
-        encoding='utf8',
-    )
-    app_ctx.redis_rlim = rr
-    app_ctx.redis_rlim_script = await rr.script_load(_rlim_script)
+    app_ctx.redis_rlim = redis.get_redis_object(root_ctx.shared_config.data['redis'], db=REDIS_RLIM_DB)
+    app_ctx.redis_rlim_script = \
+        await redis.execute(app_ctx.redis_rlim, lambda r: r.script_load(_rlim_script))
 
 
 async def shutdown(app: web.Application) -> None:
     app_ctx: PrivateContext = app['ratelimit.context']
-    try:
-        await app_ctx.redis_rlim.flushdb()
-    except (ConnectionResetError, ConnectionRefusedError):
-        pass
-    app_ctx.redis_rlim.close()
-    await app_ctx.redis_rlim.wait_closed()
+    await redis.execute(app_ctx.redis_rlim, lambda r: r.flushdb())
+    await app_ctx.redis_rlim.close()
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:

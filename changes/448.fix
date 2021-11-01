@@ -1,1 +1,0 @@
-Add a new GQL endpoint `/admin/gql` (in addition to existing `/admin/graphql`) which uses the standard-compliant response format

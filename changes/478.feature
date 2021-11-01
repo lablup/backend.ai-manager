@@ -1,0 +1,1 @@
+Upgrade to aioredis v2
