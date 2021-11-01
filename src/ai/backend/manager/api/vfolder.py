@@ -543,7 +543,6 @@ async def list_hosts(request: web.Request) -> web.Response:
         for proxy_name, volume_data in all_volumes
         if f"{proxy_name}:{volume_data['name']}" in allowed_hosts
     }
-    print('# volume_info:', volume_info, flush=True)
     resp = {
         'default': default_host,
         'allowed': sorted(allowed_hosts),
@@ -660,7 +659,7 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
 
 
 @atomic
-@superadmin_required
+@auth_required
 @server_status_required(READ_ALLOWED)
 @check_api_params(
     t.Dict({
@@ -671,6 +670,28 @@ async def get_quota(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     proxy_name, volume_name = root_ctx.storage_manager.split_host(params['folder_host'])
     log.info('VFOLDER.GET_QUOTA (volume_name:{}, vf:{})', volume_name, params['id'])
+
+    # Permission check for the requested vfolder.
+    user_role = request['user']['role']
+    user_uuid = request['user']['uuid']
+    domain_name = request['user']['domain_name']
+    allowed_vfolder_types = await root_ctx.shared_config.get_vfolder_types()
+    if user_role == UserRole.SUPERADMIN:
+        pass
+    else:
+        async with root_ctx.db.begin_readonly() as conn:
+            extra_vf_conds = [vfolders.c.id == params['id']]
+            entries = await query_accessible_vfolders(
+                conn,
+                user_uuid,
+                user_role=user_role,
+                domain_name=domain_name,
+                allowed_vfolder_types=allowed_vfolder_types,
+                extra_vf_conds=(sa.and_(*extra_vf_conds)),
+            )
+        if len(entries) < 0:
+            raise VFolderNotFound('no such accessible vfolder')
+
     try:
         async with root_ctx.storage_manager.request(
             proxy_name, 'GET', 'volume/quota',
@@ -687,7 +708,7 @@ async def get_quota(request: web.Request, params: Any) -> web.Response:
 
 
 @atomic
-@superadmin_required
+@auth_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
     t.Dict({
@@ -701,6 +722,27 @@ async def update_quota(request: web.Request, params: Any) -> web.Response:
     proxy_name, volume_name = root_ctx.storage_manager.split_host(params['folder_host'])
     quota = int(params['input']['size_bytes'])
     log.info('VFOLDER.UPDATE_QUOTA (volume_name:{}, quota:{}, vf:{})', volume_name, quota, params['id'])
+
+    # Permission check for the requested vfolder.
+    user_role = request['user']['role']
+    user_uuid = request['user']['uuid']
+    domain_name = request['user']['domain_name']
+    allowed_vfolder_types = await root_ctx.shared_config.get_vfolder_types()
+    if user_role == UserRole.SUPERADMIN:
+        pass
+    else:
+        async with root_ctx.db.begin_readonly() as conn:
+            extra_vf_conds = [vfolders.c.id == params['id']]
+            entries = await query_accessible_vfolders(
+                conn,
+                user_uuid,
+                user_role=user_role,
+                domain_name=domain_name,
+                allowed_vfolder_types=allowed_vfolder_types,
+                extra_vf_conds=(sa.and_(*extra_vf_conds)),
+            )
+        if len(entries) < 0:
+            raise VFolderNotFound('no such accessible vfolder')
 
     # Limit vfolder size quota if it is larger than max_vfolder_size of the resource policy.
     resource_policy = request['keypair']['resource_policy']
