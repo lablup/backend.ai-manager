@@ -1,1 +1,1 @@
-Allow users to query/update the vfolder quotas on their own. To help a client to determine whether a vfolder is on a volume which supports quota, list host API now returns the storage backend information as well.
+Allow (non-superadmin) users to query/update per-vfolder quotas on their own. To help a client determine availability of per-vfolder quota option, now the response of the vfolder host list API includes volume information such as capabilities from storage proxy.
