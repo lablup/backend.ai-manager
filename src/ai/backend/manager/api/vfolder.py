@@ -675,10 +675,10 @@ async def get_quota(request: web.Request, params: Any) -> web.Response:
     user_role = request['user']['role']
     user_uuid = request['user']['uuid']
     domain_name = request['user']['domain_name']
-    allowed_vfolder_types = await root_ctx.shared_config.get_vfolder_types()
     if user_role == UserRole.SUPERADMIN:
         pass
     else:
+        allowed_vfolder_types = await root_ctx.shared_config.get_vfolder_types()
         async with root_ctx.db.begin_readonly() as conn:
             extra_vf_conds = [vfolders.c.id == params['id']]
             entries = await query_accessible_vfolders(
@@ -727,10 +727,10 @@ async def update_quota(request: web.Request, params: Any) -> web.Response:
     user_role = request['user']['role']
     user_uuid = request['user']['uuid']
     domain_name = request['user']['domain_name']
-    allowed_vfolder_types = await root_ctx.shared_config.get_vfolder_types()
     if user_role == UserRole.SUPERADMIN:
         pass
     else:
+        allowed_vfolder_types = await root_ctx.shared_config.get_vfolder_types()
         async with root_ctx.db.begin_readonly() as conn:
             extra_vf_conds = [vfolders.c.id == params['id']]
             entries = await query_accessible_vfolders(
