@@ -784,6 +784,33 @@ async def update_quota(request: web.Request, params: Any) -> web.Response:
 
 
 @atomic
+@superadmin_required
+@server_status_required(READ_ALLOWED)
+@check_api_params(
+    t.Dict({
+        t.Key('folder_host'): t.String,
+        t.Key('id'): tx.UUID,
+    }))
+async def get_usage(request: web.Request, params: Any) -> web.Response:
+    root_ctx: RootContext = request.app['_root.context']
+    proxy_name, volume_name = root_ctx.storage_manager.split_host(params['folder_host'])
+    log.info('VFOLDER.GET_USAGE (volume_name:{}, vf:{})', volume_name, params['id'])
+    try:
+        async with root_ctx.storage_manager.request(
+            proxy_name, 'GET', 'folder/usage',
+            json={
+                'volume': volume_name,
+                'vfid': str(params['id']),
+            },
+            raise_for_status=True,
+        ) as (_, storage_resp):
+            usage = await storage_resp.json()
+    except aiohttp.ClientResponseError:
+        raise VFolderOperationFailed
+    return web.json_response(usage, status=200)
+
+
+@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @vfolder_permission_required(VFolderPermission.OWNER_PERM)
@@ -2353,4 +2380,5 @@ def create_app(default_cors_options):
     cors.add(add_route('DELETE', r'/_/mounts', umount_host))
     cors.add(add_route('GET',    r'/_/quota', get_quota))
     cors.add(add_route('POST',   r'/_/quota', update_quota))
+    cors.add(add_route('GET',    r'/_/usage', get_usage))
     return app, []
