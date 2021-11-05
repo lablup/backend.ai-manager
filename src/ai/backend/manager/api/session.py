@@ -792,15 +792,23 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
         raise InvalidAPIParameters('API version not supported')
     params['config'] = creation_config
     if params['config']['agent_list'] is not None and request['user']['role'] != (UserRole.SUPERADMIN):
-        raise InsufficientPrivilege('You are not allowed to see Agent List')
+        raise InsufficientPrivilege('You are not allowed to manually assign agents for your session.')
     if request['user']['role'] == (UserRole.SUPERADMIN):
         if not params['config']['agent_list']:
             pass
         else:
-            log.info('TARGET_AGENT_LIST : {0}', params['config']['agent_list'])
-            if params['cluster_size'] != len(params['config']['agent_list']):
-                raise InvalidAPIParameters('cluster_size and length of agent_list are not match')
-
+            agent_count = len(params['config']['agent_list'])
+            if params['cluster_mode'] == "multi-node":
+                if agent_count != params['cluster_size']:
+                    raise InvalidAPIParameters(
+                        "For multi-node cluster sessions, the number of manually assigned agents must be same to the clsuter size. "
+                        "Note that you may specify duplicate agents in the list."
+                    )
+            else:
+                if agent_count != 1:
+                    raise InvalidAPIParameters(
+                        "For non-cluster sessions and single-node cluster sessions, you may specify only one manually assigned agent."
+                    )
     return await _create(request, params)
 
 
