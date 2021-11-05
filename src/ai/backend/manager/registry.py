@@ -1128,16 +1128,13 @@ class AgentRegistry:
 
                 await execute_with_retry(_enqueue)
             except DBAPIError as e:
-                if 'ForeignKeyViolationError' in e.orig:
-                    log.exception('ForeignKeyViolationError: violates foreign key constraint')
-                    error_msg = re.sub(
-                        r"\\\\\D{1}|\\\'\)",
-                        ' ',
-                        repr(" ".join(re.findall('(?<=>: ).+', repr(e.orig)))),
-                    )
-                    raise InvalidAPIParameters("No such agent", error_msg)
-                else:
-                    raise InvalidAPIParameters("No such agent", e)
+                if getattr(e.orig, "pgcode", None) == '23503':
+                    match = re.search(r'Key \(agent\)=\((?P<agent>[^)]+)\)', repr(e.orig))
+                    if match:
+                        raise InvalidAPIParameters(f"No such agent: {match.group('agent')}")
+                    else:
+                        raise InvalidAPIParameters("No such agent")
+                raise
         await self.hook_plugin_ctx.notify(
             'POST_ENQUEUE_SESSION',
             (session_id, session_name, access_key),
