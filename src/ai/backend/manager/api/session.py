@@ -207,6 +207,7 @@ creation_config_v5 = t.Dict({
     t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any),
     tx.AliasedKey(['resource_opts', 'resourceOpts'], default=None): t.Null | t.Mapping(t.String, t.Any),
     tx.AliasedKey(['preopen_ports', 'preopenPorts'], default=None): t.Null | t.List(t.Int[1024:65535]),
+    tx.AliasedKey(['agent_list', 'agentList'], default=None): t.Null | t.List(t.String),
 })
 creation_config_v5_template = t.Dict({
     t.Key('mounts', default=undefined): UndefChecker | t.Null | t.List(t.String),
@@ -488,7 +489,6 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             params['bootstrap_script'] = script
 
     try:
-
         kernel_id = await asyncio.shield(root_ctx.registry.enqueue_session(
             session_creation_id,
             params['session_name'], owner_access_key,
@@ -513,6 +513,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             startup_command=params['startup_command'],
             session_tag=params['tag'],
             starts_at=starts_at,
+            agent_list=params['config']['agent_list'],
         ))
         resp['sessionId'] = str(kernel_id)  # changed since API v5
         resp['sessionName'] = str(params['session_name'])
@@ -790,6 +791,26 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
     else:
         raise InvalidAPIParameters('API version not supported')
     params['config'] = creation_config
+    if params['config']['agent_list'] is not None and request['user']['role'] != (UserRole.SUPERADMIN):
+        raise InsufficientPrivilege('You are not allowed to manually assign agents for your session.')
+    if request['user']['role'] == (UserRole.SUPERADMIN):
+        if not params['config']['agent_list']:
+            pass
+        else:
+            agent_count = len(params['config']['agent_list'])
+            if params['cluster_mode'] == "multi-node":
+                if agent_count != params['cluster_size']:
+                    raise InvalidAPIParameters(
+                        "For multi-node cluster sessions, the number of manually assigned agents "
+                        "must be same to the clsuter size. "
+                        "Note that you may specify duplicate agents in the list.",
+                    )
+            else:
+                if agent_count != 1:
+                    raise InvalidAPIParameters(
+                        "For non-cluster sessions and single-node cluster sessions, "
+                        "you may specify only one manually assigned agent.",
+                    )
     return await _create(request, params)
 
 
