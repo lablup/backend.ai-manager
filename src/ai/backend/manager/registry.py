@@ -10,6 +10,7 @@ import itertools
 import logging
 import secrets
 import time
+import re
 from typing import (
     Any,
     AsyncIterator,
@@ -43,6 +44,7 @@ from cryptography.hazmat.backends import default_backend
 from dateutil.tz import tzutc
 import snappy
 import sqlalchemy as sa
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.sql.expression import true
 from yarl import URL
 import zmq
@@ -781,6 +783,7 @@ class AgentRegistry:
         session_tag: str = None,
         internal_data: dict = None,
         starts_at: datetime = None,
+        agent_list: Sequence[str] = None,
     ) -> SessionId:
 
         mounts = kernel_enqueue_configs[0]['creation_config'].get('mounts') or []
@@ -884,6 +887,8 @@ class AgentRegistry:
                     sub_kernel_config = cast(KernelEnqueueingConfig, {**kernel_enqueue_configs[0]})
                     sub_kernel_config['cluster_role'] = 'sub'
                     sub_kernel_config['cluster_idx'] = i + 1
+                    sub_kernel_config['cluster_hostname'] = sub_kernel_config['cluster_role'] + \
+                                                            str(sub_kernel_config['cluster_idx'])
                     kernel_enqueue_configs.append(sub_kernel_config)
             elif len(kernel_enqueue_configs) > 1:
                 # each container should have its own kernel_config
@@ -905,7 +910,7 @@ class AgentRegistry:
         if hook_result.status != PASSED:
             raise RejectedByHook.from_hook_result(hook_result)
 
-        for kernel in kernel_enqueue_configs:
+        for idx, kernel in enumerate(kernel_enqueue_configs):
             kernel_id: KernelId
             if kernel['cluster_role'] == DEFAULT_ROLE:
                 kernel_id = cast(KernelId, session_id)
@@ -1027,7 +1032,7 @@ class AgentRegistry:
                            .select_from(keypairs)
                            .where(keypairs.c.access_key == access_key))
                 result = await conn.execute(query)
-                row  = result.first()
+                row = result.first()
                 dotfiles = msgpack.unpackb(row['dotfiles'])
                 internal_data = {} if internal_data is None else internal_data
                 internal_data.update({'dotfiles': dotfiles})
@@ -1072,51 +1077,64 @@ class AgentRegistry:
                             raise BackendError(
                                 f'There is a vfolder whose name conflicts with '
                                 f'dotfile {dotfile["path"]}')
+            mapped_agent = None
+            if not agent_list:
+                pass
+            else:
+                mapped_agent = agent_list[idx]
+            try:
+                async def _enqueue() -> None:
+                    nonlocal ids
+                    async with self.db.begin() as conn:
+                        query = kernels.insert().values({
+                            'agent': mapped_agent,
+                            'id': kernel_id,
+                            'status': KernelStatus.PENDING,
+                            'session_creation_id': session_creation_id,
+                            'session_id': session_id,
+                            'session_name': session_name,
+                            'session_type': session_type,
+                            'cluster_mode': cluster_mode.value,
+                            'cluster_size': cluster_size,
+                            'cluster_role': kernel['cluster_role'],
+                            'cluster_idx': kernel['cluster_idx'],
+                            'cluster_hostname': f"{kernel['cluster_role']}{kernel['cluster_idx']}",
+                            'scaling_group': scaling_group,
+                            'domain_name': domain_name,
+                            'group_id': group_id,
+                            'user_uuid': user_uuid,
+                            'access_key': access_key,
+                            'image': image_ref.canonical,
+                            'registry': image_ref.registry,
+                            'tag': session_tag,
+                            'starts_at': starts_at,
+                            'internal_data': internal_data,
+                            'startup_command': kernel.get('startup_command'),
+                            'occupied_slots': requested_slots,
+                            'occupied_shares': {},
+                            'resource_opts': resource_opts,
+                            'environ': [f'{k}={v}' for k, v in environ.items()],
+                            'mounts': [list(mount) for mount in mounts],  # postgres save tuple as str
+                            'mount_map': mount_map,
+                            'bootstrap_script': kernel.get('bootstrap_script'),
+                            'repl_in_port': 0,
+                            'repl_out_port': 0,
+                            'stdin_port': 0,
+                            'stdout_port': 0,
+                            'preopen_ports': creation_config.get('preopen_ports', []),
+                        })
+                        await conn.execute(query)
+                        ids.append(kernel_id)
 
-            async def _enqueue() -> None:
-                nonlocal ids
-                async with self.db.begin() as conn:
-                    query = kernels.insert().values({
-                        'id': kernel_id,
-                        'status': KernelStatus.PENDING,
-                        'session_creation_id': session_creation_id,
-                        'session_id': session_id,
-                        'session_name': session_name,
-                        'session_type': session_type,
-                        'cluster_mode': cluster_mode.value,
-                        'cluster_size': cluster_size,
-                        'cluster_role': kernel['cluster_role'],
-                        'cluster_idx': kernel['cluster_idx'],
-                        'cluster_hostname': f"{kernel['cluster_role']}{kernel['cluster_idx']}",
-                        'scaling_group': scaling_group,
-                        'domain_name': domain_name,
-                        'group_id': group_id,
-                        'user_uuid': user_uuid,
-                        'access_key': access_key,
-                        'image': image_ref.canonical,
-                        'registry': image_ref.registry,
-                        'tag': session_tag,
-                        'starts_at': starts_at,
-                        'internal_data': internal_data,
-                        'startup_command': kernel.get('startup_command'),
-                        'occupied_slots': requested_slots,
-                        'occupied_shares': {},
-                        'resource_opts': resource_opts,
-                        'environ': [f'{k}={v}' for k, v in environ.items()],
-                        'mounts': [list(mount) for mount in mounts],  # postgres save tuple as str
-                        'mount_map': mount_map,
-                        'bootstrap_script': kernel.get('bootstrap_script'),
-                        'repl_in_port': 0,
-                        'repl_out_port': 0,
-                        'stdin_port': 0,
-                        'stdout_port': 0,
-                        'preopen_ports': creation_config.get('preopen_ports', []),
-                    })
-                    await conn.execute(query)
-                    ids.append(kernel_id)
-
-            await execute_with_retry(_enqueue)
-
+                await execute_with_retry(_enqueue)
+            except DBAPIError as e:
+                if getattr(e.orig, "pgcode", None) == '23503':
+                    match = re.search(r'Key \(agent\)=\((?P<agent>[^)]+)\)', repr(e.orig))
+                    if match:
+                        raise InvalidAPIParameters(f"No such agent: {match.group('agent')}")
+                    else:
+                        raise InvalidAPIParameters("No such agent")
+                raise
         await self.hook_plugin_ctx.notify(
             'POST_ENQUEUE_SESSION',
             (session_id, session_name, access_key),
@@ -1252,7 +1270,6 @@ class AgentRegistry:
 
         # Aggregate by agents to minimize RPC calls
         per_agent_tasks = []
-
         keyfunc = lambda item: item.agent_alloc_ctx.agent_id
         for agent_id, group_iterator in itertools.groupby(
             sorted(kernel_agent_bindings, key=keyfunc), key=keyfunc,
@@ -1272,7 +1289,6 @@ class AgentRegistry:
                     ),
                 )
             )
-
         if per_agent_tasks:
             agent_errors = []
             results = await asyncio.gather(

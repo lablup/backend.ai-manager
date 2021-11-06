@@ -15,6 +15,7 @@ from typing import (
     Tuple,
     Union,
     TYPE_CHECKING,
+    Optional,
 )
 
 import aiotools
@@ -448,13 +449,33 @@ class SchedulerDispatcher(aobject):
         check_results: List[Tuple[str, Union[Exception, PredicateResult]]],
     ) -> None:
         # Assign agent resource per session.
-        log_fmt = _log_fmt.get()
-        log_args = _log_args.get()
+        log_fmt = _log_fmt.get("")
+        log_args = _log_args.get(tuple())
         try:
-            agent_id = scheduler.assign_agent_for_session(candidate_agents, sess_ctx)
-            if agent_id is None:
-                raise InstanceNotAvailable
+            # If sess_ctx.agent_id is already set for manual assignment by superadmin,
+            # skip assign_agent_for_session().
+            agent_id = None
+            if sess_ctx.agent_id is not None:
+                agent_id = sess_ctx.agent_id
+            else:
+                agent_id = scheduler.assign_agent_for_session(candidate_agents, sess_ctx)
             async with self.db.begin() as agent_db_conn:
+                query = (
+                    sa.select([agents.c.available_slots])
+                    .select_from(agents)
+                    .where(agents.c.id == agent_id)
+                )
+                available_agent_slots = (await agent_db_conn.execute(query)).scalar()
+                # if pass the available test
+                if available_agent_slots is None:
+                    raise InstanceNotAvailable("There is no such agent.")
+                for key in available_agent_slots:
+                    if available_agent_slots[key] >= sess_ctx.requested_slots[key]:
+                        continue
+                    else:
+                        raise InstanceNotAvailable(
+                            "The resource slot does not have the enough remaining capacity.",
+                        )
                 agent_alloc_ctx = await _reserve_agent(
                     sched_ctx, agent_db_conn, sgroup_name, agent_id, sess_ctx.requested_slots,
                 )
@@ -541,22 +562,45 @@ class SchedulerDispatcher(aobject):
             for kernel in sess_ctx.kernels:
                 try:
                     agent_alloc_ctx: AgentAllocationContext
-                    agent_id = scheduler.assign_agent_for_kernel(candidate_agents, kernel)
-                    if agent_id is None:
-                        raise InstanceNotAvailable
+                    agent_id: AgentId | None
+                    if kernel.agent_id is not None:
+                        agent_id = kernel.agent_id
+                    else:
+                        agent_id = scheduler.assign_agent_for_kernel(candidate_agents, kernel)
+                    assert agent_id is not None
 
-                    async def _reserve() -> None:
-                        nonlocal agent_alloc_ctx, candidate_agents
-                        assert agent_id is not None
-                        async with agent_db_conn.begin_nested():
-                            agent_alloc_ctx = await _reserve_agent(
-                                sched_ctx, agent_db_conn,
-                                sgroup_name, agent_id, kernel.requested_slots,
-                                extra_conds=agent_query_extra_conds,
+                    query = (
+                        sa.select([agents.c.available_slots])
+                        .select_from(agents)
+                        .where(agents.c.id == agent_id)
+                    )
+                    available_agent_slots = (await agent_db_conn.execute(query)).scalar()
+                    if available_agent_slots is None:
+                        raise InstanceNotAvailable("There is no such agent.")
+                    available_test_pass = False
+                    for key in available_agent_slots:
+                        if available_agent_slots[key] >= kernel.requested_slots[key]:
+                            available_test_pass = True
+                            continue
+                        else:
+                            raise InstanceNotAvailable(
+                                "The resource slot does not have the enough remaining capacity.",
                             )
-                            candidate_agents = await _list_agents_by_sgroup(agent_db_conn, sgroup_name)
+                    if available_test_pass:
 
-                    await execute_with_retry(_reserve)
+                        async def _reserve() -> None:
+                            nonlocal agent_alloc_ctx, candidate_agents
+                            async with agent_db_conn.begin_nested():
+                                agent_alloc_ctx = await _reserve_agent(
+                                    sched_ctx, agent_db_conn,
+                                    sgroup_name, agent_id, kernel.requested_slots,
+                                    extra_conds=agent_query_extra_conds,
+                                )
+                                candidate_agents = await _list_agents_by_sgroup(
+                                    agent_db_conn, sgroup_name,
+                                )
+
+                        await execute_with_retry(_reserve)
                 except InstanceNotAvailable:
                     log.debug(log_fmt + 'no-available-instances', *log_args)
 
@@ -832,7 +876,7 @@ async def _reserve_agent(
     sched_ctx: SchedulingContext,
     db_conn: SAConnection,
     scaling_group: str,
-    agent_id: AgentId,
+    agent_id: Optional[AgentId],
     requested_slots: ResourceSlot,
     extra_conds: Any = None,
 ) -> AgentAllocationContext:
@@ -855,13 +899,11 @@ async def _reserve_agent(
         .where(agents.c.id == agent_id)
     )
     await db_conn.execute(update_query)
-
     # Get the agent address for later RPC calls
     query = (sa.select([agents.c.addr])
                .where(agents.c.id == agent_id))
     agent_addr = await db_conn.scalar(query)
     assert agent_addr is not None
-
     return AgentAllocationContext(agent_id, agent_addr, scaling_group)
 
 
