@@ -49,6 +49,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import AgentId
 
 from ..models import kernels, groups, UserRole
+from ..models.utils import execute_with_retry
 from ..types import Sentinel
 from .auth import auth_required
 from .exceptions import GenericNotFound, GenericForbidden, GroupNotFound
@@ -248,7 +249,7 @@ async def enqueue_kernel_creation_status_update(
     app_ctx: PrivateContext = app['events.context']
 
     async def _fetch():
-        async with root_ctx.db.begin() as conn:
+        async with root_ctx.db.begin_readonly() as conn:
             query = (
                 sa.select([
                     kernels.c.id,
@@ -269,7 +270,7 @@ async def enqueue_kernel_creation_status_update(
             result = await conn.execute(query)
             return result.first()
 
-    row = await asyncio.shield(_fetch())
+    row = await execute_with_retry(_fetch)
     if row is None:
         return
     for q in app_ctx.session_event_queues:
@@ -285,7 +286,7 @@ async def enqueue_kernel_termination_status_update(
     app_ctx: PrivateContext = app['events.context']
 
     async def _fetch():
-        async with root_ctx.db.begin() as conn:
+        async with root_ctx.db.begin_readonly() as conn:
             query = (
                 sa.select([
                     kernels.c.id,
@@ -306,7 +307,7 @@ async def enqueue_kernel_termination_status_update(
             result = await conn.execute(query)
             return result.first()
 
-    row = await asyncio.shield(_fetch())
+    row = await execute_with_retry(_fetch)
     if row is None:
         return
     for q in app_ctx.session_event_queues:
@@ -322,7 +323,7 @@ async def enqueue_session_creation_status_update(
     app_ctx: PrivateContext = app['events.context']
 
     async def _fetch():
-        async with root_ctx.db.begin() as conn:
+        async with root_ctx.db.begin_readonly() as conn:
             query = (
                 sa.select([
                     kernels.c.id,
@@ -342,7 +343,7 @@ async def enqueue_session_creation_status_update(
             result = await conn.execute(query)
             return result.first()
 
-    row = await asyncio.shield(_fetch())
+    row = await execute_with_retry(_fetch)
     if row is None:
         return
     for q in app_ctx.session_event_queues:
@@ -358,7 +359,7 @@ async def enqueue_session_termination_status_update(
     app_ctx: PrivateContext = app['events.context']
 
     async def _fetch():
-        async with root_ctx.db.begin() as conn:
+        async with root_ctx.db.begin_readonly() as conn:
             query = (
                 sa.select([
                     kernels.c.id,
@@ -378,7 +379,7 @@ async def enqueue_session_termination_status_update(
             result = await conn.execute(query)
             return result.first()
 
-    row = await asyncio.shield(_fetch())
+    row = await execute_with_retry(_fetch)
     if row is None:
         return
     for q in app_ctx.session_event_queues:
@@ -394,7 +395,7 @@ async def enqueue_batch_task_result_update(
     app_ctx: PrivateContext = app['events.context']
 
     async def _fetch():
-        async with root_ctx.db.begin() as conn:
+        async with root_ctx.db.begin_readonly() as conn:
             query = (
                 sa.select([
                     kernels.c.id,
@@ -413,7 +414,7 @@ async def enqueue_batch_task_result_update(
             result = await conn.execute(query)
             return result.first()
 
-    row = await asyncio.shield(_fetch())
+    row = await execute_with_retry(_fetch)
     if row is None:
         return
     for q in app_ctx.session_event_queues:
