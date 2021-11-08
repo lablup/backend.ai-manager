@@ -780,7 +780,7 @@ async def update_quota(request: web.Request, params: Any) -> web.Response:
         result = await conn.execute(query)
         assert result.rowcount == 1
 
-    return web.json_response({}, status=200)
+    return web.json_response({'size_bytes': quota}, status=200)
 
 
 @atomic
