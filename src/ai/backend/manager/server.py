@@ -33,7 +33,7 @@ import aiomonitor
 from ai.backend.common import redis
 from ai.backend.common.cli import LazyGroup
 from ai.backend.common.events import EventDispatcher, EventProducer
-from ai.backend.common.utils import env_info, current_loop
+from ai.backend.common.utils import env_info
 from ai.backend.common.logging import Logger, BraceStyleAdapter
 from ai.backend.common.plugin.hook import HookPluginContext, ALL_COMPLETED, PASSED
 from ai.backend.common.plugin.monitor import (

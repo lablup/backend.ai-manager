@@ -24,7 +24,6 @@ import uuid
 import aiohttp
 from aiohttp import web
 import aiohttp_cors
-import aiojobs
 import sqlalchemy as sa
 import trafaret as t
 
@@ -2023,60 +2022,66 @@ async def list_mounts(request: web.Request) -> web.Response:
     }
 
     # Scan mounted vfolder hosts for connected agents.
-    async def _fetch_mounts(sess: aiohttp.ClientSession, agent_id: str) -> Tuple[str, Mapping]:
-        watcher_info = await get_watcher_info(request, agent_id)
-        headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
-        url = watcher_info['addr'] / 'mounts'
-        try:
-            async with sess.get(url, headers=headers) as watcher_resp:
-                if watcher_resp.status == 200:
-                    data = {
-                        'success': True,
-                        'mounts': await watcher_resp.json(),
-                        'message': '',
-                    }
-                else:
-                    data = {
-                        'success': False,
-                        'mounts': [],
-                        'message': await watcher_resp.text(),
-                    }
-                return (agent_id, data)
-        except asyncio.CancelledError:
-            raise
-        except asyncio.TimeoutError:
-            log.error('VFOLDER.LIST_MOUNTS(u:{}): timeout from watcher (agent:{})',
-                      access_key, agent_id)
-            raise
-        except Exception:
-            log.exception('VFOLDER.LIST_MOUNTS(u:{}): '
-                          'unexpected error while reading from watcher (agent:{})',
-                          access_key, agent_id)
-            raise
+    async def _fetch_mounts(
+        sema: asyncio.Semaphore,
+        sess: aiohttp.ClientSession,
+        agent_id: str,
+    ) -> Tuple[str, Mapping]:
+        async with sema:
+            watcher_info = await get_watcher_info(request, agent_id)
+            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+            url = watcher_info['addr'] / 'mounts'
+            try:
+                async with sess.get(url, headers=headers) as watcher_resp:
+                    if watcher_resp.status == 200:
+                        data = {
+                            'success': True,
+                            'mounts': await watcher_resp.json(),
+                            'message': '',
+                        }
+                    else:
+                        data = {
+                            'success': False,
+                            'mounts': [],
+                            'message': await watcher_resp.text(),
+                        }
+                    return (agent_id, data)
+            except asyncio.CancelledError:
+                raise
+            except asyncio.TimeoutError:
+                log.error(
+                    'VFOLDER.LIST_MOUNTS(u:{}): timeout from watcher (agent:{})',
+                    access_key, agent_id,
+                )
+                raise
+            except Exception:
+                log.exception(
+                    'VFOLDER.LIST_MOUNTS(u:{}): '
+                    'unexpected error while reading from watcher (agent:{})',
+                    access_key, agent_id,
+                )
+                raise
 
     async with root_ctx.db.begin() as conn:
-        query = (sa.select([agents.c.id])
-                   .select_from(agents)
-                   .where(agents.c.status == AgentStatus.ALIVE))
+        query = (
+            sa.select([agents.c.id])
+            .select_from(agents)
+            .where(agents.c.status == AgentStatus.ALIVE)
+        )
         result = await conn.execute(query)
         rows = result.fetchall()
 
     client_timeout = aiohttp.ClientTimeout(total=10.0)
     async with aiohttp.ClientSession(timeout=client_timeout) as sess:
-        scheduler = await aiojobs.create_scheduler(limit=8)
-        try:
-            jobs = await asyncio.gather(*[
-                scheduler.spawn(_fetch_mounts(sess, row.id)) for row in rows
-            ])
-            mounts = await asyncio.gather(*[job.wait() for job in jobs],
-                                          return_exceptions=True)
-            for mount in mounts:
-                if isinstance(mount, Exception):
-                    # exceptions are already logged.
-                    continue
-                resp['agents'][mount[0]] = mount[1]
-        finally:
-            await scheduler.close()
+        sema = asyncio.Semaphore(8)
+        mounts = await asyncio.gather(*[
+            _fetch_mounts(sema, sess, row.id) for row in rows
+        ], return_exceptions=True)
+        for mount in mounts:
+            if isinstance(mount, Exception):
+                # exceptions are already logged.
+                continue
+            resp['agents'][mount[0]] = mount[1]
 
     return web.json_response(resp, status=200)
 
@@ -2134,50 +2139,54 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
         result = await conn.execute(query)
         rows = result.fetchall()
 
-    async def _mount(sess: aiohttp.ClientSession, agent_id: str) -> Tuple[str, Mapping]:
-        watcher_info = await get_watcher_info(request, agent_id)
-        try:
-            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
-            url = watcher_info['addr'] / 'mounts'
-            async with sess.post(url, json=params, headers=headers) as resp:
-                if resp.status == 200:
-                    data = {
-                        'success': True,
-                        'message': await resp.text(),
-                    }
-                else:
-                    data = {
-                        'success': False,
-                        'message': await resp.text(),
-                    }
-                return (agent_id, data)
-        except asyncio.CancelledError:
-            raise
-        except asyncio.TimeoutError:
-            log.error(log_fmt + ': timeout from watcher (ag:{})',
-                      *log_args, agent_id)
-            raise
-        except Exception:
-            log.exception(log_fmt + ': unexpected error while reading from watcher (ag:{})',
-                          *log_args, agent_id)
-            raise
+    async def _mount(
+        sema: asyncio.Semaphore,
+        sess: aiohttp.ClientSession,
+        agent_id: str,
+    ) -> Tuple[str, Mapping]:
+        async with sema:
+            watcher_info = await get_watcher_info(request, agent_id)
+            try:
+                headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+                url = watcher_info['addr'] / 'mounts'
+                async with sess.post(url, json=params, headers=headers) as resp:
+                    if resp.status == 200:
+                        data = {
+                            'success': True,
+                            'message': await resp.text(),
+                        }
+                    else:
+                        data = {
+                            'success': False,
+                            'message': await resp.text(),
+                        }
+                    return (agent_id, data)
+            except asyncio.CancelledError:
+                raise
+            except asyncio.TimeoutError:
+                log.error(
+                    log_fmt + ': timeout from watcher (ag:{})',
+                    *log_args, agent_id,
+                )
+                raise
+            except Exception:
+                log.exception(
+                    log_fmt + ': unexpected error while reading from watcher (ag:{})',
+                    *log_args, agent_id,
+                )
+                raise
 
     client_timeout = aiohttp.ClientTimeout(total=10)
     async with aiohttp.ClientSession(timeout=client_timeout) as sess:
-        scheduler = await aiojobs.create_scheduler(limit=8)
-        try:
-            jobs = await asyncio.gather(*[
-                scheduler.spawn(_mount(sess, row.id)) for row in rows
-            ])
-            results = await asyncio.gather(*[job.wait() for job in jobs],
-                                           return_exceptions=True)
-            for result in results:
-                if isinstance(result, Exception):
-                    # exceptions are already logged.
-                    continue
-                resp['agents'][result[0]] = result[1]
-        finally:
-            await scheduler.close()
+        sema = asyncio.Semaphore(8)
+        results = await asyncio.gather(*[
+            _mount(sema, sess, row.id) for row in rows
+        ], return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                # exceptions are already logged.
+                continue
+            resp['agents'][result[0]] = result[1]
 
     return web.json_response(resp, status=200)
 
@@ -2250,50 +2259,54 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
     }
 
     # Unmount from running agents.
-    async def _umount(sess: aiohttp.ClientSession, agent_id: str) -> Tuple[str, Mapping]:
-        watcher_info = await get_watcher_info(request, agent_id)
-        try:
-            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
-            url = watcher_info['addr'] / 'mounts'
-            async with sess.delete(url, json=params, headers=headers) as resp:
-                if resp.status == 200:
-                    data = {
-                        'success': True,
-                        'message': await resp.text(),
-                    }
-                else:
-                    data = {
-                        'success': False,
-                        'message': await resp.text(),
-                    }
-                return (agent_id, data)
-        except asyncio.CancelledError:
-            raise
-        except asyncio.TimeoutError:
-            log.error(log_fmt + ': timeout from watcher (agent:{})',
-                      *log_args, agent_id)
-            raise
-        except Exception:
-            log.exception(log_fmt + ': unexpected error while reading from watcher (agent:{})',
-                          *log_args, agent_id)
-            raise
+    async def _umount(
+        sema: asyncio.Semaphore,
+        sess: aiohttp.ClientSession,
+        agent_id: str,
+    ) -> Tuple[str, Mapping]:
+        async with sema:
+            watcher_info = await get_watcher_info(request, agent_id)
+            try:
+                headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+                url = watcher_info['addr'] / 'mounts'
+                async with sess.delete(url, json=params, headers=headers) as resp:
+                    if resp.status == 200:
+                        data = {
+                            'success': True,
+                            'message': await resp.text(),
+                        }
+                    else:
+                        data = {
+                            'success': False,
+                            'message': await resp.text(),
+                        }
+                    return (agent_id, data)
+            except asyncio.CancelledError:
+                raise
+            except asyncio.TimeoutError:
+                log.error(
+                    log_fmt + ': timeout from watcher (agent:{})',
+                    *log_args, agent_id,
+                )
+                raise
+            except Exception:
+                log.exception(
+                    log_fmt + ': unexpected error while reading from watcher (agent:{})',
+                    *log_args, agent_id,
+                )
+                raise
 
     client_timeout = aiohttp.ClientTimeout(total=10.0)
     async with aiohttp.ClientSession(timeout=client_timeout) as sess:
-        scheduler = await aiojobs.create_scheduler(limit=8)
-        try:
-            jobs = await asyncio.gather(*[
-                scheduler.spawn(_umount(sess, _agent.id)) for _agent in _agents
-            ])
-            results = await asyncio.gather(*[job.wait() for job in jobs],
-                                           return_exceptions=True)
-            for result in results:
-                if isinstance(result, Exception):
-                    # exceptions are already logged.
-                    continue
-                resp['agents'][result[0]] = result[1]
-        finally:
-            await scheduler.close()
+        sema = asyncio.Semaphore(8)
+        results = await asyncio.gather(*[
+            _umount(sema, sess, _agent.id) for _agent in _agents
+        ], return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                # exceptions are already logged.
+                continue
+            resp['agents'][result[0]] = result[1]
 
     return web.json_response(resp, status=200)
 
