@@ -200,10 +200,12 @@ async def get(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     async with root_ctx.db.begin() as conn:
         query = (
-            sa.select([session_templates.c.template,
-                       session_templates.c.name,
-                       session_templates.c.user_uuid,
-                       session_templates.c.group_id])
+            sa.select([
+                session_templates.c.template,
+                session_templates.c.name,
+                session_templates.c.user_uuid,
+                session_templates.c.group_id,
+            ])
             .select_from(session_templates)
             .where(
                 (session_templates.c.id == template_id) &
@@ -220,7 +222,7 @@ async def get(request: web.Request, params: Any) -> web.Response:
                 'name': row.name,
                 'user_uuid': str(row.user_uuid),
                 'group_id': str(row.group_id),
-                'domain_name': domain_name
+                'domain_name': domain_name,
             })
         if isinstance(resp, str):
             resp = json.loads(resp)
@@ -284,7 +286,7 @@ async def put(request: web.Request, params: Any) -> web.Response:
                     'group_id': group_id,
                     'user_uuid': user_uuid,
                     'name': name,
-                    'template': template_data
+                    'template': template_data,
                 })
                 .where((session_templates.c.id == template_id))
             )
