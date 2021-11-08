@@ -30,6 +30,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 
 from ai.backend.manager.models.gql import GraphQueryContext
 
+from .. import __version__
 from ..defs import DEFAULT_ROLE
 from ..models import agents, kernels, AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES
 from . import ManagerStatus
@@ -117,7 +118,7 @@ async def fetch_manager_status(request: web.Request) -> web.Response:
                 .select_from(kernels)
                 .where(
                     (kernels.c.cluster_role == DEFAULT_ROLE) &
-                    (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES))
+                    (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
                 )
             )
             active_sessions_num = await conn.scalar(query)
@@ -132,7 +133,9 @@ async def fetch_manager_status(request: web.Request) -> web.Response:
                     'ssl_enabled': configs['ssl-enabled'],
                     'active_sessions': active_sessions_num,
                     'status': status.value,
-                }
+                    'version': __version__,
+                    'api_version': request['api_version'],
+                },
             ]
             return web.json_response({
                 'nodes': nodes,

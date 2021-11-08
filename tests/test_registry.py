@@ -7,6 +7,7 @@ from typing import (
 )
 from unittest.mock import MagicMock, AsyncMock
 
+import pytest
 import snappy
 from sqlalchemy.sql.dml import Insert, Update
 
@@ -22,6 +23,7 @@ class DummyEtcd:
         return {}
 
 
+@pytest.mark.asyncio
 async def test_handle_heartbeat(mocker) -> None:
     mock_shared_config = MagicMock()
     mock_shared_config.update_resource_slots = AsyncMock()
@@ -49,7 +51,7 @@ async def test_handle_heartbeat(mocker) -> None:
     ])
     mocker.patch('ai.backend.manager.registry.get_known_registries', mock_get_known_registries)
     mock_redis_wrapper = MagicMock()
-    mock_redis_wrapper.execute_with_retries = AsyncMock()
+    mock_redis_wrapper.execute = AsyncMock()
     mocker.patch('ai.backend.manager.registry.redis', mock_redis_wrapper)
     image_data = snappy.compress(msgpack.packb([
         ('index.docker.io/lablup/python:3.6-ubuntu18.04', ),
@@ -81,77 +83,81 @@ async def test_handle_heartbeat(mocker) -> None:
     _1g = Decimal('1073741824')
     _2g = Decimal('2147483648')
 
-    # Join
-    mock_dbresult.first = MagicMock(return_value=None)
-    await registry.handle_heartbeat('i-001', {
-        'scaling_group': 'sg-testing',
-        'resource_slots': {'cpu': ('count', _1), 'mem': ('bytes', _1g)},
-        'region': 'ap-northeast-2',
-        'addr': '10.0.0.5',
-        'version': '19.12.0',
-        'compute_plugins': [],
-        'images': image_data,
-    })
-    mock_shared_config.update_resource_slots.assert_awaited_once()
-    q = mock_dbconn.execute.await_args_list[1].args[0]
-    assert isinstance(q, Insert)
+    try:
+        # Join
+        mock_dbresult.first = MagicMock(return_value=None)
+        await registry.handle_heartbeat('i-001', {
+            'scaling_group': 'sg-testing',
+            'resource_slots': {'cpu': ('count', _1), 'mem': ('bytes', _1g)},
+            'region': 'ap-northeast-2',
+            'addr': '10.0.0.5',
+            'version': '19.12.0',
+            'compute_plugins': [],
+            'images': image_data,
+        })
+        mock_shared_config.update_resource_slots.assert_awaited_once()
+        q = mock_dbconn.execute.await_args_list[1].args[0]
+        assert isinstance(q, Insert)
 
-    # Update alive instance
-    mock_shared_config.update_resource_slots.reset_mock()
-    mock_dbconn.execute.reset_mock()
-    mock_dbresult.first = MagicMock(return_value={
-        'status': AgentStatus.ALIVE,
-        'addr': '10.0.0.5',
-        'scaling_group': 'sg-testing',
-        'available_slots': ResourceSlot({'cpu': _1, 'mem': _1g}),
-        'version': '19.12.0',
-        'compute_plugins': [],
-    })
-    await registry.handle_heartbeat('i-001', {
-        'scaling_group': 'sg-testing',
-        'resource_slots': {'cpu': ('count', _1), 'mem': ('bytes', _2g)},
-        'region': 'ap-northeast-2',
-        'addr': '10.0.0.6',
-        'version': '19.12.0',
-        'compute_plugins': [],
-        'images': image_data,
-    })
-    mock_shared_config.update_resource_slots.assert_awaited_once()
-    q = mock_dbconn.execute.await_args_list[1].args[0]
-    assert isinstance(q, Update)
-    q_params = q.compile().params
-    assert q_params['addr'] == '10.0.0.6'
-    assert q_params['available_slots'] == ResourceSlot({'cpu': _1, 'mem': _2g})
-    assert 'scaling_group' not in q_params
+        # Update alive instance
+        mock_shared_config.update_resource_slots.reset_mock()
+        mock_dbconn.execute.reset_mock()
+        mock_dbresult.first = MagicMock(return_value={
+            'status': AgentStatus.ALIVE,
+            'addr': '10.0.0.5',
+            'scaling_group': 'sg-testing',
+            'available_slots': ResourceSlot({'cpu': _1, 'mem': _1g}),
+            'version': '19.12.0',
+            'compute_plugins': [],
+        })
+        await registry.handle_heartbeat('i-001', {
+            'scaling_group': 'sg-testing',
+            'resource_slots': {'cpu': ('count', _1), 'mem': ('bytes', _2g)},
+            'region': 'ap-northeast-2',
+            'addr': '10.0.0.6',
+            'version': '19.12.0',
+            'compute_plugins': [],
+            'images': image_data,
+        })
+        mock_shared_config.update_resource_slots.assert_awaited_once()
+        q = mock_dbconn.execute.await_args_list[1].args[0]
+        assert isinstance(q, Update)
+        q_params = q.compile().params
+        assert q_params['addr'] == '10.0.0.6'
+        assert q_params['available_slots'] == ResourceSlot({'cpu': _1, 'mem': _2g})
+        assert 'scaling_group' not in q_params
 
-    # Rejoin
-    mock_shared_config.update_resource_slots.reset_mock()
-    mock_dbconn.execute.reset_mock()
-    mock_dbresult.first = MagicMock(return_value={
-        'status': AgentStatus.LOST,
-        'addr': '10.0.0.5',
-        'scaling_group': 'sg-testing',
-        'available_slots': ResourceSlot({'cpu': _1, 'mem': _1g}),
-        'version': '19.12.0',
-        'compute_plugins': [],
-    })
-    await registry.handle_heartbeat('i-001', {
-        'scaling_group': 'sg-testing2',
-        'resource_slots': {'cpu': ('count', _4), 'mem': ('bytes', _2g)},
-        'region': 'ap-northeast-2',
-        'addr': '10.0.0.6',
-        'version': '19.12.0',
-        'compute_plugins': [],
-        'images': image_data,
-    })
-    mock_shared_config.update_resource_slots.assert_awaited_once()
-    q = mock_dbconn.execute.await_args_list[1].args[0]
-    assert isinstance(q, Update)
-    q_params = q.compile().params
-    assert q_params['status'] == AgentStatus.ALIVE
-    assert q_params['addr'] == '10.0.0.6'
-    assert "lost_at=NULL" in str(q)  # stringified and removed from bind params
-    assert q_params['available_slots'] == ResourceSlot({'cpu': _4, 'mem': _2g})
-    assert q_params['scaling_group'] == 'sg-testing2'
-    assert 'compute_plugins' in q_params
-    assert 'version' in q_params
+        # Rejoin
+        mock_shared_config.update_resource_slots.reset_mock()
+        mock_dbconn.execute.reset_mock()
+        mock_dbresult.first = MagicMock(return_value={
+            'status': AgentStatus.LOST,
+            'addr': '10.0.0.5',
+            'scaling_group': 'sg-testing',
+            'available_slots': ResourceSlot({'cpu': _1, 'mem': _1g}),
+            'version': '19.12.0',
+            'compute_plugins': [],
+        })
+        await registry.handle_heartbeat('i-001', {
+            'scaling_group': 'sg-testing2',
+            'resource_slots': {'cpu': ('count', _4), 'mem': ('bytes', _2g)},
+            'region': 'ap-northeast-2',
+            'addr': '10.0.0.6',
+            'version': '19.12.0',
+            'compute_plugins': [],
+            'images': image_data,
+        })
+        mock_shared_config.update_resource_slots.assert_awaited_once()
+        q = mock_dbconn.execute.await_args_list[1].args[0]
+        assert isinstance(q, Update)
+        q_params = q.compile().params
+        assert q_params['status'] == AgentStatus.ALIVE
+        assert q_params['addr'] == '10.0.0.6'
+        assert "lost_at=NULL" in str(q)  # stringified and removed from bind params
+        assert q_params['available_slots'] == ResourceSlot({'cpu': _4, 'mem': _2g})
+        assert q_params['scaling_group'] == 'sg-testing2'
+        assert 'compute_plugins' in q_params
+        assert 'version' in q_params
+
+    finally:
+        await registry.shutdown()

@@ -43,7 +43,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.types import (
     SchemaType,
     TypeDecorator,
-    CHAR
+    CHAR,
 )
 from sqlalchemy.dialects.postgresql import UUID, ENUM, JSONB
 
@@ -416,7 +416,7 @@ async def batch_multiresult(
         objs_per_key[key] = list()
     async for row in (await db_conn.stream(query)):
         objs_per_key[key_getter(row)].append(
-            obj_type.from_row(graph_ctx, row)
+            obj_type.from_row(graph_ctx, row),
         )
     return [*objs_per_key.values()]
 
@@ -545,7 +545,7 @@ def privileged_mutation(required_role, target_func=None):
                                 groups.select()
                                 .where(
                                     (groups.c.id == target_group) &
-                                    (groups.c.domain_name == ctx.user['domain_name'])
+                                    (groups.c.domain_name == ctx.user['domain_name']),
                                 )
                             )
                             result = await conn.execute(query)

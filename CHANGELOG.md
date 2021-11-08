@@ -16,6 +16,33 @@ Changes
 
 .. towncrier release notes start
 
+## 21.09.0 (2021-11-08)
+
+### Features
+* Add optional manually-assigned agent list to session creation API ([#469](https://github.com/lablup/backend.ai-manager/issues/469))
+* Upgrade to aioredis v2 ([#478](https://github.com/lablup/backend.ai-manager/issues/478))
+* Allow configuration of the TCP keepalive timeout for the manager-to-agent RPC layer via etcd ([#485](https://github.com/lablup/backend.ai-manager/issues/485))
+* Limit the maximum configurable value of per-vfolder quota when creating a vfolder to the size quota specified in the keypair resource policy (`max_vfolder_size`) ([#488](https://github.com/lablup/backend.ai-manager/issues/488))
+* Properly implement vfolder's max_size property with storage proxy (21.03.1+ required) and change the unit of the field from KBytes to MBytes. ([#489](https://github.com/lablup/backend.ai-manager/issues/489))
+* Return manager version information in status API. This enables clients to display the current version of the manager. ([#491](https://github.com/lablup/backend.ai-manager/issues/491))
+* Allow (non-superadmin) users to query/update per-vfolder quotas on their own. To help a client determine availability of per-vfolder quota option, now the response of the vfolder host list API includes volume information such as capabilities from storage proxy. ([#492](https://github.com/lablup/backend.ai-manager/issues/492))
+* update_quota API returns the quota value actually set for client's reference. ([#493](https://github.com/lablup/backend.ai-manager/issues/493))
+* Add a new `get_usage` API for superadmins to query the usage of an arbitrary vfolder, while users can query their vfolder usage with `get_info` API ([#494](https://github.com/lablup/backend.ai-manager/issues/494))
+
+### Fixes
+* More realistic resource preset fixture. ([#481](https://github.com/lablup/backend.ai-manager/issues/481))
+* Replace aioredlock with `pg_advisory_lock` because aioredlock is no longer actively maintained and causes lots of synchronization issues ([#482](https://github.com/lablup/backend.ai-manager/issues/482))
+* A follow-up fix for #482 to silence bogus DB API error upon service shutdown ([#483](https://github.com/lablup/backend.ai-manager/issues/483))
+* Apply TCP keepalive options to ZeroMQ sockets for RPC channels ([#484](https://github.com/lablup/backend.ai-manager/issues/484))
+* Filter out images with malformed tags from the response of the image list API ([#486](https://github.com/lablup/backend.ai-manager/issues/486))
+* Remove `deferrable=True` option from the DB transaction to read session usage statistics. Since the manager now keeps repeatedly creating implicitly started DB transactions to acquire advisory locks (#482) and deferrable transactions barely can be started. ([#487](https://github.com/lablup/backend.ai-manager/issues/487))
+* Fix an error in creating a virtual folder when quota is not delivered. ([#490](https://github.com/lablup/backend.ai-manager/issues/490))
+* Improve stability of session/kernel event notification APIs ([#495](https://github.com/lablup/backend.ai-manager/issues/495))
+
+### Miscellaneous
+* Update missing licenses and add project links in DEPENDENCIES.md ([#471](https://github.com/lablup/backend.ai-manager/issues/471))
+
+
 ## 21.09.0a2 (2021-09-28)
 
 ### Features

@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 from sqlalchemy.engine.row import Row
 from sqlalchemy.sql.expression import false
 
-from ai.backend.common import msgpack
+from ai.backend.common import msgpack, redis
 from ai.backend.common.types import (
     AccessKey,
     SecretKey,
@@ -59,7 +59,7 @@ __all__: Sequence[str] = (
     'Dotfile', 'MAXIMUM_DOTFILE_SIZE',
     'query_owned_dotfiles',
     'query_bootstrap_script',
-    'verify_dotfile_name'
+    'verify_dotfile_name',
 )
 
 
@@ -116,7 +116,7 @@ class UserInfo(graphene.ObjectType):
         ctx: GraphQueryContext,
         user_uuids: Sequence[uuid.UUID],
     ) -> Sequence[Optional[UserInfo]]:
-        async with ctx.db.begin() as conn:
+        async with ctx.db.begin_readonly() as conn:
             from .user import users
             query = (
                 sa.select([users.c.uuid, users.c.email, users.c.full_name])
@@ -197,7 +197,7 @@ class KeyPair(graphene.ObjectType):
 
     async def resolve_num_queries(self, info: graphene.ResolveInfo) -> int:
         ctx: GraphQueryContext = info.context
-        n = await ctx.redis_stat.get(f"kp:{self.access_key}:num_queries")
+        n = await redis.execute(ctx.redis_stat, lambda r: r.get(f"kp:{self.access_key}:num_queries"))
         if n is not None:
             return n
         return 0
@@ -561,16 +561,16 @@ def generate_ssh_keypair() -> Tuple[str, str]:
     key = rsa.generate_private_key(
         backend=crypto_default_backend(),
         public_exponent=65537,
-        key_size=2048
+        key_size=2048,
     )
     private_key = key.private_bytes(
         crypto_serialization.Encoding.PEM,
         crypto_serialization.PrivateFormat.TraditionalOpenSSL,
-        crypto_serialization.NoEncryption()
+        crypto_serialization.NoEncryption(),
     ).decode("utf-8")
     public_key = key.public_key().public_bytes(
         crypto_serialization.Encoding.OpenSSH,
-        crypto_serialization.PublicFormat.OpenSSH
+        crypto_serialization.PublicFormat.OpenSSH,
     ).decode("utf-8")
     return (public_key, private_key)
 

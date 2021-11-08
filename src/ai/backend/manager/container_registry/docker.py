@@ -67,7 +67,7 @@ class DockerRegistry_v2(BaseContainerRegistry):
         )
         catalog_url: Optional[yarl.URL]
         catalog_url = (self.registry_url / 'v2/_catalog').with_query(
-            {'n': '30'}
+            {'n': '30'},
         )
         while catalog_url is not None:
             async with sess.get(catalog_url, **rqst_args) as resp:

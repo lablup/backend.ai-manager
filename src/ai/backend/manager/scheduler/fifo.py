@@ -92,7 +92,7 @@ class FIFOSlotScheduler(AbstractScheduler):
                 key=lambda a: key_by_requested_slots(
                     a,
                     requested_slots,
-                )
+                ),
             )
             return chosen_agent.agent_id
         return None
@@ -148,7 +148,7 @@ class LIFOSlotScheduler(AbstractScheduler):
                 key=lambda a: key_by_requested_slots(
                     a,
                     requested_slots,
-                )
+                ),
             )
             return chosen_agent.agent_id
         return None

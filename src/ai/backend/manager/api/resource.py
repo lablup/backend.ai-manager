@@ -140,7 +140,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             .where(
                 (association_groups_users.c.user_id == request['user']['uuid']) &
                 (groups.c.name == params['group']) &
-                (domains.c.name == domain_name)
+                (domains.c.name == domain_name),
             )
         )
         result = await conn.execute(query)
@@ -151,7 +151,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             raise InvalidAPIParameters('Unknown user group')
         group_resource_policy = {
             'total_resource_slots': group_resource_slots,
-            'default_for_unspecified': DefaultForUnspecified.UNLIMITED
+            'default_for_unspecified': DefaultForUnspecified.UNLIMITED,
         }
         group_limits = ResourceSlot.from_policy(group_resource_policy, known_slot_types)
         group_occupied = await root_ctx.registry.get_group_occupancy(group_id, conn=conn)
@@ -163,7 +163,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
         domain_resource_slots = await conn.scalar(query)
         domain_resource_policy = {
             'total_resource_slots': domain_resource_slots,
-            'default_for_unspecified': DefaultForUnspecified.UNLIMITED
+            'default_for_unspecified': DefaultForUnspecified.UNLIMITED,
         }
         domain_limits = ResourceSlot.from_policy(domain_resource_policy, known_slot_types)
         domain_occupied = await root_ctx.registry.get_domain_occupancy(domain_name, conn=conn)
@@ -199,7 +199,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             .where(
                 (kernels.c.user_uuid == request['user']['uuid']) &
                 (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)) &
-                (kernels.c.scaling_group.in_(sgroup_names))
+                (kernels.c.scaling_group.in_(sgroup_names)),
             )
         )
         async for row in (await conn.stream(query)):
@@ -212,7 +212,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             .select_from(agents)
             .where(
                 (agents.c.status == AgentStatus.ALIVE) &
-                (agents.c.scaling_group.in_(sgroup_names))
+                (agents.c.scaling_group.in_(sgroup_names)),
             )
         )
         agent_slots = []
@@ -306,7 +306,7 @@ async def get_container_stats_for_period(request: web.Request, start_date, end_d
                 ((kernels.c.terminated_at >= start_date) & (kernels.c.created_at < end_date) &
                  (kernels.c.status.in_(RESOURCE_USAGE_KERNEL_STATUSES))) |
                 # Or, filter running sessions which created before requested end_date
-                ((kernels.c.created_at < end_date) & (kernels.c.status.in_(LIVE_STATUS)))
+                ((kernels.c.created_at < end_date) & (kernels.c.status.in_(LIVE_STATUS))),
             )
             .order_by(sa.asc(kernels.c.terminated_at))
         )
@@ -519,7 +519,7 @@ async def get_time_binned_monthly_stats(request: web.Request, user_uuid=None):
             .select_from(kernels)
             .where(
                 (kernels.c.terminated_at >= start_date) &
-                (kernels.c.status.in_(RESOURCE_USAGE_KERNEL_STATUSES))
+                (kernels.c.status.in_(RESOURCE_USAGE_KERNEL_STATUSES)),
             )
             .order_by(sa.asc(kernels.c.created_at))
         )
@@ -567,32 +567,32 @@ async def get_time_binned_monthly_stats(request: web.Request, user_uuid=None):
             "date": ts,
             "num_sessions": {
                 "value": num_sessions,
-                "unit_hint": "count"
+                "unit_hint": "count",
             },
             "cpu_allocated": {
                 "value": cpu_allocated,
-                "unit_hint": "count"
+                "unit_hint": "count",
             },
             "mem_allocated": {
                 "value": mem_allocated,
-                "unit_hint": "bytes"
+                "unit_hint": "bytes",
             },
             "gpu_allocated": {
                 "value": float(gpu_allocated),
-                "unit_hint": "count"
+                "unit_hint": "count",
             },
             "io_read_bytes": {
                 "value": io_read_bytes,
-                "unit_hint": "bytes"
+                "unit_hint": "bytes",
             },
             "io_write_bytes": {
                 "value": io_write_bytes,
-                "unit_hint": "bytes"
+                "unit_hint": "bytes",
             },
             "disk_used": {
                 "value ": disk_used,
-                "unit_hint": "bytes"
-            }
+                "unit_hint": "bytes",
+            },
         }
         tseries.append(stat)
         ts += time_window
@@ -638,7 +638,7 @@ async def get_watcher_info(request: web.Request, agent_id: str) -> dict:
         token = 'insecure'
     agent_ip = await root_ctx.shared_config.etcd.get(f'nodes/agents/{agent_id}/ip')
     watcher_port = await root_ctx.shared_config.etcd.get(
-        f'nodes/agents/{agent_id}/watcher_port'
+        f'nodes/agents/{agent_id}/watcher_port',
     )
     if watcher_port is None:
         watcher_port = 6009

@@ -148,7 +148,7 @@ class Agent(graphene.ObjectType):
     async def resolve_live_stat(self, info: graphene.ResolveInfo) -> Any:
         ctx: GraphQueryContext = info.context
         rs = ctx.redis_stat
-        live_stat = await redis.execute_with_retries(lambda: rs.get(str(self.id), encoding=None))
+        live_stat = await redis.execute(rs, lambda r: r.get(str(self.id)))
         if live_stat is not None:
             live_stat = msgpack.unpackb(live_stat)
         return live_stat
@@ -156,7 +156,7 @@ class Agent(graphene.ObjectType):
     async def resolve_cpu_cur_pct(self, info: graphene.ResolveInfo) -> Any:
         ctx: GraphQueryContext = info.context
         rs = ctx.redis_stat
-        live_stat = await redis.execute_with_retries(lambda: rs.get(str(self.id), encoding=None))
+        live_stat = await redis.execute(rs, lambda r: r.get(str(self.id)))
         if live_stat is not None:
             live_stat = msgpack.unpackb(live_stat)
             try:
@@ -168,7 +168,7 @@ class Agent(graphene.ObjectType):
     async def resolve_mem_cur_bytes(self, info: graphene.ResolveInfo) -> Any:
         ctx: GraphQueryContext = info.context
         rs = ctx.redis_stat
-        live_stat = await redis.execute_with_retries(lambda: rs.get(str(self.id), encoding=None))
+        live_stat = await redis.execute(rs, lambda r: r.get(str(self.id)))
         if live_stat is not None:
             live_stat = msgpack.unpackb(live_stat)
             try:
@@ -305,7 +305,7 @@ class Agent(graphene.ObjectType):
             .select_from(agents)
             .where(agents.c.id.in_(agent_ids))
             .order_by(
-                agents.c.id
+                agents.c.id,
             )
         )
         if raw_status is not None:
@@ -332,7 +332,7 @@ async def recalc_agent_resource_occupancy(db_conn: SAConnection, agent_id: Agent
         .select_from(kernels)
         .where(
             (kernels.c.agent == agent_id) &
-            (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES))
+            (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
         )
     )
     occupied_slots = ResourceSlot()

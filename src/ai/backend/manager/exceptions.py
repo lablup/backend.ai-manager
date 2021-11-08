@@ -81,7 +81,7 @@ def convert_to_status_data(e: Exception, is_debug: bool = False) -> ErrorStatusI
                     for sub_error in
                     e.__errors__
                 ],
-            }
+            },
         )
         return data
     elif isinstance(e, AgentError):

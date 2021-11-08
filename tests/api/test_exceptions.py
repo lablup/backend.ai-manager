@@ -9,7 +9,7 @@ def test_backend_error_obj():
     eobj = BackendError()
     assert eobj.args == (eobj.status_code, eobj.reason, eobj.error_type)
     assert eobj.body == json.dumps(odict(
-        ('type', eobj.error_type), ('title', eobj.error_title)
+        ('type', eobj.error_type), ('title', eobj.error_title),
     )).encode()
 
     extra_msg = '!@#$'

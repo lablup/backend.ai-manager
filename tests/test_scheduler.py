@@ -22,7 +22,6 @@ from ai.backend.common.types import (
     ResourceSlot, SessionTypes,
     ClusterMode,
 )
-
 from ai.backend.manager.defs import DEFAULT_ROLE
 from ai.backend.manager.scheduler.types import (
     KernelInfo,
@@ -30,7 +29,9 @@ from ai.backend.manager.scheduler.types import (
     ExistingSession,
     AgentContext,
 )
-from ai.backend.manager.scheduler.dispatcher import load_scheduler
+from ai.backend.common.plugin.hook import HookPluginContext
+from ai.backend.manager.registry import AgentRegistry
+from ai.backend.manager.scheduler.dispatcher import load_scheduler, SchedulerDispatcher
 from ai.backend.manager.scheduler.fifo import FIFOSlotScheduler, LIFOSlotScheduler
 from ai.backend.manager.scheduler.drf import DRFScheduler
 from ai.backend.manager.scheduler.mof import MOFScheduler
@@ -244,7 +245,7 @@ existing_session_kernel_ids = [
         kernel_ids=[KernelId(UUID('251907d9-1290-4126-bc6c-100000000300'))]),
 ]
 
-common_image_ref = ImageRef('lablup/python:3.6-ubunt18.04'),
+common_image_ref = ImageRef('lablup/python:3.6-ubunt18.04')
 
 _common_dummy_for_pending_session: Mapping[str, Any] = dict(
     domain_name='default',
@@ -294,6 +295,8 @@ def example_pending_sessions():
                 ),
             ],
             access_key=AccessKey('user01'),
+            agent_id=None,
+            agent_addr=None,
             status_data={},
             session_id=pending_session_kernel_ids[0].session_id,
             session_creation_id='aaa100',
@@ -335,6 +338,8 @@ def example_pending_sessions():
                 ),
             ],
             access_key=AccessKey('user02'),
+            agent_id=None,
+            agent_addr=None,
             status_data={},
             session_id=pending_session_kernel_ids[1].session_id,
             session_creation_id='aaa101',
@@ -416,6 +421,8 @@ def example_pending_sessions():
                 ),
             ],
             access_key=AccessKey('user03'),
+            agent_id=None,
+            agent_addr=None,
             status_data={},
             session_id=pending_session_kernel_ids[2].session_id,
             session_creation_id='aaa102',
@@ -644,6 +651,8 @@ def gen_pending_for_holb_tests(session_id: str, status_data: Mapping[str, Any]) 
         session_id=SessionId(session_id),  # type: ignore
         session_name=secrets.token_hex(8),
         access_key=AccessKey('ak1'),
+        agent_id=AgentId('i-001'),
+        agent_addr='10.0.1.1:6001',
         status_data=status_data,
         session_creation_id=secrets.token_urlsafe(8),
         kernels=[],
@@ -854,6 +863,126 @@ def test_mof_scheduler_no_valid_agent(example_agents_no_valid, example_pending_s
 
     agent_id = scheduler.assign_agent_for_session(example_agents_no_valid, picked_session)
     assert agent_id is None
+
+
+class DummyEtcd:
+    async def get_prefix(self, key: str) -> Mapping[str, Any]:
+        return {}
+
+
+@pytest.mark.asyncio
+async def test_manually_assign_agent_available(example_agents, example_pending_sessions):
+    sess_ctx = example_pending_sessions[0]
+
+    mock_local_config = MagicMock()
+
+    mock_shared_config = MagicMock()
+    mock_shared_config.update_resource_slots = AsyncMock()
+    mock_shared_config.etcd = None
+    mock_shared_config.get_redis_url = MagicMock()
+
+    mock_event_dispatcher = MagicMock()
+    mock_event_producer = MagicMock()
+    mock_event_producer.produce_event = AsyncMock()
+
+    mock_db = MagicMock()
+    mock_db_conn = MagicMock()
+    mock_dbconn_ctx = MagicMock()
+    mock_dbconn = MagicMock()
+    mock_dbresult = MagicMock()
+    mock_db.connect = MagicMock(return_value=mock_dbconn_ctx)
+    mock_db.begin = MagicMock(return_value=mock_dbconn_ctx)
+    mock_db_conn.execute = AsyncMock(return_value=None)
+    mock_dbconn_ctx.__aenter__ = AsyncMock(return_value=mock_dbconn)
+    mock_dbconn_ctx.__aexit__ = AsyncMock()
+    mock_dbconn.execute = AsyncMock(return_value=mock_dbresult)
+
+    mock_redis_stat = MagicMock()
+    mock_redis_live = MagicMock()
+    mock_redis_live.hset = AsyncMock()
+    mock_redis_image = MagicMock()
+
+    mock_sched_ctx = MagicMock()
+    mock_check_result = MagicMock()
+    scheduler = FIFOSlotScheduler({})
+    sgroup_name = example_agents[0].scaling_group
+    candidate_agents = example_agents
+    example_pending_sessions[0].agent_id = 'i-001'
+    sess_ctx = example_pending_sessions[0]
+    mocked_etcd = DummyEtcd()
+    hook_plugin_ctx = HookPluginContext(mocked_etcd, {})
+
+    registry = AgentRegistry(
+        shared_config=mock_shared_config,
+        db=mock_db,
+        redis_stat=mock_redis_stat,
+        redis_live=mock_redis_live,
+        redis_image=mock_redis_image,
+        event_dispatcher=mock_event_dispatcher,
+        event_producer=mock_event_producer,
+        storage_manager=None,  # type: ignore
+        hook_plugin_ctx=hook_plugin_ctx,
+    )
+    await registry.init()
+
+    dispatcher = SchedulerDispatcher(
+        local_config=mock_local_config,
+        shared_config=mock_shared_config,
+        event_dispatcher=mock_event_dispatcher,
+        event_producer=mock_event_producer,
+        registry=registry,
+    )
+
+    # manually assigned agent is None
+    mock_dbresult.scalar = MagicMock(return_value=None)
+    await dispatcher._schedule_single_node_session(
+        mock_sched_ctx,
+        scheduler,
+        sgroup_name,
+        candidate_agents,
+        sess_ctx,
+        mock_check_result,
+    )
+    result = mock_dbresult.scalar()
+    assert result is None
+
+    # manually assigned agent is enough capacity
+    mock_dbresult.scalar = MagicMock(return_value={
+        'cpu': Decimal('8.0'),
+        'mem': Decimal('8192'),
+        'cuda.shares': Decimal('4'),
+        'rocm.devices': Decimal('4'),
+    })
+    await dispatcher._schedule_single_node_session(
+        mock_sched_ctx,
+        scheduler,
+        sgroup_name,
+        candidate_agents,
+        sess_ctx,
+        mock_check_result,
+    )
+    result = mock_dbresult.scalar()
+    for key in result:
+        assert result[key] >= example_pending_sessions[0].requested_slots[key]
+
+    # manually assigned agent is not enough capacity.
+    mock_dbresult.scalar = MagicMock(return_value={
+        'cpu': Decimal('0.0'),
+        'mem': Decimal('0'),
+        'cuda.shares': Decimal('0'),
+        'rocm.devices': Decimal('0'),
+    })
+    await dispatcher._schedule_single_node_session(
+        mock_sched_ctx,
+        scheduler,
+        sgroup_name,
+        candidate_agents,
+        sess_ctx,
+        mock_check_result,
+    )
+    result = mock_dbresult.scalar()
+    for key in result:
+        assert result[key] <= example_pending_sessions[0].requested_slots[key]
 
 
 @pytest.mark.asyncio
