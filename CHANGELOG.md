@@ -16,6 +16,21 @@ Changes
 
 .. towncrier release notes start
 
+21.03.24 (2021-11-08)
+---------------------
+
+### Features
+* Add optional manually-assigned agent list to session creation API ([#469](https://github.com/lablup/backend.ai-manager/issues/469))
+* Upgrade to aioredis v2 ([#478](https://github.com/lablup/backend.ai-manager/issues/478))
+* Return manager version information in status API. This enables clients to display the current version of the manager. ([#491](https://github.com/lablup/backend.ai-manager/issues/491))
+* Allow (non-superadmin) users to query/update per-vfolder quotas on their own. To help a client determine availability of per-vfolder quota option, now the response of the vfolder host list API includes volume information such as capabilities from storage proxy. ([#492](https://github.com/lablup/backend.ai-manager/issues/492))
+* update_quota API returns the quota value actually set for client's reference. ([#493](https://github.com/lablup/backend.ai-manager/issues/493))
+* Add a new `get_usage` API for superadmins to query the usage of an arbitrary vfolder, while users can query their vfolder usage with `get_info` API ([#494](https://github.com/lablup/backend.ai-manager/issues/494))
+
+### Fixes
+* Improve stability of session/kernel event notification APIs ([#495](https://github.com/lablup/backend.ai-manager/issues/495))
+
+
 21.03.23 (2021-10-21)
 ---------------------
 
