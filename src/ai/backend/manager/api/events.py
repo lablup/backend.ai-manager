@@ -469,11 +469,14 @@ async def events_shutdown(app: web.Application) -> None:
     # shutdown handler is called before waiting for closing active connections.
     # We need to put sentinels here to ensure delivery of them to active SSE connections.
     app_ctx: PrivateContext = app['events.context']
+    join_tasks = []
     for sq in app_ctx.session_event_queues:
         sq.put_nowait(sentinel)
+        join_tasks.append(sq.join())
     for tq in app_ctx.task_update_queues:
         tq.put_nowait(sentinel)
-    await asyncio.sleep(0)
+        join_tasks.append(tq.join())
+    await asyncio.gather(*join_tasks)
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
