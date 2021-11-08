@@ -12,7 +12,6 @@ from typing import (
 
 from aiohttp import web
 import aiohttp_cors
-from aiojobs.aiohttp import atomic
 import trafaret as t
 
 from ai.backend.common.docker import get_known_registries
@@ -29,7 +28,6 @@ if TYPE_CHECKING:
 log = BraceStyleAdapter(logging.getLogger(__name__))
 
 
-@atomic
 async def get_resource_slots(request: web.Request) -> web.Response:
     log.info('ETCD.GET_RESOURCE_SLOTS ()')
     root_ctx: RootContext = request.app['_root.context']
@@ -37,7 +35,6 @@ async def get_resource_slots(request: web.Request) -> web.Response:
     return web.json_response(known_slots, status=200)
 
 
-@atomic
 async def get_vfolder_types(request: web.Request) -> web.Response:
     log.info('ETCD.GET_VFOLDER_TYPES ()')
     root_ctx: RootContext = request.app['_root.context']
@@ -45,7 +42,6 @@ async def get_vfolder_types(request: web.Request) -> web.Response:
     return web.json_response(vfolder_types, status=200)
 
 
-@atomic
 @superadmin_required
 async def get_docker_registries(request: web.Request) -> web.Response:
     """
@@ -59,7 +55,6 @@ async def get_docker_registries(request: web.Request) -> web.Response:
     return web.json_response(known_registries, status=200)
 
 
-@atomic
 @superadmin_required
 @check_api_params(
     t.Dict({
@@ -80,7 +75,6 @@ async def get_config(request: web.Request, params: Any) -> web.Response:
     return web.json_response({'result': value})
 
 
-@atomic
 @superadmin_required
 @check_api_params(
     t.Dict({
@@ -116,7 +110,6 @@ async def set_config(request: web.Request, params: Any) -> web.Response:
     return web.json_response({'result': 'ok'})
 
 
-@atomic
 @superadmin_required
 @check_api_params(
     t.Dict({

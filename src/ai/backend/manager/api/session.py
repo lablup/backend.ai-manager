@@ -33,7 +33,6 @@ import uuid
 import aiohttp
 from aiohttp import web, hdrs
 import aiohttp_cors
-from aiojobs.aiohttp import atomic
 import aioredis
 import aiotools
 from async_timeout import timeout
@@ -1402,7 +1401,6 @@ async def destroy(request: web.Request, params: Any) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
 @check_api_params(
@@ -1436,7 +1434,6 @@ async def match_sessions(request: web.Request, params: Any) -> web.Response:
     }, status=200)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def get_info(request: web.Request) -> web.Response:
@@ -1486,7 +1483,6 @@ async def get_info(request: web.Request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def restart(request: web.Request) -> web.Response:
@@ -1591,7 +1587,6 @@ async def execute(request: web.Request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def interrupt(request: web.Request) -> web.Response:
@@ -1609,7 +1604,6 @@ async def interrupt(request: web.Request) -> web.Response:
     return web.Response(status=204)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def complete(request: web.Request) -> web.Response:
@@ -1644,7 +1638,6 @@ async def complete(request: web.Request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
 @check_api_params(
@@ -1790,7 +1783,6 @@ async def download_single(request: web.Request, params: Any) -> web.Response:
     return web.Response(body=result, status=200)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def list_files(request: web.Request) -> web.Response:
@@ -1826,7 +1818,6 @@ async def list_files(request: web.Request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
 @check_api_params(

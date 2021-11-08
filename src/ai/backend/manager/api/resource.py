@@ -21,7 +21,6 @@ from typing import (
 import aiohttp
 from aiohttp import web
 import aiohttp_cors
-from aiojobs.aiohttp import atomic
 from async_timeout import timeout as _timeout
 from dateutil.tz import tzutc
 import sqlalchemy as sa
@@ -59,7 +58,6 @@ _json_loads = functools.partial(json.loads, parse_float=Decimal)
 
 
 @auth_required
-@atomic
 async def list_presets(request: web.Request) -> web.Response:
     """
     Returns the list of all resource presets.
@@ -87,7 +85,6 @@ async def list_presets(request: web.Request) -> web.Response:
         return web.json_response(resp, status=200)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
 @check_api_params(
@@ -276,7 +273,6 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @superadmin_required
-@atomic
 async def recalculate_usage(request: web.Request) -> web.Response:
     """
     Update `keypairs.c.concurrency_used` and `agents.c.occupied_slots`.
@@ -419,7 +415,6 @@ async def get_container_stats_for_period(request: web.Request, start_date, end_d
     return list(objs_per_group.values())
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @superadmin_required
 @check_api_params(
@@ -450,7 +445,6 @@ async def usage_per_month(request: web.Request, params: Any) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @superadmin_required
 @check_api_params(

@@ -24,8 +24,6 @@ import uuid
 import aiohttp
 from aiohttp import web
 import aiohttp_cors
-import aiojobs
-from aiojobs.aiohttp import atomic
 import sqlalchemy as sa
 import trafaret as t
 
@@ -508,7 +506,6 @@ async def delete_by_id(request: web.Request, params: Any) -> web.Response:
     return web.Response(status=204)
 
 
-@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 async def list_hosts(request: web.Request) -> web.Response:
@@ -551,7 +548,6 @@ async def list_hosts(request: web.Request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @superadmin_required
 @server_status_required(READ_ALLOWED)
 async def list_all_hosts(request: web.Request) -> web.Response:
@@ -570,7 +566,6 @@ async def list_all_hosts(request: web.Request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @superadmin_required
 @server_status_required(READ_ALLOWED)
 @check_api_params(
@@ -596,7 +591,6 @@ async def get_volume_perf_metric(request: web.Request, params: Any) -> web.Respo
     return web.json_response(storage_reply, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 async def list_allowed_types(request: web.Request) -> web.Response:
@@ -607,7 +601,6 @@ async def list_allowed_types(request: web.Request) -> web.Response:
     return web.json_response(allowed_vfolder_types, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
@@ -658,7 +651,6 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 @check_api_params(
@@ -707,7 +699,6 @@ async def get_quota(request: web.Request, params: Any) -> web.Response:
     return web.json_response(storage_reply, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
@@ -783,7 +774,6 @@ async def update_quota(request: web.Request, params: Any) -> web.Response:
     return web.json_response({'size_bytes': quota}, status=200)
 
 
-@atomic
 @superadmin_required
 @server_status_required(READ_ALLOWED)
 @check_api_params(
@@ -810,7 +800,6 @@ async def get_usage(request: web.Request, params: Any) -> web.Response:
     return web.json_response(usage, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @vfolder_permission_required(VFolderPermission.OWNER_PERM)
@@ -857,7 +846,6 @@ async def rename_vfolder(request: web.Request, params: Any, row: VFolderRow) -> 
     return web.Response(status=201)
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @vfolder_permission_required(VFolderPermission.OWNER_PERM)
@@ -921,7 +909,6 @@ async def mkdir(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
     return web.Response(status=201)
 
 
-@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
@@ -1117,7 +1104,6 @@ async def list_files(request: web.Request, params: Any, row: VFolderRow) -> web.
     return web.json_response(resp, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 async def list_sent_invitations(request: web.Request) -> web.Response:
@@ -1154,7 +1140,6 @@ async def list_sent_invitations(request: web.Request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
@@ -1186,7 +1171,6 @@ async def update_invitation(request: web.Request, params: Any) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
@@ -1296,7 +1280,6 @@ async def invite(request: web.Request, params: Any) -> web.Response:
     return web.json_response(resp, status=201)
 
 
-@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 async def invitations(request: web.Request) -> web.Response:
@@ -1333,7 +1316,6 @@ async def invitations(request: web.Request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
@@ -1417,7 +1399,6 @@ async def accept_invitation(request: web.Request, params: Any) -> web.Response:
     return web.json_response({})
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
@@ -1468,7 +1449,6 @@ async def delete_invitation(request: web.Request, params: Any) -> web.Response:
     return web.json_response({})
 
 
-@atomic
 @admin_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
@@ -1566,7 +1546,6 @@ async def share(request: web.Request, params: Any) -> web.Response:
         return web.json_response({'shared_emails': emails_to_share}, status=201)
 
 
-@atomic
 @admin_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
@@ -1678,7 +1657,6 @@ async def delete(request: web.Request) -> web.Response:
     return web.Response(status=204)
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
@@ -1711,7 +1689,6 @@ async def leave(request: web.Request, row: VFolderRow) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
@@ -1857,7 +1834,6 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
     return web.json_response(resp, status=201)
 
 
-@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 @check_api_params(
@@ -1905,7 +1881,6 @@ async def list_shared_vfolders(request: web.Request, params: Any) -> web.Respons
     return web.json_response(resp, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
@@ -2047,60 +2022,66 @@ async def list_mounts(request: web.Request) -> web.Response:
     }
 
     # Scan mounted vfolder hosts for connected agents.
-    async def _fetch_mounts(sess: aiohttp.ClientSession, agent_id: str) -> Tuple[str, Mapping]:
-        watcher_info = await get_watcher_info(request, agent_id)
-        headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
-        url = watcher_info['addr'] / 'mounts'
-        try:
-            async with sess.get(url, headers=headers) as watcher_resp:
-                if watcher_resp.status == 200:
-                    data = {
-                        'success': True,
-                        'mounts': await watcher_resp.json(),
-                        'message': '',
-                    }
-                else:
-                    data = {
-                        'success': False,
-                        'mounts': [],
-                        'message': await watcher_resp.text(),
-                    }
-                return (agent_id, data)
-        except asyncio.CancelledError:
-            raise
-        except asyncio.TimeoutError:
-            log.error('VFOLDER.LIST_MOUNTS(u:{}): timeout from watcher (agent:{})',
-                      access_key, agent_id)
-            raise
-        except Exception:
-            log.exception('VFOLDER.LIST_MOUNTS(u:{}): '
-                          'unexpected error while reading from watcher (agent:{})',
-                          access_key, agent_id)
-            raise
+    async def _fetch_mounts(
+        sema: asyncio.Semaphore,
+        sess: aiohttp.ClientSession,
+        agent_id: str,
+    ) -> Tuple[str, Mapping]:
+        async with sema:
+            watcher_info = await get_watcher_info(request, agent_id)
+            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+            url = watcher_info['addr'] / 'mounts'
+            try:
+                async with sess.get(url, headers=headers) as watcher_resp:
+                    if watcher_resp.status == 200:
+                        data = {
+                            'success': True,
+                            'mounts': await watcher_resp.json(),
+                            'message': '',
+                        }
+                    else:
+                        data = {
+                            'success': False,
+                            'mounts': [],
+                            'message': await watcher_resp.text(),
+                        }
+                    return (agent_id, data)
+            except asyncio.CancelledError:
+                raise
+            except asyncio.TimeoutError:
+                log.error(
+                    'VFOLDER.LIST_MOUNTS(u:{}): timeout from watcher (agent:{})',
+                    access_key, agent_id,
+                )
+                raise
+            except Exception:
+                log.exception(
+                    'VFOLDER.LIST_MOUNTS(u:{}): '
+                    'unexpected error while reading from watcher (agent:{})',
+                    access_key, agent_id,
+                )
+                raise
 
     async with root_ctx.db.begin() as conn:
-        query = (sa.select([agents.c.id])
-                   .select_from(agents)
-                   .where(agents.c.status == AgentStatus.ALIVE))
+        query = (
+            sa.select([agents.c.id])
+            .select_from(agents)
+            .where(agents.c.status == AgentStatus.ALIVE)
+        )
         result = await conn.execute(query)
         rows = result.fetchall()
 
     client_timeout = aiohttp.ClientTimeout(total=10.0)
     async with aiohttp.ClientSession(timeout=client_timeout) as sess:
-        scheduler = await aiojobs.create_scheduler(limit=8)
-        try:
-            jobs = await asyncio.gather(*[
-                scheduler.spawn(_fetch_mounts(sess, row.id)) for row in rows
-            ])
-            mounts = await asyncio.gather(*[job.wait() for job in jobs],
-                                          return_exceptions=True)
-            for mount in mounts:
-                if isinstance(mount, Exception):
-                    # exceptions are already logged.
-                    continue
-                resp['agents'][mount[0]] = mount[1]
-        finally:
-            await scheduler.close()
+        sema = asyncio.Semaphore(8)
+        mounts = await asyncio.gather(*[
+            _fetch_mounts(sema, sess, row.id) for row in rows
+        ], return_exceptions=True)
+        for mount in mounts:
+            if isinstance(mount, Exception):
+                # exceptions are already logged.
+                continue
+            resp['agents'][mount[0]] = mount[1]
 
     return web.json_response(resp, status=200)
 
@@ -2158,50 +2139,54 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
         result = await conn.execute(query)
         rows = result.fetchall()
 
-    async def _mount(sess: aiohttp.ClientSession, agent_id: str) -> Tuple[str, Mapping]:
-        watcher_info = await get_watcher_info(request, agent_id)
-        try:
-            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
-            url = watcher_info['addr'] / 'mounts'
-            async with sess.post(url, json=params, headers=headers) as resp:
-                if resp.status == 200:
-                    data = {
-                        'success': True,
-                        'message': await resp.text(),
-                    }
-                else:
-                    data = {
-                        'success': False,
-                        'message': await resp.text(),
-                    }
-                return (agent_id, data)
-        except asyncio.CancelledError:
-            raise
-        except asyncio.TimeoutError:
-            log.error(log_fmt + ': timeout from watcher (ag:{})',
-                      *log_args, agent_id)
-            raise
-        except Exception:
-            log.exception(log_fmt + ': unexpected error while reading from watcher (ag:{})',
-                          *log_args, agent_id)
-            raise
+    async def _mount(
+        sema: asyncio.Semaphore,
+        sess: aiohttp.ClientSession,
+        agent_id: str,
+    ) -> Tuple[str, Mapping]:
+        async with sema:
+            watcher_info = await get_watcher_info(request, agent_id)
+            try:
+                headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+                url = watcher_info['addr'] / 'mounts'
+                async with sess.post(url, json=params, headers=headers) as resp:
+                    if resp.status == 200:
+                        data = {
+                            'success': True,
+                            'message': await resp.text(),
+                        }
+                    else:
+                        data = {
+                            'success': False,
+                            'message': await resp.text(),
+                        }
+                    return (agent_id, data)
+            except asyncio.CancelledError:
+                raise
+            except asyncio.TimeoutError:
+                log.error(
+                    log_fmt + ': timeout from watcher (ag:{})',
+                    *log_args, agent_id,
+                )
+                raise
+            except Exception:
+                log.exception(
+                    log_fmt + ': unexpected error while reading from watcher (ag:{})',
+                    *log_args, agent_id,
+                )
+                raise
 
     client_timeout = aiohttp.ClientTimeout(total=10)
     async with aiohttp.ClientSession(timeout=client_timeout) as sess:
-        scheduler = await aiojobs.create_scheduler(limit=8)
-        try:
-            jobs = await asyncio.gather(*[
-                scheduler.spawn(_mount(sess, row.id)) for row in rows
-            ])
-            results = await asyncio.gather(*[job.wait() for job in jobs],
-                                           return_exceptions=True)
-            for result in results:
-                if isinstance(result, Exception):
-                    # exceptions are already logged.
-                    continue
-                resp['agents'][result[0]] = result[1]
-        finally:
-            await scheduler.close()
+        sema = asyncio.Semaphore(8)
+        results = await asyncio.gather(*[
+            _mount(sema, sess, row.id) for row in rows
+        ], return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                # exceptions are already logged.
+                continue
+            resp['agents'][result[0]] = result[1]
 
     return web.json_response(resp, status=200)
 
@@ -2274,50 +2259,54 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
     }
 
     # Unmount from running agents.
-    async def _umount(sess: aiohttp.ClientSession, agent_id: str) -> Tuple[str, Mapping]:
-        watcher_info = await get_watcher_info(request, agent_id)
-        try:
-            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
-            url = watcher_info['addr'] / 'mounts'
-            async with sess.delete(url, json=params, headers=headers) as resp:
-                if resp.status == 200:
-                    data = {
-                        'success': True,
-                        'message': await resp.text(),
-                    }
-                else:
-                    data = {
-                        'success': False,
-                        'message': await resp.text(),
-                    }
-                return (agent_id, data)
-        except asyncio.CancelledError:
-            raise
-        except asyncio.TimeoutError:
-            log.error(log_fmt + ': timeout from watcher (agent:{})',
-                      *log_args, agent_id)
-            raise
-        except Exception:
-            log.exception(log_fmt + ': unexpected error while reading from watcher (agent:{})',
-                          *log_args, agent_id)
-            raise
+    async def _umount(
+        sema: asyncio.Semaphore,
+        sess: aiohttp.ClientSession,
+        agent_id: str,
+    ) -> Tuple[str, Mapping]:
+        async with sema:
+            watcher_info = await get_watcher_info(request, agent_id)
+            try:
+                headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+                url = watcher_info['addr'] / 'mounts'
+                async with sess.delete(url, json=params, headers=headers) as resp:
+                    if resp.status == 200:
+                        data = {
+                            'success': True,
+                            'message': await resp.text(),
+                        }
+                    else:
+                        data = {
+                            'success': False,
+                            'message': await resp.text(),
+                        }
+                    return (agent_id, data)
+            except asyncio.CancelledError:
+                raise
+            except asyncio.TimeoutError:
+                log.error(
+                    log_fmt + ': timeout from watcher (agent:{})',
+                    *log_args, agent_id,
+                )
+                raise
+            except Exception:
+                log.exception(
+                    log_fmt + ': unexpected error while reading from watcher (agent:{})',
+                    *log_args, agent_id,
+                )
+                raise
 
     client_timeout = aiohttp.ClientTimeout(total=10.0)
     async with aiohttp.ClientSession(timeout=client_timeout) as sess:
-        scheduler = await aiojobs.create_scheduler(limit=8)
-        try:
-            jobs = await asyncio.gather(*[
-                scheduler.spawn(_umount(sess, _agent.id)) for _agent in _agents
-            ])
-            results = await asyncio.gather(*[job.wait() for job in jobs],
-                                           return_exceptions=True)
-            for result in results:
-                if isinstance(result, Exception):
-                    # exceptions are already logged.
-                    continue
-                resp['agents'][result[0]] = result[1]
-        finally:
-            await scheduler.close()
+        sema = asyncio.Semaphore(8)
+        results = await asyncio.gather(*[
+            _umount(sema, sess, _agent.id) for _agent in _agents
+        ], return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                # exceptions are already logged.
+                continue
+            resp['agents'][result[0]] = result[1]
 
     return web.json_response(resp, status=200)
 
