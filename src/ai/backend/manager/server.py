@@ -561,9 +561,11 @@ def build_root_app(
 
 
 @aiotools.actxmgr
-async def server_main(loop: asyncio.AbstractEventLoop,
-                      pidx: int,
-                      _args: List[Any]) -> AsyncIterator[None]:
+async def server_main(
+    loop: asyncio.AbstractEventLoop,
+    pidx: int,
+    _args: List[Any],
+) -> AsyncIterator[None]:
     subapp_pkgs = [
         '.etcd', '.events',
         '.auth', '.ratelimit',
@@ -640,8 +642,11 @@ async def server_main(loop: asyncio.AbstractEventLoop,
 
 
 @aiotools.actxmgr
-async def server_main_logwrapper(loop: asyncio.AbstractEventLoop,
-                                 pidx: int, _args: List[Any]) -> AsyncIterator[None]:
+async def server_main_logwrapper(
+    loop: asyncio.AbstractEventLoop,
+    pidx: int,
+    _args: List[Any],
+) -> AsyncIterator[None]:
     setproctitle(f"backend.ai: manager worker-{pidx}")
     log_endpoint = _args[1]
     logger = Logger(_args[0]['logging'], is_master=False, log_endpoint=log_endpoint)
