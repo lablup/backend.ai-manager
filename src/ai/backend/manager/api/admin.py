@@ -12,7 +12,6 @@ from typing import (
 
 from aiohttp import web
 import aiohttp_cors
-from aiojobs.aiohttp import atomic
 import attr
 import graphene
 from graphql.execution.executors.asyncio import AsyncioExecutor
@@ -95,7 +94,6 @@ async def _handle_gql_common(request: web.Request, params: Any) -> ExecutionResu
     return result
 
 
-@atomic
 @auth_required
 @check_api_params(
     t.Dict({
@@ -108,7 +106,6 @@ async def handle_gql(request: web.Request, params: Any) -> web.Response:
     return web.json_response(result.to_dict(), status=200)
 
 
-@atomic
 @auth_required
 @check_api_params(
     t.Dict({

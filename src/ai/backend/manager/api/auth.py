@@ -16,7 +16,6 @@ from typing import (
 
 from aiohttp import web
 import aiohttp_cors
-from aiojobs.aiohttp import atomic
 from aioredis import Redis
 from dateutil.tz import tzutc
 from dateutil.parser import parse as dtparse
@@ -560,7 +559,6 @@ def superadmin_required(handler):
     return wrapped
 
 
-@atomic
 @auth_required
 @check_api_params(
     t.Dict({
@@ -574,7 +572,6 @@ async def test(request: web.Request, params: Any) -> web.Response:
     return web.json_response(resp_data)
 
 
-@atomic
 @auth_required
 @check_api_params(
     t.Dict({
@@ -614,7 +611,6 @@ async def get_role(request: web.Request, params: Any) -> web.Response:
     return web.json_response(resp_data)
 
 
-@atomic
 @check_api_params(
     t.Dict({
         t.Key('type'): t.Enum('keypair', 'jwt'),
@@ -678,7 +674,6 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
     })
 
 
-@atomic
 @check_api_params(
     t.Dict({
         t.Key('domain'): t.String,
@@ -795,7 +790,6 @@ async def signup(request: web.Request, params: Any) -> web.Response:
     return web.json_response(resp_data, status=201)
 
 
-@atomic
 @auth_required
 @check_api_params(
     t.Dict({
@@ -831,7 +825,6 @@ async def signout(request: web.Request, params: Any) -> web.Response:
     return web.json_response({})
 
 
-@atomic
 @auth_required
 @check_api_params(
     t.Dict({
@@ -869,7 +862,6 @@ async def update_full_name(request: web.Request, params: Any) -> web.Response:
     return web.json_response({}, status=200)
 
 
-@atomic
 @auth_required
 @check_api_params(
     t.Dict({
@@ -918,7 +910,6 @@ async def update_password(request: web.Request, params: Any) -> web.Response:
     return web.json_response({}, status=200)
 
 
-@atomic
 @auth_required
 async def get_ssh_keypair(request: web.Request) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
@@ -937,7 +928,6 @@ async def get_ssh_keypair(request: web.Request) -> web.Response:
     return web.json_response({'ssh_public_key': pubkey}, status=200)
 
 
-@atomic
 @auth_required
 async def refresh_ssh_keypair(request: web.Request) -> web.Response:
     domain_name = request['user']['domain_name']

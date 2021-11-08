@@ -25,7 +25,6 @@ import aiohttp
 from aiohttp import web
 import aiohttp_cors
 import aiojobs
-from aiojobs.aiohttp import atomic
 import sqlalchemy as sa
 import trafaret as t
 
@@ -508,7 +507,6 @@ async def delete_by_id(request: web.Request, params: Any) -> web.Response:
     return web.Response(status=204)
 
 
-@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 async def list_hosts(request: web.Request) -> web.Response:
@@ -551,7 +549,6 @@ async def list_hosts(request: web.Request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @superadmin_required
 @server_status_required(READ_ALLOWED)
 async def list_all_hosts(request: web.Request) -> web.Response:
@@ -570,7 +567,6 @@ async def list_all_hosts(request: web.Request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @superadmin_required
 @server_status_required(READ_ALLOWED)
 @check_api_params(
@@ -596,7 +592,6 @@ async def get_volume_perf_metric(request: web.Request, params: Any) -> web.Respo
     return web.json_response(storage_reply, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 async def list_allowed_types(request: web.Request) -> web.Response:
@@ -607,7 +602,6 @@ async def list_allowed_types(request: web.Request) -> web.Response:
     return web.json_response(allowed_vfolder_types, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
@@ -658,7 +652,6 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 @check_api_params(
@@ -707,7 +700,6 @@ async def get_quota(request: web.Request, params: Any) -> web.Response:
     return web.json_response(storage_reply, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
@@ -783,7 +775,6 @@ async def update_quota(request: web.Request, params: Any) -> web.Response:
     return web.json_response({'size_bytes': quota}, status=200)
 
 
-@atomic
 @superadmin_required
 @server_status_required(READ_ALLOWED)
 @check_api_params(
@@ -810,7 +801,6 @@ async def get_usage(request: web.Request, params: Any) -> web.Response:
     return web.json_response(usage, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @vfolder_permission_required(VFolderPermission.OWNER_PERM)
@@ -857,7 +847,6 @@ async def rename_vfolder(request: web.Request, params: Any, row: VFolderRow) -> 
     return web.Response(status=201)
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @vfolder_permission_required(VFolderPermission.OWNER_PERM)
@@ -921,7 +910,6 @@ async def mkdir(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
     return web.Response(status=201)
 
 
-@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
@@ -1117,7 +1105,6 @@ async def list_files(request: web.Request, params: Any, row: VFolderRow) -> web.
     return web.json_response(resp, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 async def list_sent_invitations(request: web.Request) -> web.Response:
@@ -1154,7 +1141,6 @@ async def list_sent_invitations(request: web.Request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
@@ -1186,7 +1172,6 @@ async def update_invitation(request: web.Request, params: Any) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
@@ -1296,7 +1281,6 @@ async def invite(request: web.Request, params: Any) -> web.Response:
     return web.json_response(resp, status=201)
 
 
-@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 async def invitations(request: web.Request) -> web.Response:
@@ -1333,7 +1317,6 @@ async def invitations(request: web.Request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
@@ -1417,7 +1400,6 @@ async def accept_invitation(request: web.Request, params: Any) -> web.Response:
     return web.json_response({})
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
@@ -1468,7 +1450,6 @@ async def delete_invitation(request: web.Request, params: Any) -> web.Response:
     return web.json_response({})
 
 
-@atomic
 @admin_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
@@ -1566,7 +1547,6 @@ async def share(request: web.Request, params: Any) -> web.Response:
         return web.json_response({'shared_emails': emails_to_share}, status=201)
 
 
-@atomic
 @admin_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
@@ -1678,7 +1658,6 @@ async def delete(request: web.Request) -> web.Response:
     return web.Response(status=204)
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
@@ -1711,7 +1690,6 @@ async def leave(request: web.Request, row: VFolderRow) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
@@ -1857,7 +1835,6 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
     return web.json_response(resp, status=201)
 
 
-@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 @check_api_params(
@@ -1905,7 +1882,6 @@ async def list_shared_vfolders(request: web.Request, params: Any) -> web.Respons
     return web.json_response(resp, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
