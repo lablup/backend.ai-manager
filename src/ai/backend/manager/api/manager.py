@@ -19,7 +19,6 @@ from typing import (
 
 from aiohttp import web
 import aiohttp_cors
-from aiojobs.aiohttp import atomic
 from aiotools import aclosing
 import attr
 import graphene
@@ -103,7 +102,6 @@ async def detect_status_update(root_ctx: RootContext) -> None:
         pass
 
 
-@atomic
 async def fetch_manager_status(request: web.Request) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     log.info('MANAGER.FETCH_MANAGER_STATUS ()')
@@ -147,7 +145,6 @@ async def fetch_manager_status(request: web.Request) -> web.Response:
         raise
 
 
-@atomic
 @superadmin_required
 @check_api_params(
     t.Dict({
@@ -174,7 +171,6 @@ async def update_manager_status(request: web.Request, params: Any) -> web.Respon
     return web.Response(status=204)
 
 
-@atomic
 async def get_announcement(request: web.Request) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     data = await root_ctx.shared_config.etcd.get('manager/announcement')
@@ -185,7 +181,6 @@ async def get_announcement(request: web.Request) -> web.Response:
     return web.json_response(ret)
 
 
-@atomic
 @superadmin_required
 @check_api_params(
     t.Dict({
@@ -209,7 +204,6 @@ iv_scheduler_ops_args = {
 }
 
 
-@atomic
 @superadmin_required
 @check_api_params(
     t.Dict({
