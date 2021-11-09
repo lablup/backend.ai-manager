@@ -21,8 +21,7 @@ from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
 
 from ..models import (
-    groups, session_templates, users,
-    query_accessible_session_templates, TemplateType,
+    groups, session_templates, users, TemplateType,
 )
 from ..models.session_template import check_task_template
 
@@ -108,58 +107,43 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
     resp = []
     access_key = request['keypair']['access_key']
     domain_name = request['user']['domain_name']
-    user_role = request['user']['role']
     user_uuid = request['user']['uuid']
     log.info('SESSION_TEMPLATE.LIST (ak:{})', access_key)
     root_ctx: RootContext = request.app['_root.context']
     async with root_ctx.db.begin() as conn:
         entries: List[Mapping[str, Any]]
-        if request['is_superadmin'] and params['all']:
-            j = (
-                session_templates
-                .join(users, session_templates.c.user_uuid == users.c.uuid, isouter=True)
-                .join(groups, session_templates.c.group_id == groups.c.id, isouter=True)
+        j = (
+            session_templates
+            .join(users, session_templates.c.user_uuid == users.c.uuid, isouter=True)
+            .join(groups, session_templates.c.group_id == groups.c.id, isouter=True)
+        )
+        query = (
+            sa.select([session_templates, users.c.email, groups.c.name], use_labels=True)
+            .select_from(j)
+            .where(
+                (session_templates.c.is_active) &
+                (session_templates.c.type == TemplateType.TASK),
             )
-            query = (
-                sa.select([session_templates, users.c.email, groups.c.name], use_labels=True)
-                .select_from(j)
-                .where(
-                    (session_templates.c.is_active) &
-                    (session_templates.c.type == TemplateType.TASK),
-                )
-            )
-            result = await conn.execute(query)
-            entries = []
-            for row in result:
-                is_owner = True if row.session_templates_user_uuid == user_uuid else False
-                entries.append({
-                    'name': row.session_templates_name,
-                    'id': row.session_templates_id,
-                    'created_at': row.session_templates_created_at,
-                    'is_owner': is_owner,
-                    'user': (str(row.session_templates_user_uuid)
-                             if row.session_templates_user_uuid else None),
-                    'group': (str(row.session_templates_group_id)
-                              if row.session_templates_group_id else None),
-                    'user_email': row.users_email,
-                    'group_name': row.groups_name,
-                    'domain_name': domain_name,
-                    'type': row.session_templates_type,
-                    'template': row.session_templates_template,
-                })
-        else:
-            extra_conds = None
-            if params['group_id'] is not None:
-                extra_conds = ((session_templates.c.group_id == params['group_id']))
-            entries = await query_accessible_session_templates(
-                conn,
-                user_uuid,
-                TemplateType.TASK,
-                user_role=user_role,
-                domain_name=domain_name,
-                allowed_types=['user', 'group'],
-                extra_conds=extra_conds,
-            )
+        )
+        result = await conn.execute(query)
+        entries = []
+        for row in result:
+            is_owner = True if row.session_templates_user_uuid == user_uuid else False
+            entries.append({
+                'name': row.session_templates_name,
+                'id': row.session_templates_id,
+                'created_at': row.session_templates_created_at,
+                'is_owner': is_owner,
+                'user': (str(row.session_templates_user_uuid)
+                            if row.session_templates_user_uuid else None),
+                'group': (str(row.session_templates_group_id)
+                            if row.session_templates_group_id else None),
+                'user_email': row.users_email,
+                'group_name': row.groups_name,
+                'domain_name': domain_name,
+                'type': row.session_templates_type,
+                'template': row.session_templates_template,
+            })
         for entry in entries:
             resp.append({
                 'name': entry['name'],
