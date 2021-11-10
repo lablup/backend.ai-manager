@@ -84,6 +84,8 @@ task_template_v1 = t.Dict({
         t.Key('scaling_group', default=None): t.Null | t.String,
         t.Key('mounts', default={}): t.Null | t.Mapping(t.String, t.Any),
         t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any),
+        tx.AliasedKey(['agent_list', 'agentList'],
+                      default=None) >> 'agent_list': t.Null | t.List(t.String),
     }),
 }).allow_extra('*')
 
