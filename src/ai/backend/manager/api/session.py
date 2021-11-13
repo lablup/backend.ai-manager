@@ -585,7 +585,6 @@ async def _create(request: web.Request, params: Any) -> web.Response:
                         resp['servicePorts'].append(response_dict)
                 else:
                     resp['status'] = row['status'].name
-
     except asyncio.CancelledError:
         raise
     except BackendError:
@@ -1039,7 +1038,6 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
         resp['status'] = 'PENDING'
         resp['servicePorts'] = []
         resp['created'] = True
-
         if not params['enqueue_only']:
             app_ctx.pending_waits.add(current_task)
             max_wait = params['max_wait_seconds']
@@ -1274,7 +1272,7 @@ async def monitor_kernel_preparation(
 ) -> None:
     progress = [0, 0]
 
-    async def _get_status():
+    async def _get_status(kernel_id):
         async with root_ctx.db.begin_readonly() as conn:
             query = (
                 sa.select([
@@ -1303,9 +1301,14 @@ async def monitor_kernel_preparation(
         _update_progress,
     )
     try:
+        count = 0
         while True:
-            result = await _get_status()
+            if count>1000:
+                break
+            result = await _get_status(kernel_id)
+            print('kernel show',kernel_id, result)
             if result is None:
+                count+=1
                 continue
             if result['status'] == KernelStatus.PREPARING:
                 await reporter.update(0)

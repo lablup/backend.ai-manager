@@ -273,10 +273,6 @@ kernels = sa.Table(
              postgresql_where=sa.text(
                  "status NOT IN ('TERMINATED', 'CANCELLED') and "
                  "cluster_role = 'main'")),
-    
-    # progress
-    sa.Column('current_progress', sa.Integer(), default=0),
-    sa.Column('total_progress', sa.Integer(), default=0)
 )
 
 session_dependencies = sa.Table(
@@ -829,7 +825,6 @@ class ComputeSession(graphene.ObjectType):
 
             # statistics
             'num_queries': row['num_queries'],
-
         }
 
     @classmethod

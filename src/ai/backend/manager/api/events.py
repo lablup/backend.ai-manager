@@ -25,7 +25,6 @@ import trafaret as t
 
 from ai.backend.common import redis, validators as tx
 from ai.backend.common.events import (
-    KernelPullProgressEvent,
     BgtaskCancelledEvent,
     BgtaskDoneEvent,
     BgtaskFailedEvent,
@@ -431,24 +430,6 @@ async def enqueue_bgtask_status_update(
     for q in app_ctx.task_update_queues:
         q.put_nowait(event)
 
-
-async def kernel_pull_progress_update(
-    app: web.Application,
-    source: AgentId,
-    event: KernelPullProgressEvent
-    ) -> None:
-    root_ctx: RootContext = app['_root.context']
-    app_ctx: PrivateContext = app['events.context']
-
-    async def _update() -> None:
-        async with root_ctx.db.begin() as conn:
-            query = sa.update(kernels).values({
-                'current_progress': event.current_progress,
-                'total_progress': event.total_progress,
-            }).where(kernels.c.id == event.kernel_id)
-
-            await conn.execute(query)
-    await execute_with_retry(_update)
 
 @attr.s(slots=True, auto_attribs=True, init=False)
 class PrivateContext:
