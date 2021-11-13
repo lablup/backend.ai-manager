@@ -517,79 +517,18 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             agent_list=params['config']['agent_list'],
         ))
         resp['sessionId'] = str(kernel_id)  # changed since API v5
-
-        async def kernelpullprogress(reporter):
-            get_and_update_lock = asyncio.Lock()
-
-            async def _get(kernel_id):
-                async with get_and_update_lock:
-                    async with root_ctx.db.begin() as conn:
-                        query = (
-                            sa.select([
-                                kernels.c.id,
-                                kernels.c.status,
-                                kernels.c.current_progress,
-                                kernels.c.total_progress,
-                            ])
-                            .select_from(kernels)
-                            .where(kernels.c.id==kernel_id)
-                        )
-                        result = await conn.execute(query)
-                await asyncio.sleep(2)
-                return result.first()
-
-            async def updatekernelpullprogress(
-                app: web.Application,
-                source: AgentId,
-                event: KernelPullProgressEvent
-                ) -> None:
-                root_ctx: RootContext = app['_root.context']
-                async def _update() -> None:
-                    async with root_ctx.db.begin() as conn:
-                        query = sa.update(kernels).values(**{
-                            'current_progress': event.current_progress,
-                            'total_progress': event.total_progress,
-                        }).where(kernels.c.id == event.kernel_id)
-                        await conn.execute(query)
-                if not get_and_update_lock.locked():
-                    await execute_with_retry(_update)
-                else:
-                    pass
-
-            root_ctx.event_dispatcher.subscribe(KernelPullProgressEvent, request.app, updatekernelpullprogress)
-            kernel_id = resp['sessionId']
-            while True:
-                cp = 0
-                tp = 0
-                result = await _get(kernel_id)
-                cp += int(result['current_progress'])
-                tp += int(result['total_progress'])
-                reporter.total_progress = tp
-                inc = cp - reporter.current_progress
-                await asyncio.sleep(0.5)
-                await reporter.update(inc)
-                if result['status']==KernelStatus.PREPARING:
-                    await reporter.update(reporter.total_progress, reporter.current_progress)
-                if result['status']==KernelStatus.RUNNING:
-                    break
-            await asyncio.sleep(0.5)
-
-        task_id = await root_ctx.background_task_manager.start(kernelpullprogress, name='uchan_test')
-        resp['background_task'] = str(task_id)
         resp['sessionName'] = str(params['session_name'])
         resp['status'] = 'PENDING'
         resp['servicePorts'] = []
         resp['created'] = True
-
-        monitor_kernel_preparation = Monitor_kernel_preparation(
-            kernel_id=kernel_id,
-            root_ctx=root_ctx,
-            app=request.app,
-        )
-
         if params['enqueue_only']:
             task_id = await root_ctx.background_task_manager.start(
-                monitor_kernel_preparation,
+                functools.partial(
+                    monitor_kernel_preparation,
+                    kernel_id=kernel_id,
+                    root_ctx=root_ctx,
+                    app=request.app,
+                ),
                 name='monitor-kernel-preparation',
             )
             resp['background_task'] = str(task_id)
@@ -605,7 +544,12 @@ async def _create(request: web.Request, params: Any) -> web.Response:
                     await start_event.wait()
             except asyncio.TimeoutError:
                 task_id = await root_ctx.background_task_manager.start(
-                    monitor_kernel_preparation,
+                    functools.partial(
+                        monitor_kernel_preparation,
+                        kernel_id=kernel_id,
+                        root_ctx=root_ctx,
+                        app=request.app,
+                    ),
                     name='monitor-kernel-preparation',
                 )
                 resp['background_task'] = str(task_id)
@@ -1322,67 +1266,57 @@ async def handle_agent_heartbeat(
     await root_ctx.registry.handle_heartbeat(source, event.agent_info)
 
 
-class Monitor_kernel_preparation:
-    kernel_id: uuid.UUID
-    root_ctx: RootContext
-    app: web.Application
+async def monitor_kernel_preparation(
+    reporter: ProgressReporter,
+    kernel_id: uuid.UUID,
+    root_ctx: RootContext,
+    app: web.Application,
+) -> None:
+    progress = [0, 0]
 
-    def __init__(
-        self,
-        kernel_id: uuid.UUID,
-        root_ctx: RootContext,
-        app: web.Application,
-    ) -> None:
-        self.kernel_id = kernel_id
-        self.root_ctx = root_ctx
-        self.app = app
-        self.progress = [0, 0]
-
-    async def _get_status(self):
-        async with self.root_ctx.db.begin_readonly() as conn:
+    async def _get_status():
+        async with root_ctx.db.begin_readonly() as conn:
             query = (
                 sa.select([
                     kernels.c.id,
                     kernels.c.status,
                 ])
                 .select_from(kernels)
-                .where(kernels.c.id == self.kernel_id)
+                .where(kernels.c.id == kernel_id)
             )
             result = await conn.execute(query)
 
         return result.first()
 
     async def _update_progress(
-        self,
         app: web.Application,
         source: AgentId,
         event: KernelPullProgressEvent,
     ) -> None:
         # update both current and total
-        self.progress[0] = int(event.current_progress)
-        self.progress[1] = int(event.total_progress)
+        progress[0] = int(event.current_progress)
+        progress[1] = int(event.total_progress)
 
-    async def __call__(self, reporter: ProgressReporter):
-        progress_handler = self.root_ctx.event_dispatcher.subscribe(
-            KernelPullProgressEvent,
-            self.app,
-            self._update_progress
-        )
-        try:
-            while True:
-                result = await self._get_status()
-                if result is None:
-                    continue
-                if result['status'] == KernelStatus.PREPARING:
-                    await reporter.update(0)
-                if result['status'] == KernelStatus.RUNNING:
-                    break
-                reporter.current_progress = self.progress[0]
-                reporter.total_progress = self.progress[1]
+    progress_handler = root_ctx.event_dispatcher.subscribe(
+        KernelPullProgressEvent,
+        app,
+        _update_progress,
+    )
+    try:
+        while True:
+            result = await _get_status()
+            if result is None:
+                continue
+            if result['status'] == KernelStatus.PREPARING:
                 await reporter.update(0)
-                await asyncio.sleep(0.5)
-        finally:
-            self.root_ctx.event_dispatcher.unsubscribe(progress_handler)
+            if result['status'] == KernelStatus.RUNNING:
+                break
+            reporter.current_progress = progress[0]
+            reporter.total_progress = progress[1]
+            await reporter.update(0)
+            await asyncio.sleep(0.5)
+    finally:
+        root_ctx.event_dispatcher.unsubscribe(progress_handler)
 
 
 @catch_unexpected(log)
