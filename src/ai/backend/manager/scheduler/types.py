@@ -61,7 +61,7 @@ def merge_resource(
 
 @attr.s(auto_attribs=True, slots=True)
 class AgentAllocationContext:
-    agent_id: AgentId
+    agent_id: Optional[AgentId]
     agent_addr: str
     scaling_group: str
 
@@ -177,6 +177,8 @@ class PendingSession:
     """
     kernels: List[KernelInfo]
     access_key: AccessKey
+    agent_id: AgentId
+    agent_addr: str
     session_id: SessionId
     session_creation_id: str
     session_type: SessionTypes
@@ -211,6 +213,8 @@ class PendingSession:
         return {
             kernels.c.id,
             kernels.c.access_key,
+            kernels.c.agent,
+            kernels.c.agent_addr,
             kernels.c.session_creation_id,
             kernels.c.session_id,
             kernels.c.session_type,
@@ -251,6 +255,8 @@ class PendingSession:
         return cls(
             kernels=[],
             access_key=row['access_key'],
+            agent_id=row['agent'],
+            agent_addr=row['agent_addr'],
             session_creation_id=row['session_creation_id'],
             session_id=row['session_id'],
             session_type=row['session_type'],

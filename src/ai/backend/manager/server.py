@@ -24,7 +24,6 @@ from typing import (
 
 from aiohttp import web
 import aiohttp_cors
-import aiojobs.aiohttp
 import aiotools
 import click
 from pathlib import Path
@@ -34,7 +33,7 @@ import aiomonitor
 from ai.backend.common import redis
 from ai.backend.common.cli import LazyGroup
 from ai.backend.common.events import EventDispatcher, EventProducer
-from ai.backend.common.utils import env_info, current_loop
+from ai.backend.common.utils import env_info
 from ai.backend.common.logging import Logger, BraceStyleAdapter
 from ai.backend.common.plugin.hook import HookPluginContext, ALL_COMPLETED, PASSED
 from ai.backend.common.plugin.monitor import (
@@ -256,8 +255,6 @@ async def shared_config_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     await root_ctx.shared_config.close()
 
 
-# TODO: _init_subapp에 들어가는 root_app을 root_ctx로 대체. aiojobs scheduler는 모든 app에서 공유?
-
 @aiotools.actxmgr
 async def webapp_plugin_ctx(root_app: web.Application) -> AsyncIterator[None]:
     root_ctx: RootContext = root_app['_root.context']
@@ -430,8 +427,6 @@ def handle_loop_error(
     loop: asyncio.AbstractEventLoop,
     context: Mapping[str, Any],
 ) -> None:
-    if isinstance(loop, aiojobs.Scheduler):
-        loop = current_loop()
     exception = context.get('exception')
     msg = context.get('message', '(empty message)')
     if exception is not None:
@@ -462,7 +457,6 @@ def _init_subapp(
     # We must copy the public interface prior to all user-defined startup signal handlers.
     subapp.on_startup.insert(0, _set_root_ctx)
     prefix = subapp.get('prefix', pkg_name.split('.')[-1].replace('_', '-'))
-    aiojobs.aiohttp.setup(subapp, **root_app['scheduler_opts'])
     root_app.add_subapp('/' + prefix, subapp)
     root_app.middlewares.extend(global_middlewares)
 
@@ -545,7 +539,6 @@ def build_root_app(
         app.cleanup_ctx.append(
             functools.partial(_cleanup_context_wrapper, cleanup_ctx),
         )
-    aiojobs.aiohttp.setup(app, **app['scheduler_opts'])
     cors = aiohttp_cors.setup(app, defaults=root_ctx.cors_options)
     # should be done in create_app() in other modules.
     cors.add(app.router.add_route('GET', r'', hello))
@@ -561,9 +554,11 @@ def build_root_app(
 
 
 @aiotools.actxmgr
-async def server_main(loop: asyncio.AbstractEventLoop,
-                      pidx: int,
-                      _args: List[Any]) -> AsyncIterator[None]:
+async def server_main(
+    loop: asyncio.AbstractEventLoop,
+    pidx: int,
+    _args: List[Any],
+) -> AsyncIterator[None]:
     subapp_pkgs = [
         '.etcd', '.events',
         '.auth', '.ratelimit',
@@ -606,7 +601,7 @@ async def server_main(loop: asyncio.AbstractEventLoop,
         m.prompt = "monitor (manager) >>> "
         m.start()
 
-        runner = web.AppRunner(root_app)
+        runner = web.AppRunner(root_app, keepalive_timeout=30.0)
         await runner.setup()
         service_addr = root_ctx.local_config['manager']['service-addr']
         site = web.TCPSite(
@@ -640,8 +635,11 @@ async def server_main(loop: asyncio.AbstractEventLoop,
 
 
 @aiotools.actxmgr
-async def server_main_logwrapper(loop: asyncio.AbstractEventLoop,
-                                 pidx: int, _args: List[Any]) -> AsyncIterator[None]:
+async def server_main_logwrapper(
+    loop: asyncio.AbstractEventLoop,
+    pidx: int,
+    _args: List[Any],
+) -> AsyncIterator[None]:
     setproctitle(f"backend.ai: manager worker-{pidx}")
     log_endpoint = _args[1]
     logger = Logger(_args[0]['logging'], is_master=False, log_endpoint=log_endpoint)
