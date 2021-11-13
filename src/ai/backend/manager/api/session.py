@@ -33,7 +33,6 @@ import uuid
 import aiohttp
 from aiohttp import web, hdrs
 import aiohttp_cors
-from aiojobs.aiohttp import atomic
 import aioredis
 import aiotools
 from async_timeout import timeout
@@ -209,6 +208,7 @@ creation_config_v5 = t.Dict({
     t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any),
     tx.AliasedKey(['resource_opts', 'resourceOpts'], default=None): t.Null | t.Mapping(t.String, t.Any),
     tx.AliasedKey(['preopen_ports', 'preopenPorts'], default=None): t.Null | t.List(t.Int[1024:65535]),
+    tx.AliasedKey(['agent_list', 'agentList'], default=None): t.Null | t.List(t.String),
 })
 creation_config_v5_template = t.Dict({
     t.Key('mounts', default=undefined): UndefChecker | t.Null | t.List(t.String),
@@ -514,6 +514,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             startup_command=params['startup_command'],
             session_tag=params['tag'],
             starts_at=starts_at,
+            agent_list=params['config']['agent_list'],
         ))
         resp['sessionId'] = str(kernel_id)  # changed since API v5
 
@@ -870,6 +871,26 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
     else:
         raise InvalidAPIParameters('API version not supported')
     params['config'] = creation_config
+    if params['config']['agent_list'] is not None and request['user']['role'] != (UserRole.SUPERADMIN):
+        raise InsufficientPrivilege('You are not allowed to manually assign agents for your session.')
+    if request['user']['role'] == (UserRole.SUPERADMIN):
+        if not params['config']['agent_list']:
+            pass
+        else:
+            agent_count = len(params['config']['agent_list'])
+            if params['cluster_mode'] == "multi-node":
+                if agent_count != params['cluster_size']:
+                    raise InvalidAPIParameters(
+                        "For multi-node cluster sessions, the number of manually assigned agents "
+                        "must be same to the clsuter size. "
+                        "Note that you may specify duplicate agents in the list.",
+                    )
+            else:
+                if agent_count != 1:
+                    raise InvalidAPIParameters(
+                        "For non-cluster sessions and single-node cluster sessions, "
+                        "you may specify only one manually assigned agent.",
+                    )
     return await _create(request, params)
 
 
@@ -1524,7 +1545,6 @@ async def destroy(request: web.Request, params: Any) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
 @check_api_params(
@@ -1558,7 +1578,6 @@ async def match_sessions(request: web.Request, params: Any) -> web.Response:
     }, status=200)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def get_info(request: web.Request) -> web.Response:
@@ -1608,7 +1627,6 @@ async def get_info(request: web.Request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def restart(request: web.Request) -> web.Response:
@@ -1713,7 +1731,6 @@ async def execute(request: web.Request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def interrupt(request: web.Request) -> web.Response:
@@ -1731,7 +1748,6 @@ async def interrupt(request: web.Request) -> web.Response:
     return web.Response(status=204)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def complete(request: web.Request) -> web.Response:
@@ -1766,7 +1782,6 @@ async def complete(request: web.Request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
 @check_api_params(
@@ -1912,7 +1927,6 @@ async def download_single(request: web.Request, params: Any) -> web.Response:
     return web.Response(body=result, status=200)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def list_files(request: web.Request) -> web.Response:
@@ -1948,7 +1962,6 @@ async def list_files(request: web.Request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
 @check_api_params(

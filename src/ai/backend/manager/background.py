@@ -15,7 +15,6 @@ from typing import (
 )
 import uuid
 
-from aiojobs import Scheduler
 import aioredis
 
 from ai.backend.common import redis
@@ -99,8 +98,6 @@ class BackgroundTaskManager:
         self,
         func: BackgroundTask,
         name: str = None,
-        *,
-        sched: Scheduler = None,
     ) -> uuid.UUID:
         task_id = uuid.uuid4()
         redis_producer = self.event_producer.redis_client
@@ -122,13 +119,9 @@ class BackgroundTaskManager:
 
         await redis.execute(redis_producer, _pipe_builder)
 
-        if sched:
-            # aiojobs' Scheduler doesn't support add_done_callback yet
-            raise NotImplementedError
-        else:
-            task = asyncio.create_task(self._wrapper_task(func, task_id, name))
-            self.ongoing_tasks.add(task)
-            task.add_done_callback(self.ongoing_tasks.remove)
+        task = asyncio.create_task(self._wrapper_task(func, task_id, name))
+        self.ongoing_tasks.add(task)
+        task.add_done_callback(self.ongoing_tasks.remove)
         return task_id
 
     async def _wrapper_task(
