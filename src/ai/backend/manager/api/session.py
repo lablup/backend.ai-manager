@@ -1301,15 +1301,8 @@ async def monitor_kernel_preparation(
         _update_progress,
     )
     try:
-        count = 0
         while True:
-            if count>1000:
-                break
             result = await _get_status(kernel_id)
-            print('kernel show',kernel_id, result)
-            if result is None:
-                count+=1
-                continue
             if result['status'] == KernelStatus.PREPARING:
                 await reporter.update(0)
             if result['status'] == KernelStatus.RUNNING:
