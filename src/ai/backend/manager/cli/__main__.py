@@ -17,7 +17,7 @@ from ai.backend.common.validators import TimeDuration
 from ..config import load as load_config
 from ..models.keypair import generate_keypair as _gen_keypair
 from .context import CLIContext, init_logger
-from datetime import date, datetime
+from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.cli'))
@@ -113,6 +113,7 @@ def generate_keypair(cli_ctx: CLIContext):
     print(f'Access Key: {ak} ({len(ak)} bytes)')
     print(f'Secret Key: {sk} ({len(sk)} bytes)')
 
+
 @main.command()
 @click.option('--retention', type=str, default='1yr',
               help='The retention limit. e.g., 20d, 1mo, 6mo, 1yr')
@@ -133,7 +134,7 @@ def clear_history(cli_ctx: CLIContext, retention):
         else:
             duration = TimeDuration()
             expiration_date = today - duration.check_and_return(retention)
-        
+
         alembic_cfg = Config('alembic.ini')
         sa_url = alembic_cfg.get_main_option('sqlalchemy.url')
 
@@ -148,6 +149,7 @@ def clear_history(cli_ctx: CLIContext, retention):
         """).first()
         print('table size:', table_size[0])
         log.info('Clear up operation is done.')
+
 
 @main.group(cls=LazyGroup, import_name='ai.backend.manager.cli.dbschema:cli')
 def schema():
