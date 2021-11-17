@@ -6,14 +6,19 @@ import subprocess
 import sys
 from pathlib import Path
 
+from alembic.config import Config
 import click
+import sqlalchemy as sa
 
 from ai.backend.common.cli import LazyGroup
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.validators import TimeDuration
 
 from ..config import load as load_config
 from ..models.keypair import generate_keypair as _gen_keypair
 from .context import CLIContext, init_logger
+from datetime import date, datetime
+from dateutil.relativedelta import relativedelta
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.cli'))
 
@@ -108,6 +113,41 @@ def generate_keypair(cli_ctx: CLIContext):
     print(f'Access Key: {ak} ({len(ak)} bytes)')
     print(f'Secret Key: {sk} ({len(sk)} bytes)')
 
+@main.command()
+@click.option('--retention', type=str, default='1yr',
+              help='The retention limit. e.g., 20d, 1mo, 6mo, 1yr')
+@click.pass_obj
+def clear_history(cli_ctx: CLIContext, retention):
+    """
+    Delete old records from the kernels table.
+    """
+    with cli_ctx.logger:
+        unit = retention[-2:]
+        today = datetime.now()
+        if unit == 'yr':
+            yr = int(retention[:-2])
+            expiration_date = today - relativedelta(years=yr)
+        elif unit == 'mo':
+            mo = int(retention[:-2])
+            expiration_date = today - relativedelta(months=mo)
+        else:
+            duration = TimeDuration()
+            expiration_date = today - duration.check_and_return(retention)
+        
+        alembic_cfg = Config('alembic.ini')
+        sa_url = alembic_cfg.get_main_option('sqlalchemy.url')
+
+        engine = sa.create_engine(sa_url)
+        engine.execute(f"""
+        DELETE FROM kernels WHERE terminated_at < '{expiration_date.strftime('%Y-%m-%d %H:%M:%S')}';
+        VACUUM FULL ANALYZE;
+        """)
+
+        table_size = engine.execute("""
+        SELECT COUNT(*) FROM kernels;
+        """).first()
+        print('table size:', table_size[0])
+        log.info('Clear up operation is done.')
 
 @main.group(cls=LazyGroup, import_name='ai.backend.manager.cli.dbschema:cli')
 def schema():
