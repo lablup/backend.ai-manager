@@ -124,7 +124,7 @@ def generate_keypair(cli_ctx: CLIContext):
                     'When VACUUM FULL is being processed, the database is locked.'
                     '[default: False]')
 @click.pass_obj
-def clear_history(cli_ctx: CLIContext, retention, vacuum_full):
+def clear_history(cli_ctx: CLIContext, retention, vacuum_full) -> None:
     """
     Delete old records from the kernels table and 
     invoke the PostgreSQL's vaccuum operation to clear up the actual disk space.
