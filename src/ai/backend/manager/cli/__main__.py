@@ -8,7 +8,7 @@ from pathlib import Path
 
 from alembic.config import Config
 import click
-import sqlalchemy as sa
+import psycopg2
 
 from ai.backend.common.cli import LazyGroup
 from ai.backend.common.logging import BraceStyleAdapter
@@ -122,6 +122,7 @@ def clear_history(cli_ctx: CLIContext, retention):
     """
     Delete old records from the kernels table.
     """
+    local_config = cli_ctx.local_config
     with cli_ctx.logger:
         unit = retention[-2:]
         today = datetime.now()
@@ -135,19 +136,27 @@ def clear_history(cli_ctx: CLIContext, retention):
             duration = TimeDuration()
             expiration_date = today - duration.check_and_return(retention)
 
-        alembic_cfg = Config('alembic.ini')
-        sa_url = alembic_cfg.get_main_option('sqlalchemy.url')
+        conn = psycopg2.connect(host=local_config['db']['addr'][0],
+                                port=local_config['db']['addr'][1],
+                                dbname=local_config['db']['name'],
+                                user=local_config['db']['user'],
+                                password=local_config['db']['password'])
+        with conn.cursor() as curs:
+            curs.execute(f"""
+                    DELETE FROM kernels WHERE terminated_at < '{expiration_date.strftime('%Y-%m-%d %H:%M:%S')}';
+                    """)
+            conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
+            curs.execute(f"""
+                    VACUUM FULL ANALYZE;
+                    """)
+            conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_READ_COMMITTED)
 
-        engine = sa.create_engine(sa_url)
-        engine.execute(f"""
-        DELETE FROM kernels WHERE terminated_at < '{expiration_date.strftime('%Y-%m-%d %H:%M:%S')}';
-        VACUUM FULL ANALYZE;
-        """)
+            curs.execute("""
+            SELECT COUNT(*) FROM kernels;
+            """)
+            table_size = curs.fetchone()
+            print(f'table size: {table_size[0]}')
 
-        table_size = engine.execute("""
-        SELECT COUNT(*) FROM kernels;
-        """).first()
-        print('table size:', table_size[0])
         log.info('Clear up operation is done.')
 
 
