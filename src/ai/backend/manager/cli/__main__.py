@@ -115,12 +115,19 @@ def generate_keypair(cli_ctx: CLIContext):
 
 
 @main.command()
-@click.option('--retention', type=str, default='1yr',
+@click.option('-r', '--retention', type=str, default='1yr',
               help='The retention limit. e.g., 20d, 1mo, 6mo, 1yr')
+@click.option('-v', '--vacuum-full', type=bool, default=False,
+              help='Reclaim storage occupied by dead tuples.'
+                    'If not set or set False, it will run VACUUM without FULL.'
+                    'If set True, it will run VACUUM FULL.'
+                    'When VACUUM FULL is being processed, the database is locked.'
+                    '[default: False]')
 @click.pass_obj
-def clear_history(cli_ctx: CLIContext, retention):
+def clear_history(cli_ctx: CLIContext, retention, vacuum_full):
     """
-    Delete old records from the kernels table.
+    Delete old records from the kernels table and 
+    invoke the PostgreSQL's vaccuum operation to clear up the actual disk space.
     """
     local_config = cli_ctx.local_config
     with cli_ctx.logger:
@@ -142,13 +149,16 @@ def clear_history(cli_ctx: CLIContext, retention):
                                 user=local_config['db']['user'],
                                 password=local_config['db']['password'])
         with conn.cursor() as curs:
+            if vacuum_full:
+                vacuum_sql = "VACUUM FULL"
+            else:
+                vacuum_sql = "VACUUM"
+
             curs.execute(f"""
                     DELETE FROM kernels WHERE terminated_at < '{expiration_date.strftime('%Y-%m-%d %H:%M:%S')}';
                     """)
             conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
-            curs.execute(f"""
-                    VACUUM FULL ANALYZE;
-                    """)
+            curs.execute(vacuum_sql)
             conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_READ_COMMITTED)
 
             curs.execute("""
