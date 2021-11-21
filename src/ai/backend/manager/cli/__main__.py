@@ -154,8 +154,8 @@ def clear_history(cli_ctx: CLIContext, retention, vacuum_full) -> None:
                 vacuum_sql = "VACUUM"
 
             curs.execute(f"""
-                    DELETE FROM kernels WHERE terminated_at < '{expiration_date.strftime('%Y-%m-%d %H:%M:%S')}';
-                    """)
+            DELETE FROM kernels WHERE terminated_at < '{expiration_date.strftime('%Y-%m-%d %H:%M:%S')}';
+            """)
             conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
             curs.execute(vacuum_sql)
             conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_READ_COMMITTED)
