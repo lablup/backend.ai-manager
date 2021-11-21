@@ -6,7 +6,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from alembic.config import Config
 import click
 import psycopg2
 
@@ -126,7 +125,7 @@ def generate_keypair(cli_ctx: CLIContext):
 @click.pass_obj
 def clear_history(cli_ctx: CLIContext, retention, vacuum_full) -> None:
     """
-    Delete old records from the kernels table and 
+    Delete old records from the kernels table and
     invoke the PostgreSQL's vaccuum operation to clear up the actual disk space.
     """
     local_config = cli_ctx.local_config
