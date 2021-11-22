@@ -153,9 +153,11 @@ def clear_history(cli_ctx: CLIContext, retention, vacuum_full) -> None:
             else:
                 vacuum_sql = "VACUUM"
 
+            log.info('Deleting old records...')
             curs.execute(f"""
             DELETE FROM kernels WHERE terminated_at < '{expiration_date.strftime('%Y-%m-%d %H:%M:%S')}';
             """)
+            log.info('Perfoming VACUUM operation...')
             conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
             curs.execute(vacuum_sql)
             conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_READ_COMMITTED)
@@ -164,7 +166,7 @@ def clear_history(cli_ctx: CLIContext, retention, vacuum_full) -> None:
             SELECT COUNT(*) FROM kernels;
             """)
             table_size = curs.fetchone()
-            print(f'table size: {table_size[0]}')
+            log.info(f'kernels table size: {table_size[0]}')
 
         log.info('Clear up operation is done.')
 
