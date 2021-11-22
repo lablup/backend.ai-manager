@@ -198,10 +198,7 @@ async def get(request: web.Request, params: Any) -> web.Response:
             )
         )
         result = await conn.execute(query)
-        rows = result.fetchall()
-        if len(rows) == 0:
-            raise TaskTemplateNotFound
-        for row in rows:
+        for row in result.fetchall():
             resp.update({
                 'template': row.template,
                 'name': row.name,
