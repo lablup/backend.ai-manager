@@ -127,7 +127,7 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
         )
         result = await conn.execute(query)
         entries = []
-        for row in result:
+        for row in result.fetchall():
             is_owner = True if row.session_templates_user_uuid == user_uuid else False
             entries.append({
                 'name': row.session_templates_name,
@@ -198,9 +198,7 @@ async def get(request: web.Request, params: Any) -> web.Response:
             )
         )
         result = await conn.execute(query)
-        for row in result:
-            if not row.template:
-                raise TaskTemplateNotFound
+        for row in result.fetchall():
             resp.update({
                 'template': row.template,
                 'name': row.name,
