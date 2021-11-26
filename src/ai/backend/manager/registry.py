@@ -140,8 +140,6 @@ __all__ = ['AgentRegistry', 'InstanceNotFound']
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.registry'))
 
-agent_peers: MutableMapping[str, PeerInvoker] = {}  # agent-addr to socket
-
 _read_only_txn_opts = {
     'postgresql_readonly': True,
 }
@@ -194,48 +192,36 @@ async def RPCContext(
     order_key: str = None,
     keepalive_timeout: int = 60,
 ) -> AsyncIterator[PeerInvoker]:
-    global agent_peers
-    peer = agent_peers.get(addr, None)
-    if peer is None:
-        keepalive_retry_count = 3
-        keepalive_interval = keepalive_timeout // keepalive_retry_count
-        if keepalive_interval < 2:
-            keepalive_interval = 2
-        peer = PeerInvoker(
-            connect=ZeroMQAddress(addr),
-            transport=ZeroMQRPCTransport,
-            transport_opts={
-                'zsock_opts': {
-                    zmq.TCP_KEEPALIVE: 1,
-                    zmq.TCP_KEEPALIVE_IDLE: keepalive_timeout,
-                    zmq.TCP_KEEPALIVE_INTVL: keepalive_interval,
-                    zmq.TCP_KEEPALIVE_CNT: keepalive_retry_count,
-                },
+    keepalive_retry_count = 3
+    keepalive_interval = keepalive_timeout // keepalive_retry_count
+    if keepalive_interval < 2:
+        keepalive_interval = 2
+    peer = PeerInvoker(
+        connect=ZeroMQAddress(addr),
+        transport=ZeroMQRPCTransport,
+        transport_opts={
+            'zsock_opts': {
+                zmq.TCP_KEEPALIVE: 1,
+                zmq.TCP_KEEPALIVE_IDLE: keepalive_timeout,
+                zmq.TCP_KEEPALIVE_INTVL: keepalive_interval,
+                zmq.TCP_KEEPALIVE_CNT: keepalive_retry_count,
             },
-            serializer=msgpack.packb,
-            deserializer=msgpack.unpackb,
-        )
-        await peer.__aenter__()
-        agent_peers[addr] = peer
+        },
+        serializer=msgpack.packb,
+        deserializer=msgpack.unpackb,
+    )
     try:
         with _timeout(invoke_timeout):
-            okey_token = peer.call.order_key.set('')
-            try:
-                yield peer
-            finally:
-                peer.call.order_key.reset(okey_token)
+            async with peer:
+                okey_token = peer.call.order_key.set('')
+                try:
+                    yield peer
+                finally:
+                    peer.call.order_key.reset(okey_token)
     except RPCUserError as orig_exc:
         raise AgentError(agent_id, orig_exc.name, orig_exc.repr, orig_exc.args)
     except Exception:
         raise
-
-
-async def cleanup_agent_peers():
-    global agent_peers
-    closing_tasks = []
-    for addr, peer in agent_peers.items():
-        closing_tasks.append(peer.__aexit__(None, None, None))
-    await asyncio.gather(*closing_tasks, return_exceptions=True)
 
 
 class AgentRegistry:
@@ -281,7 +267,7 @@ class AgentRegistry:
         self.heartbeat_lock = asyncio.Lock()
 
     async def shutdown(self) -> None:
-        await cleanup_agent_peers()
+        pass
 
     async def get_instance(self, inst_id: AgentId, field=None):
         async with self.db.begin_readonly() as conn:
@@ -2386,7 +2372,6 @@ class AgentRegistry:
         )
 
     async def mark_agent_terminated(self, agent_id: AgentId, status: AgentStatus) -> None:
-        global agent_peers
         await redis.execute(self.redis_live, lambda r: r.hdel('agent.last_seen', agent_id))
 
         async def _pipe_builder(r: aioredis.Redis):
@@ -2408,9 +2393,6 @@ class AgentRegistry:
                 )
                 result = await conn.execute(fetch_query)
                 row = result.first()
-                peer = agent_peers.pop(row['addr'], None)
-                if peer is not None:
-                    await peer.__aexit__(None, None, None)
                 prev_status = row['status']
                 if prev_status in (None, AgentStatus.LOST, AgentStatus.TERMINATED):
                     return
