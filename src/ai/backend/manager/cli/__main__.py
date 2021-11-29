@@ -134,14 +134,14 @@ def clear_history(cli_ctx: CLIContext, retention, vacuum_full) -> None:
         today = datetime.now()
         if unit == 'yr':
             yr = int(retention[:-2])
-            expiration_date = today - relativedelta(years=yr)
+            expiration = today - relativedelta(years=yr)
         elif unit == 'mo':
             mo = int(retention[:-2])
-            expiration_date = today - relativedelta(months=mo)
+            expiration = today - relativedelta(months=mo)
         else:
             duration = TimeDuration()
-            expiration_date = today - duration.check_and_return(retention)
-        expiration_date = expiration_date.strftime('%Y-%m-%d %H:%M:%S')
+            expiration = today - duration.check_and_return(retention)
+        expiration_date = expiration.strftime('%Y-%m-%d %H:%M:%S')
 
         conn = psycopg2.connect(
             host=local_config['db']['addr'][0],
