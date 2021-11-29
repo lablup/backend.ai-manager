@@ -141,13 +141,14 @@ def clear_history(cli_ctx: CLIContext, retention, vacuum_full) -> None:
         else:
             duration = TimeDuration()
             expiration_date = today - duration.check_and_return(retention)
+        expiration_date = expiration_date.strftime('%Y-%m-%d %H:%M:%S')
 
         conn = psycopg2.connect(
             host=local_config['db']['addr'][0],
             port=local_config['db']['addr'][1],
             dbname=local_config['db']['name'],
             user=local_config['db']['user'],
-            password=local_config['db']['password']
+            password=local_config['db']['password'],
         )
         with conn.cursor() as curs:
             if vacuum_full:
@@ -156,13 +157,13 @@ def clear_history(cli_ctx: CLIContext, retention, vacuum_full) -> None:
                 vacuum_sql = "VACUUM"
 
             curs.execute(f"""
-            SELECT COUNT(*) FROM kernels WHERE terminated_at < '{expiration_date.strftime('%Y-%m-%d %H:%M:%S')}';
+            SELECT COUNT(*) FROM kernels WHERE terminated_at < '{expiration_date}';
             """)
             deleted_count = curs.fetchone()[0]
 
             log.info('Deleting old records...')
             curs.execute(f"""
-            DELETE FROM kernels WHERE terminated_at < '{expiration_date.strftime('%Y-%m-%d %H:%M:%S')}';
+            DELETE FROM kernels WHERE terminated_at < '{expiration_date}';
             """)
             log.info(f'Perfoming {vacuum_sql} operation...')
             conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
@@ -175,7 +176,8 @@ def clear_history(cli_ctx: CLIContext, retention, vacuum_full) -> None:
             table_size = curs.fetchone()[0]
             log.info(f'kernels table size: {table_size}')
 
-        log.info('Cleaned up {:,} database records older than {:%Y-%m-%d %H:%M:%S}.', deleted_count, expiration_date)
+        log.info('Cleaned up {:,} database records older than {:}.', deleted_count, expiration_date)
+
 
 @main.group(cls=LazyGroup, import_name='ai.backend.manager.cli.dbschema:cli')
 def schema():
