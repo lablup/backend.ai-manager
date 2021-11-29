@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime
 import logging
 from setproctitle import setproctitle
 import subprocess
 import sys
 from pathlib import Path
 
+from dateutil.relativedelta import relativedelta
 import click
 import psycopg2
 
@@ -16,8 +18,6 @@ from ai.backend.common.validators import TimeDuration
 from ..config import load as load_config
 from ..models.keypair import generate_keypair as _gen_keypair
 from .context import CLIContext, init_logger
-from datetime import datetime
-from dateutil.relativedelta import relativedelta
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.cli'))
 
@@ -142,16 +142,23 @@ def clear_history(cli_ctx: CLIContext, retention, vacuum_full) -> None:
             duration = TimeDuration()
             expiration_date = today - duration.check_and_return(retention)
 
-        conn = psycopg2.connect(host=local_config['db']['addr'][0],
-                                port=local_config['db']['addr'][1],
-                                dbname=local_config['db']['name'],
-                                user=local_config['db']['user'],
-                                password=local_config['db']['password'])
+        conn = psycopg2.connect(
+            host=local_config['db']['addr'][0],
+            port=local_config['db']['addr'][1],
+            dbname=local_config['db']['name'],
+            user=local_config['db']['user'],
+            password=local_config['db']['password']
+        )
         with conn.cursor() as curs:
             if vacuum_full:
                 vacuum_sql = "VACUUM FULL"
             else:
                 vacuum_sql = "VACUUM"
+
+            curs.execute(f"""
+            SELECT COUNT(*) FROM kernels WHERE terminated_at < '{expiration_date.strftime('%Y-%m-%d %H:%M:%S')}';
+            """)
+            deleted_count = curs.fetchone()[0]
 
             log.info('Deleting old records...')
             curs.execute(f"""
@@ -165,11 +172,10 @@ def clear_history(cli_ctx: CLIContext, retention, vacuum_full) -> None:
             curs.execute("""
             SELECT COUNT(*) FROM kernels;
             """)
-            table_size = curs.fetchone()
-            log.info(f'kernels table size: {table_size[0]}')
+            table_size = curs.fetchone()[0]
+            log.info(f'kernels table size: {table_size}')
 
-        log.info('Clear up operation is done.')
-
+        log.info('Cleaned up {:,} database records older than {:%Y-%m-%d %H:%M:%S}.', deleted_count, expiration_date)
 
 @main.group(cls=LazyGroup, import_name='ai.backend.manager.cli.dbschema:cli')
 def schema():
