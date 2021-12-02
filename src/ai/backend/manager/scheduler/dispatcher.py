@@ -43,6 +43,7 @@ from ai.backend.common.events import (
 )
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
+    RedisConnectionInfo,
     aobject,
     AgentId,
     ClusterMode,
@@ -141,6 +142,7 @@ class SchedulerDispatcher(aobject):
         shared_config: SharedConfig,
         event_dispatcher: EventDispatcher,
         event_producer: EventProducer,
+        redis_lock: RedisConnectionInfo,
         registry: AgentRegistry,
     ) -> None:
         self.local_config = local_config
@@ -148,6 +150,7 @@ class SchedulerDispatcher(aobject):
         self.event_dispatcher = event_dispatcher
         self.event_producer = event_producer
         self.registry = registry
+        self.redis_lock = redis_lock
         self.db = registry.db
 
     async def __ainit__(self) -> None:
@@ -163,14 +166,14 @@ class SchedulerDispatcher(aobject):
         evd.consume(DoScheduleEvent, None, self.schedule, coalescing_opts)
         evd.consume(DoPrepareEvent, None, self.prepare)
         self.schedule_timer = GlobalTimer(
-            self.db,
+            self.redis_lock,
             AdvisoryLock.LOCKID_SCHEDULE_TIMER,
             self.event_producer,
             lambda: DoScheduleEvent(),
             interval=10.0,
         )
         self.prepare_timer = GlobalTimer(
-            self.db,
+            self.redis_lock,
             AdvisoryLock.LOCKID_PREPARE_TIMER,
             self.event_producer,
             lambda: DoPrepareEvent(),

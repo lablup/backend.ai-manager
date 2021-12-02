@@ -15,10 +15,10 @@ import attr
 import pytest
 
 from ai.backend.common.events import AbstractEvent, EventDispatcher, EventProducer
+from ai.backend.common.redis import get_redis_object
 
-from ai.backend.manager.defs import REDIS_STREAM_DB, AdvisoryLock
+from ai.backend.manager.defs import REDIS_STREAM_DB, REDIS_LOCK_DB, AdvisoryLock
 from ai.backend.manager.distributed import GlobalTimer
-from ai.backend.manager.models.utils import connect_database
 
 if TYPE_CHECKING:
     from ai.backend.common.types import AgentId
@@ -91,29 +91,32 @@ class TimerNode(threading.Thread):
             db=REDIS_STREAM_DB,
         )
         event_dispatcher.consume(NoopEvent, None, _tick)
+        redis_lock = get_redis_object(
+            self.shared_config.data['redis'],
+            db=REDIS_LOCK_DB,
+        )
 
-        async with connect_database(self.local_config) as db:
-            timer = GlobalTimer(
-                db,
-                AdvisoryLock.LOCKID_TEST,
-                event_producer,
-                lambda: NoopEvent(self.test_id),
-                self.interval,
-            )
-            try:
-                await timer.join()
-                await self.stop_event.wait()
-            finally:
-                await timer.leave()
-                await event_producer.close()
-                await event_dispatcher.close()
+        timer = GlobalTimer(
+            redis_lock,
+            AdvisoryLock.LOCKID_TEST,
+            event_producer,
+            lambda: NoopEvent(self.test_id),
+            self.interval,
+        )
+        try:
+            await timer.join()
+            await self.stop_event.wait()
+        finally:
+            await timer.leave()
+            await event_producer.close()
+            await event_dispatcher.close()
 
     def run(self) -> None:
         asyncio.run(self.timer_node_async())
 
 
 @pytest.mark.asyncio
-async def test_global_timer(test_id, local_config, shared_config, database_engine) -> None:
+async def test_global_timer(test_id, local_config, shared_config) -> None:
     event_records: List[float] = []
     num_threads = 7
     num_records = 0

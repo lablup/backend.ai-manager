@@ -29,6 +29,7 @@ REDIS_RLIM_DB: Final = 1
 REDIS_LIVE_DB: Final = 2
 REDIS_IMAGE_DB: Final = 3
 REDIS_STREAM_DB: Final = 4
+REDIS_LOCK_DB: Final = 4
 
 
 # PostgreSQL session-level advisory lock indentifiers

@@ -65,7 +65,13 @@ from .config import (
     load as load_config,
     volume_config_iv,
 )
-from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB, REDIS_STREAM_DB
+from .defs import (
+    REDIS_STAT_DB,
+    REDIS_LIVE_DB,
+    REDIS_IMAGE_DB,
+    REDIS_STREAM_DB,
+    REDIS_LOCK_DB,
+)
 from .exceptions import InvalidArgument
 from .idle import create_idle_checkers
 from .models.storage import StorageSessionManager
@@ -295,11 +301,15 @@ async def redis_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     root_ctx.redis_stream = redis.get_redis_object(
         root_ctx.shared_config.data['redis'], db=REDIS_STREAM_DB,
     )
+    root_ctx.redis_lock = redis.get_redis_object(
+        root_ctx.shared_config.data['redis'], db=REDIS_LOCK_DB,
+    )
     yield
     await root_ctx.redis_stream.close()
     await root_ctx.redis_image.close()
     await root_ctx.redis_stat.close()
     await root_ctx.redis_live.close()
+    await root_ctx.redis_lock.close()
 
 
 @aiotools.actxmgr
@@ -330,6 +340,7 @@ async def event_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 async def idle_checker_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     root_ctx.idle_checkers = await create_idle_checkers(
         root_ctx.db,
+        root_ctx.redis_lock,
         root_ctx.shared_config,
         root_ctx.event_dispatcher,
         root_ctx.event_producer,
@@ -387,6 +398,7 @@ async def sched_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     sched_dispatcher = await SchedulerDispatcher.new(
         root_ctx.local_config, root_ctx.shared_config,
         root_ctx.event_dispatcher, root_ctx.event_producer,
+        root_ctx.redis_lock,
         root_ctx.registry,
     )
     yield

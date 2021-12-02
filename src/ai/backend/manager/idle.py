@@ -45,7 +45,7 @@ from ai.backend.common.events import (
     SessionStartedEvent,
 )
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.types import AccessKey, aobject, SessionTypes
+from ai.backend.common.types import AccessKey, RedisConnectionInfo, aobject, SessionTypes
 from ai.backend.common.utils import nmget
 from ai.backend.manager.models.utils import ExtendedAsyncSAEngine
 
@@ -88,11 +88,13 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
     def __init__(
         self,
         db: SAEngine,
+        redis_lock: RedisConnectionInfo,
         shared_config: SharedConfig,
         event_dispatcher: EventDispatcher,
         event_producer: EventProducer,
     ) -> None:
         self._db = db
+        self._redis_lock = redis_lock
         self._shared_config = shared_config
         self._event_dispatcher = event_dispatcher
         self._event_producer = event_producer
@@ -107,7 +109,7 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
         )
         await self.populate_config(raw_config or {})
         self.timer = GlobalTimer(
-            self._db,
+            self._redis_lock,
             AdvisoryLock.LOCKID_IDLE_CHECK_TIMER,
             self._event_producer,
             lambda: DoIdleCheckEvent(),
@@ -617,6 +619,7 @@ checker_registry: Mapping[str, Type[BaseIdleChecker]] = {
 
 async def create_idle_checkers(
     db: SAEngine,
+    redis_lock: RedisConnectionInfo,
     shared_config: SharedConfig,
     event_dispatcher: EventDispatcher,
     event_producer: EventProducer,
@@ -638,7 +641,7 @@ async def create_idle_checkers(
             continue
         log.info(f"Initializing idle checker: {checker_name}")
         checker_instance = await checker_cls.new(
-            db, shared_config, event_dispatcher, event_producer,
+            db, redis_lock, shared_config, event_dispatcher, event_producer,
         )
         instances.append(checker_instance)
     return instances
