@@ -56,6 +56,7 @@ class GlobalTimer:
                 async with lock:
                     print(f"lock[{self.timer_id}] acquired")
                     await self._event_producer.produce_event(self._event_factory())
+                    await lock.extend(self.interval)
                     await asyncio.sleep(self.interval)
                 print(f"lock[{self.timer_id}] released")
         except asyncio.CancelledError:
