@@ -1,0 +1,1 @@
+Provide mutable GQL query for the `schedulable` value of agent
