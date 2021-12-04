@@ -324,7 +324,7 @@ class Agent(graphene.ObjectType):
 
 
 class ModifyAgentInput(graphene.InputObjectType):
-    schedulable = graphene.Boolean(required=True, default=True)
+    schedulable = graphene.Boolean(required=False, default=True)
 
 
 class AgentList(graphene.ObjectType):
