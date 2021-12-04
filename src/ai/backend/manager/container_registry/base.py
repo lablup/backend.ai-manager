@@ -93,6 +93,7 @@ class BaseContainerRegistry(metaclass=ABCMeta):
                 async for image in self.fetch_repositories(sess):
                     if not any((w in image) for w in non_kernel_words):  # skip non-kernel images
                         tg.create_task(self._scan_image(sess, image))
+                        await asyncio.sleep(3)
         all_updates = self.all_updates.get()
         if not all_updates:
             log.info('No images found in registry {0}', self.registry_url)
