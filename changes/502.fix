@@ -1,0 +1,1 @@
+Replace `rowcounts` to len function in getting usage aggregation query result
