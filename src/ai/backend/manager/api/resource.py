@@ -529,7 +529,7 @@ async def get_time_binned_monthly_stats(request: web.Request, user_uuid=None):
         rows = result.fetchall()
 
     # Build time-series of time-binned stats.
-    rowcount = result.rowcount
+    rowcount = len(rows)
     now_ts = now.timestamp()
     start_date_ts = start_date.timestamp()
     ts = start_date_ts
