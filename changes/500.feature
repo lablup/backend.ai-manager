@@ -1,1 +1,1 @@
-Provide mutable GQL query for the `schedulable` value of agent
+Add a new GQL mutation to modify the `schedulable` attribute of agents
