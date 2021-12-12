@@ -7,7 +7,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from dateutil.relativedelta import relativedelta
 import click
 import psycopg2
 
@@ -130,17 +129,9 @@ def clear_history(cli_ctx: CLIContext, retention, vacuum_full) -> None:
     """
     local_config = cli_ctx.local_config
     with cli_ctx.logger:
-        unit = retention[-2:]
         today = datetime.now()
-        if unit == 'yr':
-            yr = int(retention[:-2])
-            expiration = today - relativedelta(years=yr)
-        elif unit == 'mo':
-            mo = int(retention[:-2])
-            expiration = today - relativedelta(months=mo)
-        else:
-            duration = TimeDuration()
-            expiration = today - duration.check_and_return(retention)
+        duration = TimeDuration()
+        expiration = today - duration.check_and_return(retention)
         expiration_date = expiration.strftime('%Y-%m-%d %H:%M:%S')
 
         conn = psycopg2.connect(
@@ -161,12 +152,12 @@ def clear_history(cli_ctx: CLIContext, retention, vacuum_full) -> None:
             """)
             deleted_count = curs.fetchone()[0]
 
+            conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
             log.info('Deleting old records...')
             curs.execute(f"""
             DELETE FROM kernels WHERE terminated_at < '{expiration_date}';
             """)
             log.info(f'Perfoming {vacuum_sql} operation...')
-            conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
             curs.execute(vacuum_sql)
             conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_READ_COMMITTED)
 
