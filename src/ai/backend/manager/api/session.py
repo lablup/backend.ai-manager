@@ -694,6 +694,8 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
         config_from_template['environ'] = environ
     if resources := template['spec'].get('resources'):  # noqa
         config_from_template['resources'] = resources
+    if 'agent_list' in template['spec']:
+        config_from_template['agent_list'] = template['spec']['agent_list']
 
     override_config = drop(dict(params['config']), undefined)
     override_params = drop(dict(params), undefined)
