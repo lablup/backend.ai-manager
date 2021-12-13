@@ -10,6 +10,7 @@ import itertools
 import logging
 import secrets
 import time
+import re
 from typing import (
     Any,
     AsyncIterator,
@@ -31,6 +32,7 @@ import weakref
 
 import aiodocker
 import aiohttp
+import aioredis
 import aiotools
 from aioredis import Redis
 from async_timeout import timeout as _timeout
@@ -42,6 +44,7 @@ from cryptography.hazmat.backends import default_backend
 from dateutil.tz import tzutc
 import snappy
 import sqlalchemy as sa
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.sql.expression import true
 from yarl import URL
 import zmq
@@ -75,6 +78,7 @@ from ai.backend.common.types import (
     HardwareMetadata,
     KernelEnqueueingConfig,
     KernelId,
+    RedisConnectionInfo,
     ResourceSlot,
     SessionId,
     SessionResult,
@@ -136,8 +140,6 @@ __all__ = ['AgentRegistry', 'InstanceNotFound']
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.registry'))
 
-agent_peers: MutableMapping[str, PeerInvoker] = {}  # agent-addr to socket
-
 _read_only_txn_opts = {
     'postgresql_readonly': True,
 }
@@ -190,48 +192,36 @@ async def RPCContext(
     order_key: str = None,
     keepalive_timeout: int = 60,
 ) -> AsyncIterator[PeerInvoker]:
-    global agent_peers
-    peer = agent_peers.get(addr, None)
-    if peer is None:
-        keepalive_retry_count = 3
-        keepalive_interval = keepalive_timeout // keepalive_retry_count
-        if keepalive_interval < 2:
-            keepalive_interval = 2
-        peer = PeerInvoker(
-            connect=ZeroMQAddress(addr),
-            transport=ZeroMQRPCTransport,
-            transport_opts={
-                'zsock_opts': {
-                    zmq.TCP_KEEPALIVE: 1,
-                    zmq.TCP_KEEPALIVE_IDLE: keepalive_timeout,
-                    zmq.TCP_KEEPALIVE_INTVL: keepalive_interval,
-                    zmq.TCP_KEEPALIVE_CNT: keepalive_retry_count,
-                },
+    keepalive_retry_count = 3
+    keepalive_interval = keepalive_timeout // keepalive_retry_count
+    if keepalive_interval < 2:
+        keepalive_interval = 2
+    peer = PeerInvoker(
+        connect=ZeroMQAddress(addr),
+        transport=ZeroMQRPCTransport,
+        transport_opts={
+            'zsock_opts': {
+                zmq.TCP_KEEPALIVE: 1,
+                zmq.TCP_KEEPALIVE_IDLE: keepalive_timeout,
+                zmq.TCP_KEEPALIVE_INTVL: keepalive_interval,
+                zmq.TCP_KEEPALIVE_CNT: keepalive_retry_count,
             },
-            serializer=msgpack.packb,
-            deserializer=msgpack.unpackb,
-        )
-        await peer.__aenter__()
-        agent_peers[addr] = peer
+        },
+        serializer=msgpack.packb,
+        deserializer=msgpack.unpackb,
+    )
     try:
         with _timeout(invoke_timeout):
-            okey_token = peer.call.order_key.set('')
-            try:
-                yield peer
-            finally:
-                peer.call.order_key.reset(okey_token)
+            async with peer:
+                okey_token = peer.call.order_key.set('')
+                try:
+                    yield peer
+                finally:
+                    peer.call.order_key.reset(okey_token)
     except RPCUserError as orig_exc:
         raise AgentError(agent_id, orig_exc.name, orig_exc.repr, orig_exc.args)
     except Exception:
         raise
-
-
-async def cleanup_agent_peers():
-    global agent_peers
-    closing_tasks = []
-    for addr, peer in agent_peers.items():
-        closing_tasks.append(peer.__aexit__(None, None, None))
-    await asyncio.gather(*closing_tasks, return_exceptions=True)
 
 
 class AgentRegistry:
@@ -250,9 +240,9 @@ class AgentRegistry:
         self,
         shared_config: SharedConfig,
         db: ExtendedAsyncSAEngine,
-        redis_stat: Redis,
-        redis_live: Redis,
-        redis_image: Redis,
+        redis_stat: RedisConnectionInfo,
+        redis_live: RedisConnectionInfo,
+        redis_image: RedisConnectionInfo,
         event_dispatcher: EventDispatcher,
         event_producer: EventProducer,
         storage_manager:  StorageSessionManager,
@@ -277,7 +267,7 @@ class AgentRegistry:
         self.heartbeat_lock = asyncio.Lock()
 
     async def shutdown(self) -> None:
-        await cleanup_agent_peers()
+        pass
 
     async def get_instance(self, inst_id: AgentId, field=None):
         async with self.db.begin_readonly() as conn:
@@ -779,6 +769,7 @@ class AgentRegistry:
         session_tag: str = None,
         internal_data: dict = None,
         starts_at: datetime = None,
+        agent_list: Sequence[str] = None,
     ) -> SessionId:
 
         mounts = kernel_enqueue_configs[0]['creation_config'].get('mounts') or []
@@ -882,6 +873,8 @@ class AgentRegistry:
                     sub_kernel_config = cast(KernelEnqueueingConfig, {**kernel_enqueue_configs[0]})
                     sub_kernel_config['cluster_role'] = 'sub'
                     sub_kernel_config['cluster_idx'] = i + 1
+                    sub_kernel_config['cluster_hostname'] = sub_kernel_config['cluster_role'] + \
+                                                            str(sub_kernel_config['cluster_idx'])
                     kernel_enqueue_configs.append(sub_kernel_config)
             elif len(kernel_enqueue_configs) > 1:
                 # each container should have its own kernel_config
@@ -903,7 +896,7 @@ class AgentRegistry:
         if hook_result.status != PASSED:
             raise RejectedByHook.from_hook_result(hook_result)
 
-        for kernel in kernel_enqueue_configs:
+        for idx, kernel in enumerate(kernel_enqueue_configs):
             kernel_id: KernelId
             if kernel['cluster_role'] == DEFAULT_ROLE:
                 kernel_id = cast(KernelId, session_id)
@@ -1025,7 +1018,7 @@ class AgentRegistry:
                            .select_from(keypairs)
                            .where(keypairs.c.access_key == access_key))
                 result = await conn.execute(query)
-                row  = result.first()
+                row = result.first()
                 dotfiles = msgpack.unpackb(row['dotfiles'])
                 internal_data = {} if internal_data is None else internal_data
                 internal_data.update({'dotfiles': dotfiles})
@@ -1070,51 +1063,64 @@ class AgentRegistry:
                             raise BackendError(
                                 f'There is a vfolder whose name conflicts with '
                                 f'dotfile {dotfile["path"]}')
+            mapped_agent = None
+            if not agent_list:
+                pass
+            else:
+                mapped_agent = agent_list[idx]
+            try:
+                async def _enqueue() -> None:
+                    nonlocal ids
+                    async with self.db.begin() as conn:
+                        query = kernels.insert().values({
+                            'agent': mapped_agent,
+                            'id': kernel_id,
+                            'status': KernelStatus.PENDING,
+                            'session_creation_id': session_creation_id,
+                            'session_id': session_id,
+                            'session_name': session_name,
+                            'session_type': session_type,
+                            'cluster_mode': cluster_mode.value,
+                            'cluster_size': cluster_size,
+                            'cluster_role': kernel['cluster_role'],
+                            'cluster_idx': kernel['cluster_idx'],
+                            'cluster_hostname': f"{kernel['cluster_role']}{kernel['cluster_idx']}",
+                            'scaling_group': scaling_group,
+                            'domain_name': domain_name,
+                            'group_id': group_id,
+                            'user_uuid': user_uuid,
+                            'access_key': access_key,
+                            'image': image_ref.canonical,
+                            'registry': image_ref.registry,
+                            'tag': session_tag,
+                            'starts_at': starts_at,
+                            'internal_data': internal_data,
+                            'startup_command': kernel.get('startup_command'),
+                            'occupied_slots': requested_slots,
+                            'occupied_shares': {},
+                            'resource_opts': resource_opts,
+                            'environ': [f'{k}={v}' for k, v in environ.items()],
+                            'mounts': [list(mount) for mount in mounts],  # postgres save tuple as str
+                            'mount_map': mount_map,
+                            'bootstrap_script': kernel.get('bootstrap_script'),
+                            'repl_in_port': 0,
+                            'repl_out_port': 0,
+                            'stdin_port': 0,
+                            'stdout_port': 0,
+                            'preopen_ports': creation_config.get('preopen_ports', []),
+                        })
+                        await conn.execute(query)
+                        ids.append(kernel_id)
 
-            async def _enqueue() -> None:
-                nonlocal ids
-                async with self.db.begin() as conn:
-                    query = kernels.insert().values({
-                        'id': kernel_id,
-                        'status': KernelStatus.PENDING,
-                        'session_creation_id': session_creation_id,
-                        'session_id': session_id,
-                        'session_name': session_name,
-                        'session_type': session_type,
-                        'cluster_mode': cluster_mode.value,
-                        'cluster_size': cluster_size,
-                        'cluster_role': kernel['cluster_role'],
-                        'cluster_idx': kernel['cluster_idx'],
-                        'cluster_hostname': f"{kernel['cluster_role']}{kernel['cluster_idx']}",
-                        'scaling_group': scaling_group,
-                        'domain_name': domain_name,
-                        'group_id': group_id,
-                        'user_uuid': user_uuid,
-                        'access_key': access_key,
-                        'image': image_ref.canonical,
-                        'registry': image_ref.registry,
-                        'tag': session_tag,
-                        'starts_at': starts_at,
-                        'internal_data': internal_data,
-                        'startup_command': kernel.get('startup_command'),
-                        'occupied_slots': requested_slots,
-                        'occupied_shares': {},
-                        'resource_opts': resource_opts,
-                        'environ': [f'{k}={v}' for k, v in environ.items()],
-                        'mounts': [list(mount) for mount in mounts],  # postgres save tuple as str
-                        'mount_map': mount_map,
-                        'bootstrap_script': kernel.get('bootstrap_script'),
-                        'repl_in_port': 0,
-                        'repl_out_port': 0,
-                        'stdin_port': 0,
-                        'stdout_port': 0,
-                        'preopen_ports': creation_config.get('preopen_ports', []),
-                    })
-                    await conn.execute(query)
-                    ids.append(kernel_id)
-
-            await execute_with_retry(_enqueue)
-
+                await execute_with_retry(_enqueue)
+            except DBAPIError as e:
+                if getattr(e.orig, "pgcode", None) == '23503':
+                    match = re.search(r'Key \(agent\)=\((?P<agent>[^)]+)\)', repr(e.orig))
+                    if match:
+                        raise InvalidAPIParameters(f"No such agent: {match.group('agent')}")
+                    else:
+                        raise InvalidAPIParameters("No such agent")
+                raise
         await self.hook_plugin_ctx.notify(
             'POST_ENQUEUE_SESSION',
             (session_id, session_name, access_key),
@@ -1250,7 +1256,6 @@ class AgentRegistry:
 
         # Aggregate by agents to minimize RPC calls
         per_agent_tasks = []
-
         keyfunc = lambda item: item.agent_alloc_ctx.agent_id
         for agent_id, group_iterator in itertools.groupby(
             sorted(kernel_agent_bindings, key=keyfunc), key=keyfunc,
@@ -1270,7 +1275,6 @@ class AgentRegistry:
                     ),
                 ),
             )
-
         if per_agent_tasks:
             agent_errors = []
             results = await asyncio.gather(
@@ -1844,9 +1848,9 @@ class AgentRegistry:
                             last_stat: Optional[Dict[str, Any]]
                             last_stat = None
                             try:
-                                raw_last_stat = await redis.execute_with_retries(
-                                    lambda: self.redis_stat.get(str(kernel['id']), encoding=None),
-                                    max_retries=3)
+                                raw_last_stat = await redis.execute(
+                                    self.redis_stat,
+                                    lambda r: r.get(str(kernel['id'])))
                                 if raw_last_stat is not None:
                                     last_stat = msgpack.unpackb(raw_last_stat)
                                     last_stat['version'] = 2
@@ -2253,7 +2257,10 @@ class AgentRegistry:
             instance_rejoin = False
 
             # Update "last seen" timestamp for liveness tracking
-            await self.redis_live.hset('agent.last_seen', agent_id, now.timestamp())
+            await redis.execute(
+                self.redis_live,
+                lambda r: r.hset('agent.last_seen', agent_id, now.timestamp()),
+            )
 
             # Check and update status of the agent record in DB
             async def _update() -> None:
@@ -2351,13 +2358,13 @@ class AgentRegistry:
             known_registries = await get_known_registries(self.shared_config.etcd)
             images = msgpack.unpackb(snappy.decompress(agent_info['images']))
 
-            def _pipe_builder():
-                pipe = self.redis_image.pipeline()
+            def _pipe_builder(r: aioredis.Redis):
+                pipe = r.pipeline()
                 for image in images:
                     image_ref = ImageRef(image[0], known_registries)
                     pipe.sadd(image_ref.canonical, agent_id)
                 return pipe
-            await redis.execute_with_retries(_pipe_builder)
+            await redis.execute(self.redis_image, _pipe_builder)
 
         await self.hook_plugin_ctx.notify(
             'POST_AGENT_HEARTBEAT',
@@ -2365,12 +2372,11 @@ class AgentRegistry:
         )
 
     async def mark_agent_terminated(self, agent_id: AgentId, status: AgentStatus) -> None:
-        global agent_peers
-        await self.redis_live.hdel('agent.last_seen', agent_id)
+        await redis.execute(self.redis_live, lambda r: r.hdel('agent.last_seen', agent_id))
 
-        async def _pipe_builder():
-            pipe = self.redis_image.pipeline()
-            async for imgname in self.redis_image.iscan():
+        async def _pipe_builder(r: aioredis.Redis):
+            pipe = r.pipeline()
+            async for imgname in r.scan_iter():
                 pipe.srem(imgname, agent_id)
             return pipe
 
@@ -2387,9 +2393,6 @@ class AgentRegistry:
                 )
                 result = await conn.execute(fetch_query)
                 row = result.first()
-                peer = agent_peers.pop(row['addr'], None)
-                if peer is not None:
-                    await peer.__aexit__(None, None, None)
                 prev_status = row['status']
                 if prev_status in (None, AgentStatus.LOST, AgentStatus.TERMINATED):
                     return
@@ -2410,7 +2413,7 @@ class AgentRegistry:
                 )
                 await conn.execute(update_query)
 
-        await redis.execute_with_retries(_pipe_builder)
+        await redis.execute(self.redis_image, _pipe_builder)
         await execute_with_retry(_update)
 
     async def set_session_status(
@@ -2506,14 +2509,14 @@ class AgentRegistry:
             log.debug('sync_kernel_stats(k:{})', kernel_id)
             updates = {}
 
-            async def _get_kstats_from_redis():
-                stat_type = await self.redis_stat.type(raw_kernel_id)
+            async def _get_kstats_from_redis(r: Redis):
+                stat_type = await redis.execute(r, lambda r: r.type(raw_kernel_id), encoding='utf-8')
                 if stat_type == 'string':
-                    kern_stat = await self.redis_stat.get(raw_kernel_id, encoding=None)
+                    kern_stat = await r.get(raw_kernel_id)
                     if kern_stat is not None:
                         updates['last_stat'] = msgpack.unpackb(kern_stat)
                 else:
-                    kern_stat = await self.redis_stat.hgetall(raw_kernel_id)
+                    kern_stat = await r.hgetall(raw_kernel_id)
                     if kern_stat is not None and 'cpu_used' in kern_stat:
                         updates.update({
                             'cpu_used': int(float(kern_stat['cpu_used'])),
@@ -2525,9 +2528,9 @@ class AgentRegistry:
                             'io_max_scratch_size': int(kern_stat['io_max_scratch_size']),
                         })
 
-            await redis.execute_with_retries(
-                lambda: _get_kstats_from_redis(),
-                max_retries=1,
+            await redis.execute(
+                self.redis_stat,
+                _get_kstats_from_redis,
             )
             if not updates:
                 log.warning('sync_kernel_stats(k:{}): no statistics updates', kernel_id)

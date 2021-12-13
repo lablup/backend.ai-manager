@@ -3,6 +3,7 @@ from datetime import datetime
 import functools
 import json
 import logging
+import math
 from pathlib import Path
 import stat
 from typing import (
@@ -23,8 +24,6 @@ import uuid
 import aiohttp
 from aiohttp import web
 import aiohttp_cors
-import aiojobs
-from aiojobs.aiohttp import atomic
 import sqlalchemy as sa
 import trafaret as t
 
@@ -275,7 +274,14 @@ async def create(request: web.Request, params: Any) -> web.Response:
 
         # Limit vfolder size quota if it is larger than max_vfolder_size of the resource policy.
         max_vfolder_size = resource_policy.get('max_vfolder_size', 0)
-        if max_vfolder_size > 0 and (params['quota'] is None or params['quota'] > max_vfolder_size):
+        if (
+            max_vfolder_size > 0
+            and (
+                params['quota'] is None
+                or params['quota'] <= 0
+                or params['quota'] > max_vfolder_size
+            )
+        ):
             params['quota'] = max_vfolder_size
 
         # Prevent creation of vfolder with duplicated name.
@@ -336,6 +342,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'usage_mode': params['usage_mode'],
             'permission': params['permission'],
             'last_used': None,
+            'max_size': int(params['quota'] / (2**20)) if params['quota'] else None,  # in MBytes
             'host': folder_host,
             'creator': request['user']['email'],
             'ownership_type': VFolderOwnershipType(ownership_type),
@@ -350,6 +357,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'host': folder_host,
             'usage_mode': params['usage_mode'].value,
             'permission': params['permission'].value,
+            'max_size': int(params['quota'] / (2**20)) if params['quota'] else None,  # in MBytes
             'creator': request['user']['email'],
             'ownership_type': ownership_type,
             'user': user_uuid,
@@ -420,6 +428,8 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
                     'type': row.vfolders_ownership_type,  # legacy
                     'unmanaged_path': row.vfolders_unmanaged_path,
                     'cloneable': row.vfolders_cloneable if row.vfolders_cloneable else False,
+                    'max_files': row.vfolders_max_files,
+                    'max_size': row.vfolders_max_size,
                 })
         else:
             extra_vf_conds = None
@@ -452,6 +462,8 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
                 'ownership_type': entry['ownership_type'].value,
                 'type': entry['ownership_type'].value,  # legacy
                 'cloneable': entry['cloneable'],
+                'max_files': entry['max_files'],
+                'max_size': entry['max_size'],
             })
     return web.json_response(resp, status=200)
 
@@ -494,7 +506,6 @@ async def delete_by_id(request: web.Request, params: Any) -> web.Response:
     return web.Response(status=204)
 
 
-@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 async def list_hosts(request: web.Request) -> web.Response:
@@ -521,14 +532,22 @@ async def list_hosts(request: web.Request) -> web.Response:
     default_host = await root_ctx.shared_config.get_raw('volumes/default_host')
     if default_host not in allowed_hosts:
         default_host = None
+    volume_info = {
+        f"{proxy_name}:{volume_data['name']}": {
+            'backend': volume_data['backend'],
+            'capabilities': volume_data['capabilities'],
+        }
+        for proxy_name, volume_data in all_volumes
+        if f"{proxy_name}:{volume_data['name']}" in allowed_hosts
+    }
     resp = {
         'default': default_host,
         'allowed': sorted(allowed_hosts),
+        'volume_info': volume_info,
     }
     return web.json_response(resp, status=200)
 
 
-@atomic
 @superadmin_required
 @server_status_required(READ_ALLOWED)
 async def list_all_hosts(request: web.Request) -> web.Response:
@@ -547,7 +566,6 @@ async def list_all_hosts(request: web.Request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @superadmin_required
 @server_status_required(READ_ALLOWED)
 @check_api_params(
@@ -573,7 +591,6 @@ async def get_volume_perf_metric(request: web.Request, params: Any) -> web.Respo
     return web.json_response(storage_reply, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 async def list_allowed_types(request: web.Request) -> web.Response:
@@ -584,7 +601,6 @@ async def list_allowed_types(request: web.Request) -> web.Response:
     return web.json_response(allowed_vfolder_types, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
@@ -628,28 +644,52 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
             'permission': permission,
             'usage_mode': row['usage_mode'],
             'cloneable': row['cloneable'],
+            'max_size': row['max_size'],
         }
     except aiohttp.ClientResponseError:
         raise VFolderOperationFailed
     return web.json_response(resp, status=200)
 
 
-@atomic
-@superadmin_required
+@auth_required
 @server_status_required(READ_ALLOWED)
 @check_api_params(
     t.Dict({
         t.Key('folder_host'): t.String,
+        t.Key('id'): tx.UUID,
     }))
 async def get_quota(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     proxy_name, volume_name = root_ctx.storage_manager.split_host(params['folder_host'])
-    log.info('VFOLDER.GET_QUOTA (volume_name:{})', volume_name)
+    log.info('VFOLDER.GET_QUOTA (volume_name:{}, vf:{})', volume_name, params['id'])
+
+    # Permission check for the requested vfolder.
+    user_role = request['user']['role']
+    user_uuid = request['user']['uuid']
+    domain_name = request['user']['domain_name']
+    if user_role == UserRole.SUPERADMIN:
+        pass
+    else:
+        allowed_vfolder_types = await root_ctx.shared_config.get_vfolder_types()
+        async with root_ctx.db.begin_readonly() as conn:
+            extra_vf_conds = [vfolders.c.id == params['id']]
+            entries = await query_accessible_vfolders(
+                conn,
+                user_uuid,
+                user_role=user_role,
+                domain_name=domain_name,
+                allowed_vfolder_types=allowed_vfolder_types,
+                extra_vf_conds=(sa.and_(*extra_vf_conds)),
+            )
+        if len(entries) < 0:
+            raise VFolderNotFound('no such accessible vfolder')
+
     try:
         async with root_ctx.storage_manager.request(
             proxy_name, 'GET', 'volume/quota',
             json={
                 'volume': volume_name,
+                'vfid': str(params['id']),
             },
             raise_for_status=True,
         ) as (_, storage_resp):
@@ -659,25 +699,60 @@ async def get_quota(request: web.Request, params: Any) -> web.Response:
     return web.json_response(storage_reply, status=200)
 
 
-@atomic
-@superadmin_required
+@auth_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
     t.Dict({
         t.Key('folder_host'): t.String,
+        t.Key('id'): tx.UUID,
         t.Key('input'): t.Mapping(t.String, t.Any),
     }),
 )
 async def update_quota(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     proxy_name, volume_name = root_ctx.storage_manager.split_host(params['folder_host'])
-    quota = params['input']['size_bytes']
-    log.info('VFOLDER.UPDATE_QUOTA (volume_name:{}, quota:{})', quota)
+    quota = int(params['input']['size_bytes'])
+    log.info('VFOLDER.UPDATE_QUOTA (volume_name:{}, quota:{}, vf:{})', volume_name, quota, params['id'])
+
+    # Permission check for the requested vfolder.
+    user_role = request['user']['role']
+    user_uuid = request['user']['uuid']
+    domain_name = request['user']['domain_name']
+    if user_role == UserRole.SUPERADMIN:
+        pass
+    else:
+        allowed_vfolder_types = await root_ctx.shared_config.get_vfolder_types()
+        async with root_ctx.db.begin_readonly() as conn:
+            extra_vf_conds = [vfolders.c.id == params['id']]
+            entries = await query_accessible_vfolders(
+                conn,
+                user_uuid,
+                user_role=user_role,
+                domain_name=domain_name,
+                allowed_vfolder_types=allowed_vfolder_types,
+                extra_vf_conds=(sa.and_(*extra_vf_conds)),
+            )
+        if len(entries) < 0:
+            raise VFolderNotFound('no such accessible vfolder')
+
+    # Limit vfolder size quota if it is larger than max_vfolder_size of the resource policy.
+    resource_policy = request['keypair']['resource_policy']
+    max_vfolder_size = resource_policy.get('max_vfolder_size', 0)
+    if (
+        max_vfolder_size > 0
+        and (
+            quota <= 0
+            or quota > max_vfolder_size
+        )
+    ):
+        quota = max_vfolder_size
+
     try:
         async with root_ctx.storage_manager.request(
             proxy_name, 'PATCH', 'volume/quota',
             json={
                 'volume': volume_name,
+                'vfid': str(params['id']),
                 'size_bytes': quota,
             },
             raise_for_status=True,
@@ -685,10 +760,46 @@ async def update_quota(request: web.Request, params: Any) -> web.Response:
             pass
     except aiohttp.ClientResponseError:
         raise VFolderOperationFailed
-    return web.json_response({}, status=200)
+
+    # Update the quota for the vfolder in DB.
+    async with root_ctx.db.begin() as conn:
+        query = (
+            sa.update(vfolders)
+            .values(max_size=math.ceil(quota / 2**20))  # in Mbytes
+            .where(vfolders.c.id == params['id'])
+        )
+        result = await conn.execute(query)
+        assert result.rowcount == 1
+
+    return web.json_response({'size_bytes': quota}, status=200)
 
 
-@atomic
+@superadmin_required
+@server_status_required(READ_ALLOWED)
+@check_api_params(
+    t.Dict({
+        t.Key('folder_host'): t.String,
+        t.Key('id'): tx.UUID,
+    }))
+async def get_usage(request: web.Request, params: Any) -> web.Response:
+    root_ctx: RootContext = request.app['_root.context']
+    proxy_name, volume_name = root_ctx.storage_manager.split_host(params['folder_host'])
+    log.info('VFOLDER.GET_USAGE (volume_name:{}, vf:{})', volume_name, params['id'])
+    try:
+        async with root_ctx.storage_manager.request(
+            proxy_name, 'GET', 'folder/usage',
+            json={
+                'volume': volume_name,
+                'vfid': str(params['id']),
+            },
+            raise_for_status=True,
+        ) as (_, storage_resp):
+            usage = await storage_resp.json()
+    except aiohttp.ClientResponseError:
+        raise VFolderOperationFailed
+    return web.json_response(usage, status=200)
+
+
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @vfolder_permission_required(VFolderPermission.OWNER_PERM)
@@ -735,7 +846,6 @@ async def rename_vfolder(request: web.Request, params: Any, row: VFolderRow) -> 
     return web.Response(status=201)
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @vfolder_permission_required(VFolderPermission.OWNER_PERM)
@@ -799,7 +909,6 @@ async def mkdir(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
     return web.Response(status=201)
 
 
-@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
@@ -995,7 +1104,6 @@ async def list_files(request: web.Request, params: Any, row: VFolderRow) -> web.
     return web.json_response(resp, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 async def list_sent_invitations(request: web.Request) -> web.Response:
@@ -1032,7 +1140,6 @@ async def list_sent_invitations(request: web.Request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
@@ -1064,7 +1171,6 @@ async def update_invitation(request: web.Request, params: Any) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
@@ -1174,7 +1280,6 @@ async def invite(request: web.Request, params: Any) -> web.Response:
     return web.json_response(resp, status=201)
 
 
-@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 async def invitations(request: web.Request) -> web.Response:
@@ -1211,7 +1316,6 @@ async def invitations(request: web.Request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
@@ -1295,7 +1399,6 @@ async def accept_invitation(request: web.Request, params: Any) -> web.Response:
     return web.json_response({})
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
@@ -1346,7 +1449,6 @@ async def delete_invitation(request: web.Request, params: Any) -> web.Response:
     return web.json_response({})
 
 
-@atomic
 @admin_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
@@ -1444,7 +1546,6 @@ async def share(request: web.Request, params: Any) -> web.Response:
         return web.json_response({'shared_emails': emails_to_share}, status=201)
 
 
-@atomic
 @admin_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
@@ -1556,7 +1657,6 @@ async def delete(request: web.Request) -> web.Response:
     return web.Response(status=204)
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
@@ -1589,7 +1689,6 @@ async def leave(request: web.Request, row: VFolderRow) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
@@ -1735,7 +1834,6 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
     return web.json_response(resp, status=201)
 
 
-@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 @check_api_params(
@@ -1783,7 +1881,6 @@ async def list_shared_vfolders(request: web.Request, params: Any) -> web.Respons
     return web.json_response(resp, status=200)
 
 
-@atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
@@ -1925,60 +2022,66 @@ async def list_mounts(request: web.Request) -> web.Response:
     }
 
     # Scan mounted vfolder hosts for connected agents.
-    async def _fetch_mounts(sess: aiohttp.ClientSession, agent_id: str) -> Tuple[str, Mapping]:
-        watcher_info = await get_watcher_info(request, agent_id)
-        headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
-        url = watcher_info['addr'] / 'mounts'
-        try:
-            async with sess.get(url, headers=headers) as watcher_resp:
-                if watcher_resp.status == 200:
-                    data = {
-                        'success': True,
-                        'mounts': await watcher_resp.json(),
-                        'message': '',
-                    }
-                else:
-                    data = {
-                        'success': False,
-                        'mounts': [],
-                        'message': await watcher_resp.text(),
-                    }
-                return (agent_id, data)
-        except asyncio.CancelledError:
-            raise
-        except asyncio.TimeoutError:
-            log.error('VFOLDER.LIST_MOUNTS(u:{}): timeout from watcher (agent:{})',
-                      access_key, agent_id)
-            raise
-        except Exception:
-            log.exception('VFOLDER.LIST_MOUNTS(u:{}): '
-                          'unexpected error while reading from watcher (agent:{})',
-                          access_key, agent_id)
-            raise
+    async def _fetch_mounts(
+        sema: asyncio.Semaphore,
+        sess: aiohttp.ClientSession,
+        agent_id: str,
+    ) -> Tuple[str, Mapping]:
+        async with sema:
+            watcher_info = await get_watcher_info(request, agent_id)
+            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+            url = watcher_info['addr'] / 'mounts'
+            try:
+                async with sess.get(url, headers=headers) as watcher_resp:
+                    if watcher_resp.status == 200:
+                        data = {
+                            'success': True,
+                            'mounts': await watcher_resp.json(),
+                            'message': '',
+                        }
+                    else:
+                        data = {
+                            'success': False,
+                            'mounts': [],
+                            'message': await watcher_resp.text(),
+                        }
+                    return (agent_id, data)
+            except asyncio.CancelledError:
+                raise
+            except asyncio.TimeoutError:
+                log.error(
+                    'VFOLDER.LIST_MOUNTS(u:{}): timeout from watcher (agent:{})',
+                    access_key, agent_id,
+                )
+                raise
+            except Exception:
+                log.exception(
+                    'VFOLDER.LIST_MOUNTS(u:{}): '
+                    'unexpected error while reading from watcher (agent:{})',
+                    access_key, agent_id,
+                )
+                raise
 
     async with root_ctx.db.begin() as conn:
-        query = (sa.select([agents.c.id])
-                   .select_from(agents)
-                   .where(agents.c.status == AgentStatus.ALIVE))
+        query = (
+            sa.select([agents.c.id])
+            .select_from(agents)
+            .where(agents.c.status == AgentStatus.ALIVE)
+        )
         result = await conn.execute(query)
         rows = result.fetchall()
 
     client_timeout = aiohttp.ClientTimeout(total=10.0)
     async with aiohttp.ClientSession(timeout=client_timeout) as sess:
-        scheduler = await aiojobs.create_scheduler(limit=8)
-        try:
-            jobs = await asyncio.gather(*[
-                scheduler.spawn(_fetch_mounts(sess, row.id)) for row in rows
-            ])
-            mounts = await asyncio.gather(*[job.wait() for job in jobs],
-                                          return_exceptions=True)
-            for mount in mounts:
-                if isinstance(mount, Exception):
-                    # exceptions are already logged.
-                    continue
-                resp['agents'][mount[0]] = mount[1]
-        finally:
-            await scheduler.close()
+        sema = asyncio.Semaphore(8)
+        mounts = await asyncio.gather(*[
+            _fetch_mounts(sema, sess, row.id) for row in rows
+        ], return_exceptions=True)
+        for mount in mounts:
+            if isinstance(mount, Exception):
+                # exceptions are already logged.
+                continue
+            resp['agents'][mount[0]] = mount[1]
 
     return web.json_response(resp, status=200)
 
@@ -2036,50 +2139,54 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
         result = await conn.execute(query)
         rows = result.fetchall()
 
-    async def _mount(sess: aiohttp.ClientSession, agent_id: str) -> Tuple[str, Mapping]:
-        watcher_info = await get_watcher_info(request, agent_id)
-        try:
-            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
-            url = watcher_info['addr'] / 'mounts'
-            async with sess.post(url, json=params, headers=headers) as resp:
-                if resp.status == 200:
-                    data = {
-                        'success': True,
-                        'message': await resp.text(),
-                    }
-                else:
-                    data = {
-                        'success': False,
-                        'message': await resp.text(),
-                    }
-                return (agent_id, data)
-        except asyncio.CancelledError:
-            raise
-        except asyncio.TimeoutError:
-            log.error(log_fmt + ': timeout from watcher (ag:{})',
-                      *log_args, agent_id)
-            raise
-        except Exception:
-            log.exception(log_fmt + ': unexpected error while reading from watcher (ag:{})',
-                          *log_args, agent_id)
-            raise
+    async def _mount(
+        sema: asyncio.Semaphore,
+        sess: aiohttp.ClientSession,
+        agent_id: str,
+    ) -> Tuple[str, Mapping]:
+        async with sema:
+            watcher_info = await get_watcher_info(request, agent_id)
+            try:
+                headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+                url = watcher_info['addr'] / 'mounts'
+                async with sess.post(url, json=params, headers=headers) as resp:
+                    if resp.status == 200:
+                        data = {
+                            'success': True,
+                            'message': await resp.text(),
+                        }
+                    else:
+                        data = {
+                            'success': False,
+                            'message': await resp.text(),
+                        }
+                    return (agent_id, data)
+            except asyncio.CancelledError:
+                raise
+            except asyncio.TimeoutError:
+                log.error(
+                    log_fmt + ': timeout from watcher (ag:{})',
+                    *log_args, agent_id,
+                )
+                raise
+            except Exception:
+                log.exception(
+                    log_fmt + ': unexpected error while reading from watcher (ag:{})',
+                    *log_args, agent_id,
+                )
+                raise
 
     client_timeout = aiohttp.ClientTimeout(total=10)
     async with aiohttp.ClientSession(timeout=client_timeout) as sess:
-        scheduler = await aiojobs.create_scheduler(limit=8)
-        try:
-            jobs = await asyncio.gather(*[
-                scheduler.spawn(_mount(sess, row.id)) for row in rows
-            ])
-            results = await asyncio.gather(*[job.wait() for job in jobs],
-                                           return_exceptions=True)
-            for result in results:
-                if isinstance(result, Exception):
-                    # exceptions are already logged.
-                    continue
-                resp['agents'][result[0]] = result[1]
-        finally:
-            await scheduler.close()
+        sema = asyncio.Semaphore(8)
+        results = await asyncio.gather(*[
+            _mount(sema, sess, row.id) for row in rows
+        ], return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                # exceptions are already logged.
+                continue
+            resp['agents'][result[0]] = result[1]
 
     return web.json_response(resp, status=200)
 
@@ -2152,50 +2259,54 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
     }
 
     # Unmount from running agents.
-    async def _umount(sess: aiohttp.ClientSession, agent_id: str) -> Tuple[str, Mapping]:
-        watcher_info = await get_watcher_info(request, agent_id)
-        try:
-            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
-            url = watcher_info['addr'] / 'mounts'
-            async with sess.delete(url, json=params, headers=headers) as resp:
-                if resp.status == 200:
-                    data = {
-                        'success': True,
-                        'message': await resp.text(),
-                    }
-                else:
-                    data = {
-                        'success': False,
-                        'message': await resp.text(),
-                    }
-                return (agent_id, data)
-        except asyncio.CancelledError:
-            raise
-        except asyncio.TimeoutError:
-            log.error(log_fmt + ': timeout from watcher (agent:{})',
-                      *log_args, agent_id)
-            raise
-        except Exception:
-            log.exception(log_fmt + ': unexpected error while reading from watcher (agent:{})',
-                          *log_args, agent_id)
-            raise
+    async def _umount(
+        sema: asyncio.Semaphore,
+        sess: aiohttp.ClientSession,
+        agent_id: str,
+    ) -> Tuple[str, Mapping]:
+        async with sema:
+            watcher_info = await get_watcher_info(request, agent_id)
+            try:
+                headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+                url = watcher_info['addr'] / 'mounts'
+                async with sess.delete(url, json=params, headers=headers) as resp:
+                    if resp.status == 200:
+                        data = {
+                            'success': True,
+                            'message': await resp.text(),
+                        }
+                    else:
+                        data = {
+                            'success': False,
+                            'message': await resp.text(),
+                        }
+                    return (agent_id, data)
+            except asyncio.CancelledError:
+                raise
+            except asyncio.TimeoutError:
+                log.error(
+                    log_fmt + ': timeout from watcher (agent:{})',
+                    *log_args, agent_id,
+                )
+                raise
+            except Exception:
+                log.exception(
+                    log_fmt + ': unexpected error while reading from watcher (agent:{})',
+                    *log_args, agent_id,
+                )
+                raise
 
     client_timeout = aiohttp.ClientTimeout(total=10.0)
     async with aiohttp.ClientSession(timeout=client_timeout) as sess:
-        scheduler = await aiojobs.create_scheduler(limit=8)
-        try:
-            jobs = await asyncio.gather(*[
-                scheduler.spawn(_umount(sess, _agent.id)) for _agent in _agents
-            ])
-            results = await asyncio.gather(*[job.wait() for job in jobs],
-                                           return_exceptions=True)
-            for result in results:
-                if isinstance(result, Exception):
-                    # exceptions are already logged.
-                    continue
-                resp['agents'][result[0]] = result[1]
-        finally:
-            await scheduler.close()
+        sema = asyncio.Semaphore(8)
+        results = await asyncio.gather(*[
+            _umount(sema, sess, _agent.id) for _agent in _agents
+        ], return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                # exceptions are already logged.
+                continue
+            resp['agents'][result[0]] = result[1]
 
     return web.json_response(resp, status=200)
 
@@ -2258,4 +2369,5 @@ def create_app(default_cors_options):
     cors.add(add_route('DELETE', r'/_/mounts', umount_host))
     cors.add(add_route('GET',    r'/_/quota', get_quota))
     cors.add(add_route('POST',   r'/_/quota', update_quota))
+    cors.add(add_route('GET',    r'/_/usage', get_usage))
     return app, []

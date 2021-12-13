@@ -37,7 +37,8 @@ class TemplateType(str, enum.Enum):
 session_templates = sa.Table(
     'session_templates', metadata,
     IDColumn('id'),
-    sa.Column('created_at', sa.DateTime(timezone=True), index=True),
+    sa.Column('created_at', sa.DateTime(timezone=True),
+               server_default=sa.func.now(), index=True),
     sa.Column('is_active', sa.Boolean, default=True),
 
     sa.Column('domain_name', sa.String(length=64), sa.ForeignKey('domains.name'), nullable=False),
@@ -58,7 +59,7 @@ task_template_v1 = t.Dict({
         t.Key('tag', default=None): t.Null | t.String,
     }),
     t.Key('spec'): t.Dict({
-        tx.AliasedKey(['type', 'sessionType'],
+        tx.AliasedKey(['type', 'session_type', 'sessionType'],
                       default='interactive') >> 'session_type': tx.Enum(SessionTypes),
         t.Key('kernel'): t.Dict({
             t.Key('image'): t.String,
@@ -80,8 +81,11 @@ task_template_v1 = t.Dict({
                               default=None) >> 'dest_dir': t.Null | t.String,
             }),
         }),
+        t.Key('scaling_group', default=None): t.Null | t.String,
         t.Key('mounts', default={}): t.Null | t.Mapping(t.String, t.Any),
         t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any),
+        tx.AliasedKey(['agent_list', 'agentList'],
+                      default=None) >> 'agent_list': t.Null | t.List(t.String),
     }),
 }).allow_extra('*')
 

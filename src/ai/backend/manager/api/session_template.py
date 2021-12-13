@@ -1,8 +1,10 @@
 import json
+import datetime
 import logging
 from typing import (
     Any,
     List,
+    Dict,
     Mapping,
     TYPE_CHECKING,
     Tuple,
@@ -19,9 +21,7 @@ from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
 
 from ..models import (
-    association_groups_users as agus, domains,
-    groups, session_templates, keypairs, users, UserRole,
-    query_accessible_session_templates, TemplateType,
+    groups, session_templates, users, TemplateType,
 )
 from ..models.session_template import check_task_template
 
@@ -30,6 +30,7 @@ from .exceptions import InvalidAPIParameters, TaskTemplateNotFound
 from .manager import READ_ALLOWED, server_status_required
 from .types import CORSOptions, Iterable, WebMiddleware
 from .utils import check_api_params, get_access_key_scopes
+from .session import _query_userinfo
 
 if TYPE_CHECKING:
     from .context import RootContext
@@ -51,94 +52,14 @@ async def create(request: web.Request, params: Any) -> web.Response:
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
-    requester_uuid = request['user']['uuid']
     log.info(
         'SESSION_TEMPLATE.CREATE (ak:{0}/{1})',
         requester_access_key,
         owner_access_key if owner_access_key != requester_access_key else '*',
     )
-    user_uuid = request['user']['uuid']
     root_ctx: RootContext = request.app['_root.context']
     async with root_ctx.db.begin() as conn:
-        if requester_access_key != owner_access_key:
-            # Admin or superadmin is creating sessions for another user.
-            # The check for admin privileges is already done in get_access_key_scope().
-            query = (
-                sa.select([keypairs.c.user, users.c.role, users.c.domain_name])
-                .select_from(sa.join(keypairs, users, keypairs.c.user == users.c.uuid))
-                .where(keypairs.c.access_key == owner_access_key)
-            )
-            result = await conn.execute(query)
-            row = result.first()
-            owner_domain = row['domain_name']
-            owner_uuid = row['user']
-            owner_role = row['role']
-        else:
-            # Normal case when the user is creating her/his own session.
-            owner_domain = request['user']['domain_name']
-            owner_uuid = requester_uuid
-            owner_role = UserRole.USER
-
-        query = (
-            sa.select([domains.c.name])
-            .select_from(domains)
-            .where(
-                (domains.c.name == owner_domain) &
-                (domains.c.is_active),
-            )
-        )
-        qresult = await conn.execute(query)
-        domain_name = qresult.scalar()
-        if domain_name is None:
-            raise InvalidAPIParameters('Invalid domain')
-
-        if owner_role == UserRole.SUPERADMIN:
-            # superadmin can spawn container in any designated domain/group.
-            query = (
-                sa.select([groups.c.id])
-                .select_from(groups)
-                .where(
-                    (groups.c.domain_name == params['domain']) &
-                    (groups.c.name == params['group']) &
-                    (groups.c.is_active),
-                )
-            )
-            qresult = await conn.execute(query)
-            group_id = qresult.scalar()
-        elif owner_role == UserRole.ADMIN:
-            # domain-admin can spawn container in any group in the same domain.
-            if params['domain'] != owner_domain:
-                raise InvalidAPIParameters("You can only set the domain to the owner's domain.")
-            query = (
-                sa.select([groups.c.id])
-                .select_from(groups)
-                .where(
-                    (groups.c.domain_name == owner_domain) &
-                    (groups.c.name == params['group']) &
-                    (groups.c.is_active),
-                )
-            )
-            qresult = await conn.execute(query)
-            group_id = qresult.scalar()
-        else:
-            # normal users can spawn containers in their group and domain.
-            if params['domain'] != owner_domain:
-                raise InvalidAPIParameters("You can only set the domain to your domain.")
-            query = (
-                sa.select([agus.c.group_id])
-                .select_from(agus.join(groups, agus.c.group_id == groups.c.id))
-                .where(
-                    (agus.c.user_id == owner_uuid) &
-                    (groups.c.domain_name == owner_domain) &
-                    (groups.c.name == params['group']) &
-                    (groups.c.is_active),
-                )
-            )
-            qresult = await conn.execute(query)
-            group_id = qresult.scalar()
-        if group_id is None:
-            raise InvalidAPIParameters('Invalid group')
-
+        user_uuid, group_id, _ = await _query_userinfo(request, params, conn)
         log.debug('Params: {0}', params)
         try:
             body = json.loads(params['payload'])
@@ -147,23 +68,30 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 body = yaml.safe_load(params['payload'])
             except (yaml.YAMLError, yaml.MarkedYAMLError):
                 raise InvalidAPIParameters('Malformed payload')
-        template_data = check_task_template(body)
-        template_id = uuid.uuid4().hex
-        resp = {
-            'id': template_id,
-            'user': user_uuid.hex,
-        }
-        query = session_templates.insert().values({
-            'id': template_id,
-            'domain_name': params['domain'],
-            'group_id': group_id,
-            'user_uuid': user_uuid,
-            'name': template_data['metadata']['name'],
-            'template': template_data,
-            'type': TemplateType.TASK,
-        })
-        result = await conn.execute(query)
-        assert result.rowcount == 1
+        for st in body['session_templates']:
+            template_data = check_task_template(st['template'])
+            template_id = uuid.uuid4().hex
+            resp = {
+                'id': template_id,
+                'user': user_uuid.hex,
+            }
+            name = st['name'] if 'name' in st else template_data['metadata']['name']
+            if 'group_id' in st:
+                group_id = st['group_id']
+            if 'user_uuid' in st:
+                user_uuid = st['user_uuid']
+            query = session_templates.insert().values({
+                'id': template_id,
+                'created_at': datetime.datetime.now(),
+                'domain_name': params['domain'],
+                'group_id': group_id,
+                'user_uuid': user_uuid,
+                'name': name,
+                'template': template_data,
+                'type': TemplateType.TASK,
+            })
+            result = await conn.execute(query)
+            assert result.rowcount == 1
     return web.json_response(resp)
 
 
@@ -179,55 +107,43 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
     resp = []
     access_key = request['keypair']['access_key']
     domain_name = request['user']['domain_name']
-    user_role = request['user']['role']
     user_uuid = request['user']['uuid']
     log.info('SESSION_TEMPLATE.LIST (ak:{})', access_key)
     root_ctx: RootContext = request.app['_root.context']
     async with root_ctx.db.begin() as conn:
         entries: List[Mapping[str, Any]]
-        if request['is_superadmin'] and params['all']:
-            j = (
-                session_templates
-                .join(users, session_templates.c.user_uuid == users.c.uuid, isouter=True)
-                .join(groups, session_templates.c.group_id == groups.c.id, isouter=True)
+        j = (
+            session_templates
+            .join(users, session_templates.c.user_uuid == users.c.uuid, isouter=True)
+            .join(groups, session_templates.c.group_id == groups.c.id, isouter=True)
+        )
+        query = (
+            sa.select([session_templates, users.c.email, groups.c.name], use_labels=True)
+            .select_from(j)
+            .where(
+                (session_templates.c.is_active) &
+                (session_templates.c.type == TemplateType.TASK),
             )
-            query = (
-                sa.select([session_templates, users.c.email, groups.c.name], use_labels=True)
-                .select_from(j)
-                .where(
-                    (session_templates.c.is_active) &
-                    (session_templates.c.type == TemplateType.TASK),
-                )
-            )
-            result = await conn.execute(query)
-            entries = []
-            for row in result:
-                is_owner = True if row.session_templates_user == user_uuid else False
-                entries.append({
-                    'name': row.session_templates_name,
-                    'id': row.session_templates_id,
-                    'created_at': row.session_templates_created_at,
-                    'is_owner': is_owner,
-                    'user': (str(row.session_templates_user_uuid)
-                             if row.session_templates_user_uuid else None),
-                    'group': (str(row.session_templates_group_id)
-                              if row.session_templates_group_id else None),
-                    'user_email': row.users_email,
-                    'group_name': row.groups_name,
-                })
-        else:
-            extra_conds = None
-            if params['group_id'] is not None:
-                extra_conds = ((session_templates.c.group_id == params['group_id']))
-            entries = await query_accessible_session_templates(
-                conn,
-                user_uuid,
-                TemplateType.TASK,
-                user_role=user_role,
-                domain_name=domain_name,
-                allowed_types=['user', 'group'],
-                extra_conds=extra_conds,
-            )
+        )
+        result = await conn.execute(query)
+        entries = []
+        for row in result.fetchall():
+            is_owner = True if row.session_templates_user_uuid == user_uuid else False
+            entries.append({
+                'name': row.session_templates_name,
+                'id': row.session_templates_id,
+                'created_at': row.session_templates_created_at,
+                'is_owner': is_owner,
+                'user': (str(row.session_templates_user_uuid)
+                            if row.session_templates_user_uuid else None),
+                'group': (str(row.session_templates_group_id)
+                            if row.session_templates_group_id else None),
+                'user_email': row.users_email,
+                'group_name': row.groups_name,
+                'domain_name': domain_name,
+                'type': row.session_templates_type,
+                'template': row.session_templates_template,
+            })
         for entry in entries:
             resp.append({
                 'name': entry['name'],
@@ -238,7 +154,9 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
                 'group': str(entry['group']),
                 'user_email': entry['user_email'],
                 'group_name': entry['group_name'],
-                'type': 'user' if entry['user'] is not None else 'group',
+                'domain_name': domain_name,
+                'type': entry['type'],
+                'template': entry['template'],
             })
         return web.json_response(resp)
 
@@ -247,13 +165,15 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
 @server_status_required(READ_ALLOWED)
 @check_api_params(
     t.Dict({
-        t.Key('format', default='yaml'): t.Null | t.Enum('yaml', 'json'),
+        t.Key('format', default='json'): t.Null | t.Enum('yaml', 'json'),
         t.Key('owner_access_key', default=None): t.Null | t.String,
     }),
 )
 async def get(request: web.Request, params: Any) -> web.Response:
     if params['format'] not in ['yaml', 'json']:
         raise InvalidAPIParameters('format should be "yaml" or "json"')
+    resp: Dict[str, Any] = {}
+    domain_name = request['user']['domain_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
     log.info(
         'SESSION_TEMPLATE.GET (ak:{0}/{1})',
@@ -264,7 +184,12 @@ async def get(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     async with root_ctx.db.begin() as conn:
         query = (
-            sa.select([session_templates.c.template])
+            sa.select([
+                session_templates.c.template,
+                session_templates.c.name,
+                session_templates.c.user_uuid,
+                session_templates.c.group_id,
+            ])
             .select_from(session_templates)
             .where(
                 (session_templates.c.id == template_id) &
@@ -272,26 +197,35 @@ async def get(request: web.Request, params: Any) -> web.Response:
                 (session_templates.c.type == TemplateType.TASK),
             )
         )
-        template = await conn.scalar(query)
-        if not template:
-            raise TaskTemplateNotFound
-    template = json.loads(template)
-    if params['format'] == 'yaml':
-        body = yaml.dump(template)
-        return web.Response(text=body, content_type='text/yaml')
-    else:
-        return web.json_response(template)
+        result = await conn.execute(query)
+        for row in result.fetchall():
+            resp.update({
+                'template': row.template,
+                'name': row.name,
+                'user_uuid': str(row.user_uuid),
+                'group_id': str(row.group_id),
+                'domain_name': domain_name,
+            })
+        if isinstance(resp, str):
+            resp = json.loads(resp)
+        else:
+            resp = json.loads(json.dumps(resp))
+        return web.json_response(resp)
 
 
 @auth_required
 @server_status_required(READ_ALLOWED)
 @check_api_params(
     t.Dict({
+        tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
+        tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
         t.Key('payload'): t.String,
         t.Key('owner_access_key', default=None): t.Null | t.String,
     }),
 )
 async def put(request: web.Request, params: Any) -> web.Response:
+    if params['domain'] is None:
+        params['domain'] = request['user']['domain_name']
     template_id = request.match_info['template_id']
 
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
@@ -301,8 +235,8 @@ async def put(request: web.Request, params: Any) -> web.Response:
         owner_access_key if owner_access_key != requester_access_key else '*',
     )
     root_ctx: RootContext = request.app['_root.context']
-
     async with root_ctx.db.begin() as conn:
+        user_uuid, group_id, _ = await _query_userinfo(request, params, conn)
         query = (
             sa.select([session_templates.c.id])
             .select_from(session_templates)
@@ -321,15 +255,25 @@ async def put(request: web.Request, params: Any) -> web.Response:
             body = yaml.safe_load(params['payload'])
         except (yaml.YAMLError, yaml.MarkedYAMLError):
             raise InvalidAPIParameters('Malformed payload')
-        template_data = check_task_template(body)
-        query = (
-            sa.update(session_templates)
-            .values(template=template_data, name=template_data['metadata']['name'])
-            .where((session_templates.c.id == template_id))
-        )
-        result = await conn.execute(query)
-        assert result.rowcount == 1
-
+        for st in body['session_templates']:
+            template_data = check_task_template(st['template'])
+            name = st['name'] if 'name' in st else template_data['metadata']['name']
+            if 'group_id' in st:
+                group_id = st['group_id']
+            if 'user_uuid' in st:
+                user_uuid = st['user_uuid']
+            query = (
+                sa.update(session_templates)
+                .values({
+                    'group_id': group_id,
+                    'user_uuid': user_uuid,
+                    'name': name,
+                    'template': template_data,
+                })
+                .where((session_templates.c.id == template_id))
+            )
+            result = await conn.execute(query)
+            assert result.rowcount == 1
         return web.json_response({'success': True})
 
 

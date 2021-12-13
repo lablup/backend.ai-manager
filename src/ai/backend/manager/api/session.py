@@ -34,7 +34,6 @@ import uuid
 import aiohttp
 from aiohttp import web, hdrs
 import aiohttp_cors
-from aiojobs.aiohttp import atomic
 import aioredis
 import aiotools
 from async_timeout import timeout
@@ -213,6 +212,7 @@ creation_config_v5 = t.Dict({
     t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any),
     tx.AliasedKey(['resource_opts', 'resourceOpts'], default=None): t.Null | t.Mapping(t.String, t.Any),
     tx.AliasedKey(['preopen_ports', 'preopenPorts'], default=None): t.Null | t.List(t.Int[1024:65535]),
+    tx.AliasedKey(['agent_list', 'agentList'], default=None): t.Null | t.List(t.String),
 })
 creation_config_v5_template = t.Dict({
     t.Key('mounts', default=undefined): UndefChecker | t.Null | t.List(t.String),
@@ -494,7 +494,6 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             params['bootstrap_script'] = script
 
     try:
-
         kernel_id = await asyncio.shield(root_ctx.registry.enqueue_session(
             session_creation_id,
             params['session_name'], owner_access_key,
@@ -519,6 +518,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             startup_command=params['startup_command'],
             session_tag=params['tag'],
             starts_at=starts_at,
+            agent_list=params['config']['agent_list'],
         ))
         resp['sessionId'] = str(kernel_id)  # changed since API v5
         resp['sessionName'] = str(params['session_name'])
@@ -700,6 +700,8 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
         config_from_template['environ'] = environ
     if resources := template['spec'].get('resources'):  # noqa
         config_from_template['resources'] = resources
+    if 'agent_list' in template['spec']:
+        config_from_template['agent_list'] = template['spec']['agent_list']
 
     override_config = drop(dict(params['config']), undefined)
     override_params = drop(dict(params), undefined)
@@ -796,6 +798,26 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
     else:
         raise InvalidAPIParameters('API version not supported')
     params['config'] = creation_config
+    if params['config']['agent_list'] is not None and request['user']['role'] != (UserRole.SUPERADMIN):
+        raise InsufficientPrivilege('You are not allowed to manually assign agents for your session.')
+    if request['user']['role'] == (UserRole.SUPERADMIN):
+        if not params['config']['agent_list']:
+            pass
+        else:
+            agent_count = len(params['config']['agent_list'])
+            if params['cluster_mode'] == "multi-node":
+                if agent_count != params['cluster_size']:
+                    raise InvalidAPIParameters(
+                        "For multi-node cluster sessions, the number of manually assigned agents "
+                        "must be same to the clsuter size. "
+                        "Note that you may specify duplicate agents in the list.",
+                    )
+            else:
+                if agent_count != 1:
+                    raise InvalidAPIParameters(
+                        "For non-cluster sessions and single-node cluster sessions, "
+                        "you may specify only one manually assigned agent.",
+                    )
     return await _create(request, params)
 
 
@@ -1173,18 +1195,18 @@ async def handle_kernel_creation_lifecycle(
     if ck_id not in root_ctx.registry.kernel_creation_tracker:
         return
     log.debug('handle_kernel_creation_lifecycle: ev:{} k:{}', event.name, event.kernel_id)
-    if event.name == 'kernel_preparing':
+    if isinstance(event, KernelPreparingEvent):
         # State transition is done by the DoPrepareEvent handler inside the scheduler-distpacher object.
         pass
-    elif event.name == 'kernel_pulling':
+    elif isinstance(event, KernelPullingEvent):
         await root_ctx.registry.set_kernel_status(event.kernel_id, KernelStatus.PULLING, event.reason)
-    elif event.name == 'kernel_creating':
+    elif isinstance(event, KernelCreatingEvent):
         await root_ctx.registry.set_kernel_status(event.kernel_id, KernelStatus.PREPARING, event.reason)
-    elif event.name == 'kernel_started':
+    elif isinstance(event, KernelStartedEvent):
         # post_create_kernel() coroutines are waiting for the creation tracker events to be set.
         if tracker := root_ctx.registry.kernel_creation_tracker.get(ck_id):
             tracker.set_result(None)
-    elif event.name == 'kernel_cancelled':
+    elif isinstance(event, KernelCancelledEvent):
         if tracker := root_ctx.registry.kernel_creation_tracker.get(ck_id):
             tracker.cancel()
 
@@ -1195,10 +1217,10 @@ async def handle_kernel_termination_lifecycle(
     event: KernelTerminatingEvent | KernelTerminatedEvent,
 ) -> None:
     root_ctx: RootContext = app['_root.context']
-    if event.name == 'kernel_terminating':
+    if isinstance(event, KernelTerminatingEvent):
         # The destroy_kernel() API handler will set the "TERMINATING" status.
         pass
-    elif event.name == 'kernel_terminated':
+    if isinstance(event, KernelTerminatedEvent):
         await root_ctx.registry.mark_kernel_terminated(event.kernel_id, event.reason, event.exit_code)
         await root_ctx.registry.check_session_terminated(event.kernel_id, event.reason)
 
@@ -1216,10 +1238,10 @@ async def handle_session_creation_lifecycle(
     if event.creation_id not in app_ctx.session_creation_tracker:
         return
     log.debug('handle_session_creation_lifecycle: ev:{} s:{}', event.name, event.session_id)
-    if event.name == 'session_started':
+    if isinstance(event, SessionStartedEvent):
         if tracker := app_ctx.session_creation_tracker.get(event.creation_id):
             tracker.set()
-    elif event.name == 'session_cancelled':
+    elif isinstance(event, SessionCancelledEvent):
         if tracker := app_ctx.session_creation_tracker.get(event.creation_id):
             tracker.set()
 
@@ -1234,7 +1256,7 @@ async def handle_session_termination_lifecycle(
     published by the manager.
     """
     root_ctx: RootContext = app['_root.context']
-    if event.name == 'session_terminated':
+    if isinstance(event, SessionTerminatedEvent):
         await root_ctx.registry.mark_session_terminated(event.session_id, event.reason)
 
 
@@ -1272,9 +1294,9 @@ async def handle_batch_result(
     Update the database according to the batch-job completion results
     """
     root_ctx: RootContext = app['_root.context']
-    if event.name == 'session_success':
+    if isinstance(event, SessionSuccessEvent):
         await root_ctx.registry.set_session_result(event.session_id, True, event.exit_code)
-    elif event.name == 'session_failure':
+    elif isinstance(event, SessionFailureEvent):
         await root_ctx.registry.set_session_result(event.session_id, False, event.exit_code)
     await root_ctx.registry.destroy_session(
         functools.partial(
@@ -1291,12 +1313,12 @@ async def handle_agent_lifecycle(
     event: AgentStartedEvent | AgentTerminatedEvent,
 ) -> None:
     root_ctx: RootContext = app['_root.context']
-    if event.name == 'agent_started':
+    if isinstance(event, AgentStartedEvent):
         log.info('instance_lifecycle: ag:{0} joined ({1})', source, event.reason)
         await root_ctx.registry.update_instance(source, {
             'status': AgentStatus.ALIVE,
         })
-    elif event.name == 'agent_terminated':
+    if isinstance(event, AgentTerminatedEvent):
         if event.reason == 'agent-lost':
             await root_ctx.registry.mark_agent_terminated(source, AgentStatus.LOST)
         elif event.reason == 'agent-restart':
@@ -1325,15 +1347,15 @@ async def check_agent_lost(root_ctx: RootContext, interval: float) -> None:
         now = datetime.now(tzutc())
         timeout = timedelta(seconds=root_ctx.local_config['manager']['heartbeat-timeout'])
 
-        async def _check_impl():
-            async for agent_id, prev in root_ctx.redis_live.ihscan('agent.last_seen'):
+        async def _check_impl(r: aioredis.Redis):
+            async for agent_id, prev in r.hscan_iter('agent.last_seen'):
                 prev = datetime.fromtimestamp(float(prev), tzutc())
                 if now - prev > timeout:
                     await root_ctx.event_producer.produce_event(
                         AgentTerminatedEvent("agent-lost"),
-                        source=agent_id)
+                        source=agent_id.decode())
 
-        await redis.execute_with_retries(lambda: _check_impl())
+        await redis.execute(root_ctx.redis_live, _check_impl)
     except asyncio.CancelledError:
         pass
 
@@ -1344,16 +1366,14 @@ async def handle_kernel_log(
     event: DoSyncKernelLogsEvent,
 ) -> None:
     root_ctx: RootContext = app['_root.context']
-    redis_conn: aioredis.Redis = await redis.connect_with_retries(
-        str(root_ctx.shared_config.get_redis_url(db=REDIS_STREAM_DB)),
-        encoding=None,
-    )
+    redis_conn = redis.get_redis_object(root_ctx.shared_config.data['redis'], db=REDIS_STREAM_DB)
     # The log data is at most 10 MiB.
     log_buffer = BytesIO()
     log_key = f'containerlog.{event.container_id}'
     try:
-        list_size = await redis.execute_with_retries(
-            lambda: redis_conn.llen(log_key),
+        list_size = await redis.execute(
+            redis_conn,
+            lambda r: r.llen(log_key),
         )
         if list_size is None:
             # The log data is expired due to a very slow event delivery.
@@ -1363,7 +1383,7 @@ async def handle_kernel_log(
             return
         for _ in range(list_size):
             # Read chunk-by-chunk to allow interleaving with other Redis operations.
-            chunk = await redis.execute_with_retries(lambda: redis_conn.lpop(log_key))
+            chunk = await redis.execute(redis_conn, lambda r: r.lpop(log_key))
             if chunk is None:  # maybe missing
                 log_buffer.write(b"(container log unavailable)\n")
                 break
@@ -1383,13 +1403,13 @@ async def handle_kernel_log(
             await execute_with_retry(_update_log)
         finally:
             # Clear the log data from Redis when done.
-            await redis.execute_with_retries(
-                lambda: redis_conn.delete(log_key),
+            await redis.execute(
+                redis_conn,
+                lambda r: r.delete(log_key),
             )
     finally:
         log_buffer.close()
-        redis_conn.close()
-        await redis_conn.wait_closed()
+        await redis_conn.close()
 
 
 async def report_stats(root_ctx: RootContext) -> None:
@@ -1481,7 +1501,6 @@ async def destroy(request: web.Request, params: Any) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
 @check_api_params(
@@ -1515,7 +1534,6 @@ async def match_sessions(request: web.Request, params: Any) -> web.Response:
     }, status=200)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def get_info(request: web.Request) -> web.Response:
@@ -1565,7 +1583,6 @@ async def get_info(request: web.Request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def restart(request: web.Request) -> web.Response:
@@ -1670,7 +1687,6 @@ async def execute(request: web.Request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def interrupt(request: web.Request) -> web.Response:
@@ -1688,7 +1704,6 @@ async def interrupt(request: web.Request) -> web.Response:
     return web.Response(status=204)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def complete(request: web.Request) -> web.Response:
@@ -1723,7 +1738,6 @@ async def complete(request: web.Request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
 @check_api_params(
@@ -1869,7 +1883,6 @@ async def download_single(request: web.Request, params: Any) -> web.Response:
     return web.Response(body=result, status=200)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def list_files(request: web.Request) -> web.Response:
@@ -1905,7 +1918,6 @@ async def list_files(request: web.Request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
 @check_api_params(

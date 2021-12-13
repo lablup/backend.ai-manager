@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 from sqlalchemy.engine.row import Row
 from sqlalchemy.sql.expression import false
 
-from ai.backend.common import msgpack
+from ai.backend.common import msgpack, redis
 from ai.backend.common.types import (
     AccessKey,
     SecretKey,
@@ -116,7 +116,7 @@ class UserInfo(graphene.ObjectType):
         ctx: GraphQueryContext,
         user_uuids: Sequence[uuid.UUID],
     ) -> Sequence[Optional[UserInfo]]:
-        async with ctx.db.begin() as conn:
+        async with ctx.db.begin_readonly() as conn:
             from .user import users
             query = (
                 sa.select([users.c.uuid, users.c.email, users.c.full_name])
@@ -197,7 +197,7 @@ class KeyPair(graphene.ObjectType):
 
     async def resolve_num_queries(self, info: graphene.ResolveInfo) -> int:
         ctx: GraphQueryContext = info.context
-        n = await ctx.redis_stat.get(f"kp:{self.access_key}:num_queries")
+        n = await redis.execute(ctx.redis_stat, lambda r: r.get(f"kp:{self.access_key}:num_queries"))
         if n is not None:
             return n
         return 0

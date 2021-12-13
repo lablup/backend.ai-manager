@@ -16,13 +16,13 @@ from typing import (
 
 from aiohttp import web
 import aiohttp_cors
-from aiojobs.aiohttp import atomic
+from aioredis import Redis
 from dateutil.tz import tzutc
 from dateutil.parser import parse as dtparse
 import sqlalchemy as sa
 import trafaret as t
 
-from ai.backend.common import validators as tx
+from ai.backend.common import redis, validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.plugin.hook import (
     ALL_COMPLETED,
@@ -436,11 +436,15 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
             row = await execute_with_retry(_query_cred)
             if row is None:
                 raise AuthorizationFailed('Access key not found')
-            redis = root_ctx.redis_stat.pipeline()
-            num_queries_key = f'kp:{access_key}:num_queries'
-            redis.incr(num_queries_key)
-            redis.expire(num_queries_key, 86400 * 30)  # retention: 1 month
-            await redis.execute()
+
+            async def _pipe_builder(r: Redis):
+                pipe = r.pipeline()
+                num_queries_key = f'kp:{access_key}:num_queries'
+                pipe.incr(num_queries_key)
+                pipe.expire(num_queries_key, 86400 * 30)  # retention: 1 month
+                await pipe.execute()
+
+            await redis.execute(root_ctx.redis_stat, _pipe_builder)
         else:
             # unsigned requests may be still accepted for public APIs
             pass
@@ -477,11 +481,15 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
                 await sign_request(sign_method, request, row['keypairs_secret_key'])
             if not secrets.compare_digest(my_signature, signature):
                 raise AuthorizationFailed('Signature mismatch')
-            redis = root_ctx.redis_stat.pipeline()
-            num_queries_key = f'kp:{access_key}:num_queries'
-            redis.incr(num_queries_key)
-            redis.expire(num_queries_key, 86400 * 30)  # retention: 1 month
-            await redis.execute()
+
+            async def _pipe_builder(r: Redis):
+                pipe = r.pipeline()
+                num_queries_key = f'kp:{access_key}:num_queries'
+                pipe.incr(num_queries_key)
+                pipe.expire(num_queries_key, 86400 * 30)  # retention: 1 month
+                await pipe.execute()
+
+            await redis.execute(root_ctx.redis_stat, _pipe_builder)
         else:
             # unsigned requests may be still accepted for public APIs
             pass
@@ -551,7 +559,6 @@ def superadmin_required(handler):
     return wrapped
 
 
-@atomic
 @auth_required
 @check_api_params(
     t.Dict({
@@ -565,7 +572,6 @@ async def test(request: web.Request, params: Any) -> web.Response:
     return web.json_response(resp_data)
 
 
-@atomic
 @auth_required
 @check_api_params(
     t.Dict({
@@ -605,7 +611,6 @@ async def get_role(request: web.Request, params: Any) -> web.Response:
     return web.json_response(resp_data)
 
 
-@atomic
 @check_api_params(
     t.Dict({
         t.Key('type'): t.Enum('keypair', 'jwt'),
@@ -669,7 +674,6 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
     })
 
 
-@atomic
 @check_api_params(
     t.Dict({
         t.Key('domain'): t.String,
@@ -786,7 +790,6 @@ async def signup(request: web.Request, params: Any) -> web.Response:
     return web.json_response(resp_data, status=201)
 
 
-@atomic
 @auth_required
 @check_api_params(
     t.Dict({
@@ -822,7 +825,6 @@ async def signout(request: web.Request, params: Any) -> web.Response:
     return web.json_response({})
 
 
-@atomic
 @auth_required
 @check_api_params(
     t.Dict({
@@ -860,7 +862,6 @@ async def update_full_name(request: web.Request, params: Any) -> web.Response:
     return web.json_response({}, status=200)
 
 
-@atomic
 @auth_required
 @check_api_params(
     t.Dict({
@@ -909,7 +910,6 @@ async def update_password(request: web.Request, params: Any) -> web.Response:
     return web.json_response({}, status=200)
 
 
-@atomic
 @auth_required
 async def get_ssh_keypair(request: web.Request) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
@@ -928,7 +928,6 @@ async def get_ssh_keypair(request: web.Request) -> web.Response:
     return web.json_response({'ssh_public_key': pubkey}, status=200)
 
 
-@atomic
 @auth_required
 async def refresh_ssh_keypair(request: web.Request) -> web.Response:
     domain_name = request['user']['domain_name']
