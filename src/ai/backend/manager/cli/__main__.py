@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 import logging
 from setproctitle import setproctitle
 import subprocess
@@ -7,9 +8,11 @@ import sys
 from pathlib import Path
 
 import click
+import psycopg2
 
 from ai.backend.common.cli import LazyGroup
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.validators import TimeDuration
 
 from ..config import load as load_config
 from ..models.keypair import generate_keypair as _gen_keypair
@@ -107,6 +110,64 @@ def generate_keypair(cli_ctx: CLIContext):
     ak, sk = _gen_keypair()
     print(f'Access Key: {ak} ({len(ak)} bytes)')
     print(f'Secret Key: {sk} ({len(sk)} bytes)')
+
+
+@main.command()
+@click.option('-r', '--retention', type=str, default='1yr',
+              help='The retention limit. e.g., 20d, 1mo, 6mo, 1yr')
+@click.option('-v', '--vacuum-full', type=bool, default=False,
+              help='Reclaim storage occupied by dead tuples.'
+                    'If not set or set False, it will run VACUUM without FULL.'
+                    'If set True, it will run VACUUM FULL.'
+                    'When VACUUM FULL is being processed, the database is locked.'
+                    '[default: False]')
+@click.pass_obj
+def clear_history(cli_ctx: CLIContext, retention, vacuum_full) -> None:
+    """
+    Delete old records from the kernels table and
+    invoke the PostgreSQL's vaccuum operation to clear up the actual disk space.
+    """
+    local_config = cli_ctx.local_config
+    with cli_ctx.logger:
+        today = datetime.now()
+        duration = TimeDuration()
+        expiration = today - duration.check_and_return(retention)
+        expiration_date = expiration.strftime('%Y-%m-%d %H:%M:%S')
+
+        conn = psycopg2.connect(
+            host=local_config['db']['addr'][0],
+            port=local_config['db']['addr'][1],
+            dbname=local_config['db']['name'],
+            user=local_config['db']['user'],
+            password=local_config['db']['password'],
+        )
+        with conn.cursor() as curs:
+            if vacuum_full:
+                vacuum_sql = "VACUUM FULL"
+            else:
+                vacuum_sql = "VACUUM"
+
+            curs.execute(f"""
+            SELECT COUNT(*) FROM kernels WHERE terminated_at < '{expiration_date}';
+            """)
+            deleted_count = curs.fetchone()[0]
+
+            conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
+            log.info('Deleting old records...')
+            curs.execute(f"""
+            DELETE FROM kernels WHERE terminated_at < '{expiration_date}';
+            """)
+            log.info(f'Perfoming {vacuum_sql} operation...')
+            curs.execute(vacuum_sql)
+            conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_READ_COMMITTED)
+
+            curs.execute("""
+            SELECT COUNT(*) FROM kernels;
+            """)
+            table_size = curs.fetchone()[0]
+            log.info(f'kernels table size: {table_size}')
+
+        log.info('Cleaned up {:,} database records older than {:}.', deleted_count, expiration_date)
 
 
 @main.group(cls=LazyGroup, import_name='ai.backend.manager.cli.dbschema:cli')
