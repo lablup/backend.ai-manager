@@ -95,13 +95,9 @@ class ExtendedAsyncSAEngine(SAEngine):
                 # but in this case:
                 #  - The lock ID is only given from trusted codes.
                 #  - asyncpg does not support parameter interpolation with raw SQL statements.
-                while not lock_acquired:
-                    result = await lock_conn.exec_driver_sql(
-                        f"SELECT pg_try_advisory_lock({lock_id:d});"
-                    )
-                    lock_acquired = result.scalar()
-                    if not lock_acquired:
-                        await asyncio.sleep(0.2)
+                await lock_conn.exec_driver_sql(
+                    f"SELECT pg_advisory_lock({lock_id:d});",
+                )
             except sa.exc.DBAPIError as e:
                 if getattr(e.orig, 'pgcode', None) == '55P03':  # lock not available error
                     # This may happen upon shutdown after some time.
@@ -110,11 +106,12 @@ class ExtendedAsyncSAEngine(SAEngine):
             except asyncio.CancelledError:
                 raise
             else:
+                lock_acquired = True
                 yield
             finally:
                 if lock_acquired:
                     await lock_conn.exec_driver_sql(
-                        f"SELECT pg_advisory_unlock({lock_id:d})"
+                        f"SELECT pg_advisory_unlock({lock_id:d})",
                     )
 
 
