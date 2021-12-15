@@ -758,7 +758,7 @@ class AgentRegistry:
         kernel_enqueue_configs: List[KernelEnqueueingConfig],
         scaling_group: Optional[str],
         session_type: SessionTypes,
-        resource_policy: str,
+        resource_policy: dict,
         *,
         domain_name: str,
         group_id: uuid.UUID,
