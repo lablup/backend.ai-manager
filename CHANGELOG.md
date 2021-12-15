@@ -16,6 +16,14 @@ Changes
 
 .. towncrier release notes start
 
+21.03.25 (2021-12-15)
+
+### Fixes
+* Remove premature optimization that caches Callosum RPC Peer connections to reduce ZeroMQ handshake latencies because long-running idle connections may get silently expired by network middleboxes and unexpected hang-ups ([#497](https://github.com/lablup/backend.ai-manager/issues/497))
+* Fix a regression of the usage stats aggregation API due to difference of aiopg and asyncpg behavior on `rowcount` of SELECT query results, by replacing `.rowcount` to `len()` ([#502](https://github.com/lablup/backend.ai-manager/issues/502))
+* Revert introduction of busy-wait polling loop for advisory locks by #483 and rollback to blocking advisory locks in #482, while preserving the refactoring work in #483. ([#503](https://github.com/lablup/backend.ai-manager/issues/503))
+
+
 21.03.24 (2021-11-08)
 ---------------------
 
