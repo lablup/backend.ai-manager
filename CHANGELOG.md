@@ -17,6 +17,7 @@ Changes
 .. towncrier release notes start
 
 21.03.25 (2021-12-15)
+---------------------
 
 ### Fixes
 * Remove premature optimization that caches Callosum RPC Peer connections to reduce ZeroMQ handshake latencies because long-running idle connections may get silently expired by network middleboxes and unexpected hang-ups ([#497](https://github.com/lablup/backend.ai-manager/issues/497))
