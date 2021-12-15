@@ -16,6 +16,19 @@ Changes
 
 .. towncrier release notes start
 
+## 21.09.2 (2021-12-15)
+
+### Features
+* Update CRUD of session template and correct typo of example-session-templates.json ([#480](https://github.com/lablup/backend.ai-manager/issues/480))
+* Add `mgr clear-history` cli command to delete old records from the kernels table and clear up the actual disk space. ([#498](https://github.com/lablup/backend.ai-manager/issues/498))
+* Add a new GQL mutation to modify the `schedulable` attribute of agents ([#500](https://github.com/lablup/backend.ai-manager/issues/500))
+
+### Fixes
+* Remove premature optimization that caches Callosum RPC Peer connections to reduce ZeroMQ handshake latencies because long-running idle connections may get silently expired by network middleboxes and unexpected hang-ups ([#497](https://github.com/lablup/backend.ai-manager/issues/497))
+* Fix a regression of the usage stats aggregation API due to difference of aiopg and asyncpg behavior on `rowcount` of SELECT query results, by replacing `.rowcount` to `len()` ([#502](https://github.com/lablup/backend.ai-manager/issues/502))
+* Revert introduction of busy-wait polling loop for advisory locks by #483 and rollback to blocking advisory locks in #482, while preserving the refactoring work in #483. ([#503](https://github.com/lablup/backend.ai-manager/issues/503))
+
+
 ## 21.09.1 (2021-11-11)
 
 ### Fixes
