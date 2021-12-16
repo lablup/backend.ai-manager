@@ -1376,14 +1376,17 @@ async def stats_report_timer(root_ctx: RootContext):
     t.Dict({
         tx.AliasedKey(['name', 'clientSessionToken']) >> 'session_name':
             t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
-    })
+    }),
 )
 async def rename_session(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     session_name = request.match_info['session_name']
     new_name = params['session_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
-    log.info('RENAME_SESSION (ak:{0}/{1}, s:{2}, newname:{3})', request, owner_access_key, session_name, new_name)
+    log.info(
+        'RENAME_SESSION (ak:{0}/{1}, s:{2}, newname:{3})',
+        request, owner_access_key, session_name, new_name,
+    )
     async with root_ctx.db.begin() as conn:
         compute_session = await root_ctx.registry.get_session(
             session_name, owner_access_key,
@@ -1399,7 +1402,7 @@ async def rename_session(request: web.Request, params: Any) -> web.Response:
             .where(kernels.c.session_id == compute_session['session_id'])
         )
         await conn.execute(query)
-    
+
     return web.Response(status=204)
 
 
