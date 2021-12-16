@@ -1,0 +1,1 @@
+Add `mgr clear-history` cli command to delete old records from the kernels table and clear up the actual disk space.
