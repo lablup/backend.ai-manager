@@ -1,23 +1,24 @@
 import logging
 from typing import (
     Any,
-    Generic,
     Iterable,
     TYPE_CHECKING,
     Tuple,
-    TypeVar,
 )
 
 from aiohttp import web
 import aiohttp
 import aiohttp_cors
 import aiotools
+from dataclasses import dataclass, field
 import trafaret as t
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
 
 from ai.backend.manager.api.exceptions import GenericNotFound
+
+from ai.backend.manager.models.utils import ExtendedAsyncSAEngine
 
 from ..models import (
     query_allowed_sgroups,
@@ -33,28 +34,23 @@ if TYPE_CHECKING:
     from .context import RootContext
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
-T = TypeVar('T')
 
 
-class DummyHashObject(Generic[T]):
-    def __init__(self, object: T) -> None:
-        self.object = object
-
-    def __hash__(self) -> int:
-        return 0
-
-    def __eq__(self, other) -> bool:
-        return True
+@dataclass(unsafe_hash=True)
+class WSProxyVersionQueryParams:
+    db_ctx: ExtendedAsyncSAEngine = field(hash=False)
+    access_key: str = field(hash=False)
+    domain_name: str = field(hash=False)
 
 
 @aiotools.lru_cache(expire_after=30)  # expire after 30 seconds
 async def query_wsproxy_version(
-    params: DummyHashObject[dict],
+    params: WSProxyVersionQueryParams,
     group_id_or_name: str,
 ) -> str:
-    async with params.object['db_ctx'].begin_readonly() as conn:
+    async with params.db_ctx.begin_readonly() as conn:
         sgroups = await query_allowed_sgroups(
-            conn, params.object['domain_name'], group_id_or_name, params.object['access_key'])
+            conn, params.domain_name, group_id_or_name, params.access_key)
 
     if len(sgroups) == 0:
         raise GenericNotFound
@@ -101,11 +97,11 @@ async def get_wsproxy_version(request: web.Request) -> web.Response:
     domain_name = request['user']['domain_name']
     group_id_or_name = request.match_info['scaling_group']
 
-    params = DummyHashObject({
-        'db_ctx': root_ctx.db,
-        'access_key': access_key,
-        'domain_name': domain_name,
-    })
+    params = WSProxyVersionQueryParams(
+        db_ctx=root_ctx.db,
+        access_key=access_key,
+        domain_name=domain_name,
+    )
     wsproxy_version = await query_wsproxy_version(params, group_id_or_name)
     return web.json_response({'version': wsproxy_version})
 
