@@ -427,8 +427,6 @@ async def match_session_ids(
     ]:
         result = await db_connection.execute(match_query)
         rows = result.fetchall()
-        print("rows")
-        print("rows, len(lows)", rows, len(rows))
         if not rows:
             continue
         return [
