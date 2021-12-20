@@ -666,7 +666,6 @@ class AgentRegistry:
                 for_update=for_update,
                 extra_cond=extra_cond,
                 db_connection=conn,
-                max_matches=1,
             )
             if not session_infos:
                 raise SessionNotFound()
