@@ -1,1 +1,1 @@
-Fix too many session matching problem when exectue app by session_name
+Fix "too many sessions matched" error when the given session name has an exact match with additional prefix matches
