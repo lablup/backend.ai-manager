@@ -1,1 +1,1 @@
-add support for session name renaming
+Add support for session renaming
