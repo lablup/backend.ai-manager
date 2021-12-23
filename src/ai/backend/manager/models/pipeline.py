@@ -103,12 +103,13 @@ class PipelineModule(Base):
     id = sa.Column(UUID(as_uuid=True), primary_key=True)
     name = sa.Column(sa.String(length=128))
     icon = sa.Column(sa.String(length=256))
-    type = sa.Column(EnumType(PipelineModuleTypes))
-    created_at = sa.Column(sa.DateTime, server_default=sa.func.now())
-    modified_at = sa.Column(sa.DateTime, server_default=sa.func.now())
+    type = sa.Column(EnumType(PipelineModuleTypes), index=True)
+    created_at = sa.Column(sa.DateTime, server_default=sa.func.now(), index=True)
+    modified_at = sa.Column(sa.DateTime, server_default=sa.func.now(), index=True)
     domain_name = sa.Column(sa.ForeignKey("domains.name"))
     group_id = sa.Column(sa.ForeignKey("groups.id"))
     user_uuid = sa.Column(sa.ForeignKey("users.uuid"))
+    active_version = sa.Column(sa.Integer)
     versions = relationship("PipelineModuleVersion")
     tags = relationship("PipelineModuleTag", secondary=pipeline_module_tag_association, back_populates="modules")
     input_links = relationship("PipelineModuleInput")
@@ -145,8 +146,12 @@ class PipelineModuleVersion(Base):
     module_id = sa.Column(sa.ForeignKey("pipeline_module.id", ondelete="CASCADE"))
     module = relationship("PipelineModule", back_populates="versions")
     version = sa.Column(sa.Integer)
-    created_at = sa.Column(sa.DateTime, server_default=sa.func.now())
+    created_at = sa.Column(sa.DateTime, server_default=sa.func.now(), index=True)
     task_spec = sa.Column(JSONB())
+
+    __table_args__ = (
+        sa.Index('idx_pipeline_module_version', module_id, version, unique=True),
+    )
 
 
 class PipelineTemplate(Base):
@@ -157,8 +162,9 @@ class PipelineTemplate(Base):
     domain_name = sa.Column(sa.ForeignKey("domains.name"))
     group_id = sa.Column(sa.ForeignKey("groups.id"))
     user_uuid = sa.Column(sa.ForeignKey("users.uuid"))
-    created_at = sa.Column(sa.DateTime, server_default=sa.func.now())
-    modified_at = sa.Column(sa.DateTime, server_default=sa.func.now())
+    created_at = sa.Column(sa.DateTime, server_default=sa.func.now(), index=True)
+    modified_at = sa.Column(sa.DateTime, server_default=sa.func.now(), index=True)
+    active_version = sa.Column(sa.Integer)
     versions = relationship("PipelineTemplateVersion")
 
 
@@ -168,6 +174,11 @@ class PipelineTemplateVersion(Base):
     id = sa.Column(UUID(as_uuid=True), primary_key=True)
     template_id = sa.Column(sa.ForeignKey("pipeline_template.id"))
     template = relationship("PipelineTemplate", back_populates="versions")
+    version = sa.Column(sa.Integer)
+
+    __table_args__ = (
+        sa.Index('idx_pipeline_template_version', template_id, version, unique=True),
+    )
 
 
 class PipelineTemplateTask(Base):
@@ -176,7 +187,7 @@ class PipelineTemplateTask(Base):
     id = sa.Column(UUID(as_uuid=True), primary_key=True)
     name = sa.Column(sa.String(length=128))
     icon = sa.Column(sa.String(length=256))
-    type = sa.Column(EnumType(PipelineModuleTypes))
+    type = sa.Column(EnumType(PipelineModuleTypes), index=True)
     task_spec = sa.Column(JSONB())
     template_id = sa.Column(sa.ForeignKey("pipeline_template.id", ondelete="CASCADE"))
     template_vid = sa.Column(sa.ForeignKey("pipeline_template_version.id", ondelete="CASCADE"))
@@ -219,17 +230,17 @@ class Pipeline(Base):
 
     id = sa.Column(UUID(as_uuid=True), primary_key=True)
     name = sa.Column(sa.String(length=128))
-    status = sa.Column(EnumType(PipelineStatus))
+    status = sa.Column(EnumType(PipelineStatus), index=True)
     status_info = sa.Column(sa.String(length=64))
     template_id = sa.Column(sa.ForeignKey("pipeline_template.id", ondelete="SET NULL"), nullable=True)
     template_vid = sa.Column(sa.ForeignKey("pipeline_template_version.id", ondelete="SET NULL"), nullable=True)
     domain_name = sa.Column(sa.ForeignKey("domains.name"))
     group_id = sa.Column(sa.ForeignKey("groups.id"))
     user_uuid = sa.Column(sa.ForeignKey("users.uuid"))
-    created_at = sa.Column(sa.DateTime, server_default=sa.func.now())
-    last_updated = sa.Column(sa.DateTime, server_default=sa.func.now())
-    reserved_start_time = sa.Column(sa.DateTime, nullable=True, server_default=sa.null())
-    target_termination_time = sa.Column(sa.DateTime, nullable=True, server_default=sa.null())
+    created_at = sa.Column(sa.DateTime, server_default=sa.func.now(), index=True)
+    last_updated = sa.Column(sa.DateTime, server_default=sa.func.now(), index=True)
+    reserved_start_time = sa.Column(sa.DateTime, nullable=True, server_default=sa.null(), index=True)
+    target_termination_time = sa.Column(sa.DateTime, nullable=True, server_default=sa.null(), index=True)
     vfolder = sa.Column(sa.ForeignKey("vfolders.id", ondelete="SET NULL"), nullable=True)
 
 
@@ -239,10 +250,10 @@ class PipelineTask(Base):
     id = sa.Column(UUID(as_uuid=True), primary_key=True)
     name = sa.Column(sa.String(length=128))
     icon = sa.Column(sa.String(length=256))
-    type = sa.Column(EnumType(PipelineModuleTypes))
+    type = sa.Column(EnumType(PipelineModuleTypes), index=True)
     task_spec = sa.Column(JSONB())
-    status = sa.Column(EnumType(PipelineTaskStatus))
-    last_updated = sa.Column(sa.DateTime, server_default=sa.func.now())
+    status = sa.Column(EnumType(PipelineTaskStatus), index=True)
+    last_updated = sa.Column(sa.DateTime, server_default=sa.func.now(), index=True)
     pipeline_id = sa.Column(sa.ForeignKey("pipeline.id", ondelete="CASCADE"))
     layout_coord_x = sa.Column(sa.Integer())
     layout_coord_y = sa.Column(sa.Integer())
