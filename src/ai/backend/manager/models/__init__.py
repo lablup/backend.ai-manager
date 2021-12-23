@@ -14,6 +14,7 @@ from . import scaling_group as _sgroup
 from . import session_template as _sessiontemplate
 from . import storage as _storage
 from . import error_logs as _errorlogs
+from . import pipeline as _pipeline
 
 __all__ = (
     'metadata',
@@ -31,6 +32,7 @@ __all__ = (
     *_sessiontemplate.__all__,
     *_storage.__all__,
     *_errorlogs.__all__,
+    *_pipeline.__all__,
 )
 
 from .agent import *  # noqa
@@ -47,3 +49,4 @@ from .scaling_group import *  # noqa
 from .session_template import *  # noqa
 from .storage import *  # noqa
 from .error_logs import *  # noqa
+from .pipeline import *  # noqa
