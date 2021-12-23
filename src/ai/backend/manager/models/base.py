@@ -40,6 +40,7 @@ from sqlalchemy.ext.asyncio import (
     AsyncConnection as SAConnection,
     AsyncEngine as SAEngine,
 )
+from sqlalchemy.orm import registry
 from sqlalchemy.types import (
     SchemaType,
     TypeDecorator,
@@ -81,6 +82,8 @@ convention = {
     "pk": "pk_%(table_name)s",
 }
 metadata = sa.MetaData(naming_convention=convention)
+mapper_registry = registry(metadata=metadata)
+Base = mapper_registry.generate_base()
 
 pgsql_connect_opts = {
     'server_settings': {
