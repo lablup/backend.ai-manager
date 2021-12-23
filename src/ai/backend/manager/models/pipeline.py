@@ -5,10 +5,14 @@ import enum
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql.expression import null
 
 from .base import Base, EnumType
 
 __all__ = (
+    'PipelineModuleTypes',
+    'PipelineStatus',
+    'PipelineTaskStatus',
     'PipelineModule',
     'PipelineModuleVersion',
     'PipelineModuleTag',
@@ -100,16 +104,16 @@ pipeline_module_tag_association = sa.Table(
 class PipelineModule(Base):
     __tablename__ = "pipeline_module"
 
-    id = sa.Column(UUID(as_uuid=True), primary_key=True)
-    name = sa.Column(sa.String(length=128))
-    icon = sa.Column(sa.String(length=256))
-    type = sa.Column(EnumType(PipelineModuleTypes), index=True)
-    created_at = sa.Column(sa.DateTime, server_default=sa.func.now(), index=True)
-    modified_at = sa.Column(sa.DateTime, server_default=sa.func.now(), index=True)
-    domain_name = sa.Column(sa.ForeignKey("domains.name"))
-    group_id = sa.Column(sa.ForeignKey("groups.id"))
-    user_uuid = sa.Column(sa.ForeignKey("users.uuid"))
-    active_version = sa.Column(sa.Integer)
+    id = sa.Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text("uuid_generate_v4()"))
+    name = sa.Column(sa.String(length=128), nullable=False)
+    icon = sa.Column(sa.String(length=256), nullable=False)
+    type = sa.Column(EnumType(PipelineModuleTypes), nullable=False, index=True)
+    created_at = sa.Column(sa.DateTime, server_default=sa.func.now(), nullable=False, index=True)
+    modified_at = sa.Column(sa.DateTime, server_default=sa.func.now(), nullable=False, index=True)
+    domain_name = sa.Column(sa.ForeignKey("domains.name"), nullable=False)
+    group_id = sa.Column(sa.ForeignKey("groups.id"), nullable=False)
+    user_uuid = sa.Column(sa.ForeignKey("users.uuid"), nullable=False)
+    active_version = sa.Column(sa.Integer, nullable=False)
     versions = relationship("PipelineModuleVersion")
     tags = relationship("PipelineModuleTag", secondary=pipeline_module_tag_association, back_populates="modules")
     input_links = relationship("PipelineModuleInput")
@@ -119,34 +123,34 @@ class PipelineModule(Base):
 class PipelineModuleTag(Base):
     __tablename__ = "pipeline_module_tag"
 
-    name = sa.Column(sa.String(length=64), primary_key=True)
+    name = sa.Column(sa.String(length=64), primary_key=True, nullable=False)
     modules = relationship("PipelineModule", secondary=pipeline_module_tag_association, back_populates="tags")
 
 
 class PipelineModuleInput(Base):
     __tablename__ = "pipeline_module_input"
 
-    module_id = sa.Column(sa.ForeignKey("pipeline_module.id", ondelete="CASCADE"), primary_key=True)
+    module_id = sa.Column(sa.ForeignKey("pipeline_module.id", ondelete="CASCADE"), primary_key=True, nullable=False)
     module = relationship("PpipelineModule", back_populates="input_links")
-    name = sa.Column(sa.String(length=64), primary_key=True)
+    name = sa.Column(sa.String(length=64), primary_key=True, nullable=False)
 
 
 class PipelineModuleOutput(Base):
     __tablename__ = "pipeline_module_output"
 
-    module_id = sa.Column(sa.ForeignKey("pipeline_module.id", ondelete="CASCADE"), primary_key=True)
+    module_id = sa.Column(sa.ForeignKey("pipeline_module.id", ondelete="CASCADE"), primary_key=True, nullable=False)
     module = relationship("PpipelineModule", back_populates="output_links")
-    name = sa.Column(sa.String(length=64), primary_key=True)
+    name = sa.Column(sa.String(length=64), primary_key=True, nullable=False)
 
 
 class PipelineModuleVersion(Base):
     __tablename__ = "pipeline_module_version"
 
-    id = sa.Column(UUID(as_uuid=True), primary_key=True)
-    module_id = sa.Column(sa.ForeignKey("pipeline_module.id", ondelete="CASCADE"))
+    id = sa.Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text("uuid_generate_v4()"))
+    module_id = sa.Column(sa.ForeignKey("pipeline_module.id", ondelete="CASCADE"), nullable=False)
     module = relationship("PipelineModule", back_populates="versions")
-    version = sa.Column(sa.Integer)
-    created_at = sa.Column(sa.DateTime, server_default=sa.func.now(), index=True)
+    version = sa.Column(sa.Integer, nullable=False)
+    created_at = sa.Column(sa.DateTime, server_default=sa.func.now(), nullable=False, index=True)
     task_spec = sa.Column(JSONB())
 
     __table_args__ = (
@@ -157,24 +161,24 @@ class PipelineModuleVersion(Base):
 class PipelineTemplate(Base):
     __tablename__ = "pipeline_template"
 
-    id = sa.Column(UUID(as_uuid=True), primary_key=True)
-    name = sa.Column(sa.String(length=128))
-    domain_name = sa.Column(sa.ForeignKey("domains.name"))
-    group_id = sa.Column(sa.ForeignKey("groups.id"))
-    user_uuid = sa.Column(sa.ForeignKey("users.uuid"))
-    created_at = sa.Column(sa.DateTime, server_default=sa.func.now(), index=True)
-    modified_at = sa.Column(sa.DateTime, server_default=sa.func.now(), index=True)
-    active_version = sa.Column(sa.Integer)
+    id = sa.Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text("uuid_generate_v4()"))
+    name = sa.Column(sa.String(length=128), nullable=False)
+    domain_name = sa.Column(sa.ForeignKey("domains.name"), nullable=False)
+    group_id = sa.Column(sa.ForeignKey("groups.id"), nullable=False)
+    user_uuid = sa.Column(sa.ForeignKey("users.uuid"), nullable=False)
+    created_at = sa.Column(sa.DateTime, server_default=sa.func.now(), nullable=False, index=True)
+    modified_at = sa.Column(sa.DateTime, server_default=sa.func.now(), nullable=False, index=True)
+    active_version = sa.Column(sa.Integer, nullable=False)
     versions = relationship("PipelineTemplateVersion")
 
 
 class PipelineTemplateVersion(Base):
     __tablename__ = "pipeline_template_version"
 
-    id = sa.Column(UUID(as_uuid=True), primary_key=True)
-    template_id = sa.Column(sa.ForeignKey("pipeline_template.id"))
+    id = sa.Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text("uuid_generate_v4()"))
+    template_id = sa.Column(sa.ForeignKey("pipeline_template.id"), nullable=False)
     template = relationship("PipelineTemplate", back_populates="versions")
-    version = sa.Column(sa.Integer)
+    version = sa.Column(sa.Integer, nullable=False)
 
     __table_args__ = (
         sa.Index('idx_pipeline_template_version', template_id, version, unique=True),
@@ -184,19 +188,19 @@ class PipelineTemplateVersion(Base):
 class PipelineTemplateTask(Base):
     __tablename__ = "pipeline_template_task"
 
-    id = sa.Column(UUID(as_uuid=True), primary_key=True)
-    name = sa.Column(sa.String(length=128))
-    icon = sa.Column(sa.String(length=256))
-    type = sa.Column(EnumType(PipelineModuleTypes), index=True)
-    task_spec = sa.Column(JSONB())
-    template_id = sa.Column(sa.ForeignKey("pipeline_template.id", ondelete="CASCADE"))
-    template_vid = sa.Column(sa.ForeignKey("pipeline_template_version.id", ondelete="CASCADE"))
+    id = sa.Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text("uuid_generate_v4()"))
+    name = sa.Column(sa.String(length=128), nullable=False)
+    icon = sa.Column(sa.String(length=256), nullable=False)
+    type = sa.Column(EnumType(PipelineModuleTypes), nullable=False, index=True)
+    task_spec = sa.Column(JSONB(), nullable=False)
+    template_id = sa.Column(sa.ForeignKey("pipeline_template.id", ondelete="CASCADE"), nullable=False)
+    template_vid = sa.Column(sa.ForeignKey("pipeline_template_version.id", ondelete="CASCADE"), nullable=False)
     module_id = sa.Column(sa.ForeignKey("pipeline_module.id", ondelete="SET NULL"), nullable=True)
     module_vid = sa.Column(sa.ForeignKey("pipeline_module_version.id", ondelete="SET NULL"), nullable=True)
-    layout_coord_x = sa.Column(sa.Integer())
-    layout_coord_y = sa.Column(sa.Integer())
-    layout_width = sa.Column(sa.Integer())
-    layout_height = sa.Column(sa.Integer())
+    layout_coord_x = sa.Column(sa.Integer(), nullable=False)
+    layout_coord_y = sa.Column(sa.Integer(), nullable=False)
+    layout_width = sa.Column(sa.Integer(), nullable=False)
+    layout_height = sa.Column(sa.Integer(), nullable=False)
     input_links = relationship("PipelineTemplateTaskInput")
     output_links = relationship("PipelineTemplateTaskOutput")
 
@@ -204,41 +208,41 @@ class PipelineTemplateTask(Base):
 class PipelineTemplateTaskInput(Base):
     __tablename__ = "pipeline_template_task_input"
 
-    module_id = sa.Column(sa.ForeignKey("pipeline_template_task.id", ondelete="CASCADE"), primary_key=True)
+    module_id = sa.Column(sa.ForeignKey("pipeline_template_task.id", ondelete="CASCADE"), primary_key=True, nullable=False)
     module = relationship("PpipelineTemplateTask", back_populates="input_links")
-    name = sa.Column(sa.String(length=64), primary_key=True)
+    name = sa.Column(sa.String(length=64), primary_key=True, nullable=False)
 
 
 class PipelineTemplateTaskOutput(Base):
     __tablename__ = "pipeline_template_task_output"
 
-    module_id = sa.Column(sa.ForeignKey("pipeline_template_task.id", ondelete="CASCADE"), primary_key=True)
+    module_id = sa.Column(sa.ForeignKey("pipeline_template_task.id", ondelete="CASCADE"), primary_key=True, nullable=False)
     module = relationship("PpipelineTemplateTask", back_populates="output_links")
-    name = sa.Column(sa.String(length=64), primary_key=True)
+    name = sa.Column(sa.String(length=64), primary_key=True, nullable=False)
 
 
 class PipelineTemplateTaskLink(Base):
     __tablename__ = "pipeline_template_task_link"
 
-    template_vid = sa.Column(sa.ForeignKey("pipeline_template_version.id", ondelete="CASCADE"), primary_key=True)
-    task_output_id = sa.Column(sa.ForeignKey("pipeline_template_task_output.id", ondelete="CASCADE"), primary_key=True)
-    task_input_id = sa.Column(sa.ForeignKey("pipeline_template_task_input.id", ondelete="CASCADE"), primary_key=True)
+    template_vid = sa.Column(sa.ForeignKey("pipeline_template_version.id", ondelete="CASCADE"), primary_key=True, nullable=False)
+    task_output_id = sa.Column(sa.ForeignKey("pipeline_template_task_output.id", ondelete="CASCADE"), primary_key=True, nullable=False)
+    task_input_id = sa.Column(sa.ForeignKey("pipeline_template_task_input.id", ondelete="CASCADE"), primary_key=True, nullable=False)
 
 
 class Pipeline(Base):
     __tablename__ = "pipeline"
 
-    id = sa.Column(UUID(as_uuid=True), primary_key=True)
-    name = sa.Column(sa.String(length=128))
-    status = sa.Column(EnumType(PipelineStatus), index=True)
-    status_info = sa.Column(sa.String(length=64))
+    id = sa.Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text("uuid_generate_v4()"))
+    name = sa.Column(sa.String(length=128), nullable=False)
+    status = sa.Column(EnumType(PipelineStatus), nullable=False, index=True)
+    status_info = sa.Column(sa.String(length=64), nullable=True)
     template_id = sa.Column(sa.ForeignKey("pipeline_template.id", ondelete="SET NULL"), nullable=True)
     template_vid = sa.Column(sa.ForeignKey("pipeline_template_version.id", ondelete="SET NULL"), nullable=True)
-    domain_name = sa.Column(sa.ForeignKey("domains.name"))
-    group_id = sa.Column(sa.ForeignKey("groups.id"))
-    user_uuid = sa.Column(sa.ForeignKey("users.uuid"))
-    created_at = sa.Column(sa.DateTime, server_default=sa.func.now(), index=True)
-    last_updated = sa.Column(sa.DateTime, server_default=sa.func.now(), index=True)
+    domain_name = sa.Column(sa.ForeignKey("domains.name"), nullable=False)
+    group_id = sa.Column(sa.ForeignKey("groups.id"), nullable=False)
+    user_uuid = sa.Column(sa.ForeignKey("users.uuid"), nullable=False)
+    created_at = sa.Column(sa.DateTime, server_default=sa.func.now(), nullable=False, index=True)
+    last_updated = sa.Column(sa.DateTime, server_default=sa.func.now(), nullable=False, index=True)
     reserved_start_time = sa.Column(sa.DateTime, nullable=True, server_default=sa.null(), index=True)
     target_termination_time = sa.Column(sa.DateTime, nullable=True, server_default=sa.null(), index=True)
     vfolder = sa.Column(sa.ForeignKey("vfolders.id", ondelete="SET NULL"), nullable=True)
@@ -247,18 +251,18 @@ class Pipeline(Base):
 class PipelineTask(Base):
     __tablename__ = "pipeline_task"
 
-    id = sa.Column(UUID(as_uuid=True), primary_key=True)
-    name = sa.Column(sa.String(length=128))
-    icon = sa.Column(sa.String(length=256))
-    type = sa.Column(EnumType(PipelineModuleTypes), index=True)
+    id = sa.Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text("uuid_generate_v4()"))
+    name = sa.Column(sa.String(length=128), nullable=False)
+    icon = sa.Column(sa.String(length=256), nullable=False)
+    type = sa.Column(EnumType(PipelineModuleTypes), nullable=False, index=True)
     task_spec = sa.Column(JSONB())
-    status = sa.Column(EnumType(PipelineTaskStatus), index=True)
-    last_updated = sa.Column(sa.DateTime, server_default=sa.func.now(), index=True)
-    pipeline_id = sa.Column(sa.ForeignKey("pipeline.id", ondelete="CASCADE"))
-    layout_coord_x = sa.Column(sa.Integer())
-    layout_coord_y = sa.Column(sa.Integer())
-    layout_width = sa.Column(sa.Integer())
-    layout_height = sa.Column(sa.Integer())
+    status = sa.Column(EnumType(PipelineTaskStatus), nullable=False, index=True)
+    last_updated = sa.Column(sa.DateTime, server_default=sa.func.now(), nullable=False, index=True)
+    pipeline_id = sa.Column(sa.ForeignKey("pipeline.id", ondelete="CASCADE"), nullable=False)
+    layout_coord_x = sa.Column(sa.Integer(), nullable=False)
+    layout_coord_y = sa.Column(sa.Integer(), nullable=False)
+    layout_width = sa.Column(sa.Integer(), nullable=False)
+    layout_height = sa.Column(sa.Integer(), nullable=False)
     input_links = relationship("PipelineTaskInput")
     output_links = relationship("PipelineTaskOutput")
     # TODO: refactor as the session table
@@ -268,22 +272,22 @@ class PipelineTask(Base):
 class PipelineTaskInput(Base):
     __tablename__ = "pipeline_task_input"
 
-    module_id = sa.Column(sa.ForeignKey("pipeline_task.id", ondelete="CASCADE"), primary_key=True)
+    module_id = sa.Column(sa.ForeignKey("pipeline_task.id", ondelete="CASCADE"), primary_key=True, nullable=False)
     module = relationship("PpipelineTask", back_populates="input_links")
-    name = sa.Column(sa.String(length=64), primary_key=True)
+    name = sa.Column(sa.String(length=64), primary_key=True, nullable=False)
 
 
 class PipelineTaskOutput(Base):
     __tablename__ = "pipeline_task_output"
 
-    module_id = sa.Column(sa.ForeignKey("pipeline_task.id", ondelete="CASCADE"), primary_key=True)
+    module_id = sa.Column(sa.ForeignKey("pipeline_task.id", ondelete="CASCADE"), primary_key=True, nullable=False)
     module = relationship("PpipelineTask", back_populates="output_links")
-    name = sa.Column(sa.String(length=64), primary_key=True)
+    name = sa.Column(sa.String(length=64), primary_key=True, nullable=False)
 
 
 class PipelineTaskLink(Base):
     __tablename__ = "pipeline_task_link"
 
-    pipeline_id = sa.Column(sa.ForeignKey("pipeline.id", ondelete="CASCADE"), primary_key=True)
-    task_output_id = sa.Column(sa.ForeignKey("pipeline_task_output.id", ondelete="CASCADE"), primary_key=True)
-    task_input_id = sa.Column(sa.ForeignKey("pipeline_task_input.id", ondelete="CASCADE"), primary_key=True)
+    pipeline_id = sa.Column(sa.ForeignKey("pipeline.id", ondelete="CASCADE"), primary_key=True, nullable=False)
+    task_output_id = sa.Column(sa.ForeignKey("pipeline_task_output.id", ondelete="CASCADE"), primary_key=True, nullable=False)
+    task_input_id = sa.Column(sa.ForeignKey("pipeline_task_input.id", ondelete="CASCADE"), primary_key=True, nullable=False)

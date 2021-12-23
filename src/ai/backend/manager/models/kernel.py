@@ -165,6 +165,7 @@ kernels = sa.Table(
     sa.Column('cluster_role', sa.String(length=16), nullable=False, default=DEFAULT_ROLE, index=True),
     sa.Column('cluster_idx', sa.Integer, nullable=False, default=0),
     sa.Column('cluster_hostname', sa.String(length=64), nullable=False, default=default_hostname),
+    sa.Column('pipeline_id', sa.ForeignKey('pipeline.id', ondelete="SET NULL"), nullable=True, server_default=sa.null()),
 
     # Resource ownership
     sa.Column('scaling_group', sa.ForeignKey('scaling_groups.name'), index=True, nullable=True),
