@@ -5,8 +5,6 @@ import enum
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
-from sqlalchemy.orm import selectinload
-from sqlalchemy.orm import sessionmaker
 
 from .base import Base, EnumType
 
@@ -73,6 +71,7 @@ class PipelineTaskStatus(enum.Enum):
 
     When the task finishes, it goes to either SUCCESS or FAILED depending on
     the exit code of the main process.
+    Setting FAILED also makes the pipeline to halt by setting it ERROR as well.
 
     When there is any error in the Backend.AI-side, it goes to ERROR and
     makes the pipeline to halt by setting it ERROR as well.
