@@ -12,6 +12,9 @@ max_line_length = 105
 indent_style = space
 indent_size = 4
 
+[src/ai/backend/manager/models/alembic/versions/*.py]
+max_line_length = 0
+
 [*.yml]
 indent_style = space
 indent_size = 2
