@@ -208,6 +208,7 @@ class PipelineTemplateTask(Base):
 class PipelineTemplateTaskInput(Base):
     __tablename__ = "pipeline_template_task_input"
 
+    id = sa.Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text("uuid_generate_v4()"))
     module_id = sa.Column(sa.ForeignKey("pipeline_template_task.id", ondelete="CASCADE"), primary_key=True, nullable=False)
     module = relationship("PpipelineTemplateTask", back_populates="input_links")
     name = sa.Column(sa.String(length=64), primary_key=True, nullable=False)
@@ -216,6 +217,7 @@ class PipelineTemplateTaskInput(Base):
 class PipelineTemplateTaskOutput(Base):
     __tablename__ = "pipeline_template_task_output"
 
+    id = sa.Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text("uuid_generate_v4()"))
     module_id = sa.Column(sa.ForeignKey("pipeline_template_task.id", ondelete="CASCADE"), primary_key=True, nullable=False)
     module = relationship("PpipelineTemplateTask", back_populates="output_links")
     name = sa.Column(sa.String(length=64), primary_key=True, nullable=False)
@@ -272,6 +274,7 @@ class PipelineTask(Base):
 class PipelineTaskInput(Base):
     __tablename__ = "pipeline_task_input"
 
+    id = sa.Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text("uuid_generate_v4()"))
     module_id = sa.Column(sa.ForeignKey("pipeline_task.id", ondelete="CASCADE"), primary_key=True, nullable=False)
     module = relationship("PpipelineTask", back_populates="input_links")
     name = sa.Column(sa.String(length=64), primary_key=True, nullable=False)
@@ -280,6 +283,7 @@ class PipelineTaskInput(Base):
 class PipelineTaskOutput(Base):
     __tablename__ = "pipeline_task_output"
 
+    id = sa.Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text("uuid_generate_v4()"))
     module_id = sa.Column(sa.ForeignKey("pipeline_task.id", ondelete="CASCADE"), primary_key=True, nullable=False)
     module = relationship("PpipelineTask", back_populates="output_links")
     name = sa.Column(sa.String(length=64), primary_key=True, nullable=False)
