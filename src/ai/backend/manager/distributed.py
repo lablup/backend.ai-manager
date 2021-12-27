@@ -7,6 +7,8 @@ from typing import (
     TYPE_CHECKING,
 )
 
+from ..defs import AdvisoryLock
+
 if TYPE_CHECKING:
     from ai.backend.manager.models.utils import ExtendedAsyncSAEngine
     from ai.backend.common.events import AbstractEvent, EventProducer
@@ -41,7 +43,7 @@ class GlobalTimer:
         try:
             await asyncio.sleep(self.initial_delay)
             while True:
-                async with self.db.advisory_lock(self.timer_id):
+                async with self.db.advisory_lock(AdvisoryLock(self.timer_id)):
                     await self._event_producer.produce_event(self._event_factory())
                     await asyncio.sleep(self.interval)
         except asyncio.CancelledError:
