@@ -7,7 +7,7 @@ from typing import (
     TYPE_CHECKING,
 )
 
-from ..defs import AdvisoryLock
+from .defs import AdvisoryLock
 
 if TYPE_CHECKING:
     from ai.backend.manager.models.utils import ExtendedAsyncSAEngine
