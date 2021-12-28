@@ -9,9 +9,7 @@ from typing import (
     Optional,
     Sequence,
     TYPE_CHECKING,
-    Tuple,
     TypedDict,
-    Union,
 )
 
 import graphene
