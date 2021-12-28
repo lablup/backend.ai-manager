@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextvars import ContextVar
+from contextlib import asynccontextmanager as actxmgr
 from collections import defaultdict
 import copy
 from datetime import datetime
@@ -183,7 +184,7 @@ class PeerInvoker(Peer):
         self.last_used = time.monotonic()
 
 
-@aiotools.actxmgr
+@actxmgr
 async def RPCContext(
     agent_id: AgentId,
     addr,
@@ -329,7 +330,7 @@ class AgentRegistry:
                 await storage_resp.json(), HardwareMetadata,  # type: ignore  # (python/mypy#9827)
             )
 
-    @aiotools.actxmgr
+    @actxmgr
     async def handle_kernel_exception(
         self,
         op: str,
@@ -1190,12 +1191,14 @@ class AgentRegistry:
         if scheduled_session.cluster_mode == ClusterMode.SINGLE_NODE:
             if scheduled_session.cluster_size > 1:
                 network_name = f'bai-singlenode-{scheduled_session.session_id}'
+                assert kernel_agent_bindings[0].agent_alloc_ctx.agent_id is not None
+                assert scheduled_session.session_id is not None
                 try:
                     async with RPCContext(
                         kernel_agent_bindings[0].agent_alloc_ctx.agent_id,
                         kernel_agent_bindings[0].agent_alloc_ctx.agent_addr,
                         invoke_timeout=None,
-                        order_key=scheduled_session.session_id,
+                        order_key=str(scheduled_session.session_id),
                         keepalive_timeout=self.rpc_keepalive_timeout,
                     ) as rpc:
                         await rpc.call.create_local_network(network_name)
@@ -1357,11 +1360,13 @@ class AgentRegistry:
         image_infos = image_info['image_infos']
         resource_policy = image_info['resource_policy']
         auto_pull = image_info['auto_pull']
+        assert agent_alloc_ctx.agent_id is not None
+        assert scheduled_session.session_id is not None
         async with RPCContext(
             agent_alloc_ctx.agent_id,
             agent_alloc_ctx.agent_addr,
             invoke_timeout=None,
-            order_key=scheduled_session.session_id,
+            order_key=str(scheduled_session.session_id),
             keepalive_timeout=self.rpc_keepalive_timeout,
         ) as rpc:
             kernel_creation_id = secrets.token_urlsafe(16)
@@ -1630,7 +1635,7 @@ class AgentRegistry:
                 destroyed_kernels[0]['agent'],
                 destroyed_kernels[0]['agent_addr'],
                 invoke_timeout=None,
-                order_key=session_id,
+                order_key=str(session_id),
                 keepalive_timeout=self.rpc_keepalive_timeout,
             ) as rpc:
                 for kernel in destroyed_kernels:
@@ -2018,7 +2023,7 @@ class AgentRegistry:
         for kernel in kernel_list:
             restart_coros.append(_restart_kernel(kernel))
         async with self.handle_kernel_exception(
-            'restart_session', session_name_or_id, access_key, set_error=True,
+            'restart_session', session_id, access_key, set_error=True,
         ):
             await asyncio.gather(*restart_coros)
 
