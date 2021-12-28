@@ -32,8 +32,12 @@ class ServiceProxy(metaclass=ABCMeta):
     """
 
     __slots__ = (
-        'ws', 'host', 'port',
-        'downstream_cb', 'upstream_cb', 'ping_cb',
+        'ws',
+        'host',
+        'port',
+        'downstream_cb',
+        'upstream_cb',
+        'ping_cb',
     )
 
     def __init__(
@@ -60,7 +64,10 @@ class ServiceProxy(metaclass=ABCMeta):
 
 class TCPProxy(ServiceProxy):
 
-    __slots__ = ServiceProxy.__slots__ + ('down_task', )
+    __slots__ = (
+        *ServiceProxy.__slots__,
+        'down_task',
+    )
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
