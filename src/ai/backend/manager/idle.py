@@ -579,6 +579,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         """
         try:
             utilizations = {k: 0.0 for k in self.resource_thresholds.keys()}
+            live_stat = {}
             for kernel_id in kernel_ids:
                 raw_live_stat = await redis.execute(self._redis_stat, lambda r: r.get(str(kernel_id)))
                 live_stat = msgpack.unpackb(raw_live_stat)

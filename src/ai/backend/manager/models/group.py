@@ -635,7 +635,7 @@ class GroupDotfile(TypedDict):
 async def query_group_dotfiles(
     db_conn: SAConnection,
     group_id: Union[GUID, uuid.UUID],
-) -> Tuple[Union[List[GroupDotfile], None], Union[int, None]]:
+) -> tuple[list[GroupDotfile], int]:
     query = (
         sa.select([groups.c.dotfiles])
         .select_from(groups)
@@ -643,7 +643,7 @@ async def query_group_dotfiles(
     )
     packed_dotfile = await db_conn.scalar(query)
     if packed_dotfile is None:
-        return None, None
+        return [], MAXIMUM_DOTFILE_SIZE
     rows = msgpack.unpackb(packed_dotfile)
     return rows, MAXIMUM_DOTFILE_SIZE - len(packed_dotfile)
 
