@@ -1674,6 +1674,8 @@ async def execute(request: web.Request) -> web.Response:
                 assert run_id is not None, 'continuation requires explicit run ID'
             code = params.get('code', None)
             opts = params.get('options', None)
+        else:
+            raise RuntimeError("should not reach here")
         # handle cases when some params are deliberately set to None
         if code is None: code = ''  # noqa
         if opts is None: opts = {}  # noqa
