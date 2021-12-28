@@ -24,7 +24,6 @@ import sqlalchemy as sa
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import (
     AsyncConnection as SAConnection,
-    AsyncEngine as SAEngine,
 )
 from sqlalchemy.sql.expression import true
 
@@ -63,6 +62,7 @@ from ..models import (
     AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
 )
 from ..models.utils import (
+    ExtendedAsyncSAEngine as SAEngine,
     execute_with_retry,
     sql_json_increment,
     sql_json_merge,
@@ -560,8 +560,8 @@ class SchedulerDispatcher(aobject):
             # It ensures that occupied_slots are recovered when there are partial
             # scheduling failures.
             for kernel in sess_ctx.kernels:
+                agent_alloc_ctx: AgentAllocationContext | None = None
                 try:
-                    agent_alloc_ctx: AgentAllocationContext
                     agent_id: AgentId | None
                     if kernel.agent_id is not None:
                         agent_id = kernel.agent_id
@@ -644,6 +644,7 @@ class SchedulerDispatcher(aobject):
                     await execute_with_retry(_update)
                     raise
                 else:
+                    assert agent_alloc_ctx is not None
                     kernel_agent_bindings.append(KernelAgentBinding(kernel, agent_alloc_ctx))
 
         assert len(kernel_agent_bindings) == len(sess_ctx.kernels)

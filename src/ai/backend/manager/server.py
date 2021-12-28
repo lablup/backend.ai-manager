@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager as actxmgr
 from datetime import datetime
 import functools
 import importlib
@@ -242,7 +243,7 @@ async def exception_middleware(request: web.Request,
         return resp
 
 
-@aiotools.actxmgr
+@actxmgr
 async def shared_config_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     # populate public interfaces
     root_ctx.shared_config = SharedConfig(
@@ -258,7 +259,7 @@ async def shared_config_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 
 # TODO: _init_subapp에 들어가는 root_app을 root_ctx로 대체. aiojobs scheduler는 모든 app에서 공유?
 
-@aiotools.actxmgr
+@actxmgr
 async def webapp_plugin_ctx(root_app: web.Application) -> AsyncIterator[None]:
     root_ctx: RootContext = root_app['_root.context']
     plugin_ctx = WebappPluginContext(root_ctx.shared_config.etcd, root_ctx.local_config)
@@ -273,7 +274,7 @@ async def webapp_plugin_ctx(root_app: web.Application) -> AsyncIterator[None]:
     await plugin_ctx.cleanup()
 
 
-@aiotools.actxmgr
+@actxmgr
 async def manager_status_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     if root_ctx.pidx == 0:
         mgr_status = await root_ctx.shared_config.get_manager_status()
@@ -287,7 +288,7 @@ async def manager_status_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     yield
 
 
-@aiotools.actxmgr
+@actxmgr
 async def redis_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 
     root_ctx.redis_live = redis.get_redis_object(root_ctx.shared_config.data['redis'], db=REDIS_LIVE_DB)
@@ -305,14 +306,14 @@ async def redis_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     await root_ctx.redis_live.close()
 
 
-@aiotools.actxmgr
+@actxmgr
 async def database_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     async with connect_database(root_ctx.local_config) as db:
         root_ctx.db = db
         yield
 
 
-@aiotools.actxmgr
+@actxmgr
 async def event_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 
     root_ctx.event_producer = await EventProducer.new(
@@ -329,7 +330,7 @@ async def event_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     await root_ctx.event_producer.close()
 
 
-@aiotools.actxmgr
+@actxmgr
 async def idle_checker_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     root_ctx.idle_checkers = await create_idle_checkers(
         root_ctx.db,
@@ -342,7 +343,7 @@ async def idle_checker_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
         await instance.aclose()
 
 
-@aiotools.actxmgr
+@actxmgr
 async def storage_manager_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     raw_vol_config = await root_ctx.shared_config.etcd.get_prefix('volumes')
     config = volume_config_iv.check(raw_vol_config)
@@ -351,7 +352,7 @@ async def storage_manager_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     await root_ctx.storage_manager.aclose()
 
 
-@aiotools.actxmgr
+@actxmgr
 async def hook_plugin_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     ctx = HookPluginContext(root_ctx.shared_config.etcd, root_ctx.local_config)
     root_ctx.hook_plugin_ctx = ctx
@@ -367,7 +368,7 @@ async def hook_plugin_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     await ctx.cleanup()
 
 
-@aiotools.actxmgr
+@actxmgr
 async def agent_registry_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     root_ctx.registry = AgentRegistry(
         root_ctx.shared_config,
@@ -385,7 +386,7 @@ async def agent_registry_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     await root_ctx.registry.shutdown()
 
 
-@aiotools.actxmgr
+@actxmgr
 async def sched_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     sched_dispatcher = await SchedulerDispatcher.new(
         root_ctx.local_config, root_ctx.shared_config,
@@ -396,7 +397,7 @@ async def sched_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     await sched_dispatcher.close()
 
 
-@aiotools.actxmgr
+@actxmgr
 async def monitoring_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     ectx = ErrorPluginContext(root_ctx.shared_config.etcd, root_ctx.local_config)
     sctx = StatsPluginContext(root_ctx.shared_config.etcd, root_ctx.local_config)
@@ -560,10 +561,12 @@ def build_root_app(
     return app
 
 
-@aiotools.actxmgr
-async def server_main(loop: asyncio.AbstractEventLoop,
-                      pidx: int,
-                      _args: List[Any]) -> AsyncIterator[None]:
+@actxmgr
+async def server_main(
+    loop: asyncio.AbstractEventLoop,
+    pidx: int,
+    _args: List[Any],
+) -> AsyncIterator[None]:
     subapp_pkgs = [
         '.etcd', '.events',
         '.auth', '.ratelimit',
@@ -639,9 +642,12 @@ async def server_main(loop: asyncio.AbstractEventLoop,
             await runner.cleanup()
 
 
-@aiotools.actxmgr
-async def server_main_logwrapper(loop: asyncio.AbstractEventLoop,
-                                 pidx: int, _args: List[Any]) -> AsyncIterator[None]:
+@actxmgr
+async def server_main_logwrapper(
+    loop: asyncio.AbstractEventLoop,
+    pidx: int,
+    _args: List[Any],
+) -> AsyncIterator[None]:
     setproctitle(f"backend.ai: manager worker-{pidx}")
     log_endpoint = _args[1]
     logger = Logger(_args[0]['logging'], is_master=False, log_endpoint=log_endpoint)
