@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextvars import ContextVar
+from contextlib import asynccontextmanager as actxmgr
 from collections import defaultdict
 import copy
 from datetime import datetime
@@ -183,7 +184,7 @@ class PeerInvoker(Peer):
         self.last_used = time.monotonic()
 
 
-@aiotools.actxmgr
+@actxmgr
 async def RPCContext(
     agent_id: AgentId,
     addr,
@@ -329,7 +330,7 @@ class AgentRegistry:
                 await storage_resp.json(), HardwareMetadata,  # type: ignore  # (python/mypy#9827)
             )
 
-    @aiotools.actxmgr
+    @actxmgr
     async def handle_kernel_exception(
         self,
         op: str,
