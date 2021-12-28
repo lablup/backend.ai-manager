@@ -24,7 +24,6 @@ import sqlalchemy as sa
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import (
     AsyncConnection as SAConnection,
-    AsyncEngine as SAEngine,
 )
 from sqlalchemy.sql.expression import true
 
@@ -63,6 +62,7 @@ from ..models import (
     AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
 )
 from ..models.utils import (
+    ExtendedAsyncSAEngine as SAEngine,
     execute_with_retry,
     sql_json_increment,
     sql_json_merge,
