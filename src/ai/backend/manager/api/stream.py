@@ -176,7 +176,12 @@ async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
                             log.debug('stream_stdin: restart requested')
                             if not socks[0].closed:
                                 await asyncio.shield(
-                                    root_ctx.registry.restart_session(session_name, access_key))
+                                    root_ctx.registry.restart_session(
+                                        run_id,
+                                        session_name,
+                                        access_key,
+                                    ),
+                                )
                                 socks[0].close()
                             else:
                                 log.warning(
