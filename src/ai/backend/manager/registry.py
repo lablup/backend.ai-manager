@@ -1529,6 +1529,16 @@ class AgentRegistry:
                 del key_occupied[k]
             return key_occupied
 
+    async def update_scaling_group(self, id, scaling_group) -> None:
+        agent = await self.get_instance(id, agents.c.addr)
+        async with RPCContext(
+            agent['id'], 
+            agent['addr'],
+            invoke_timeout=None,
+            keepalive_timeout=self.rpc_keepalive_timeout,
+        ) as rpc:
+            await rpc.call.update_scaling_group(scaling_group)
+
     async def recalc_resource_usage(self) -> None:
         concurrency_used_per_key: MutableMapping[str, int] = defaultdict(lambda: 0)
         occupied_slots_per_agent: MutableMapping[str, ResourceSlot] = \
