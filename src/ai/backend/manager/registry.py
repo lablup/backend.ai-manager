@@ -1532,7 +1532,7 @@ class AgentRegistry:
     async def update_scaling_group(self, id, scaling_group) -> None:
         agent = await self.get_instance(id, agents.c.addr)
         async with RPCContext(
-            agent['id'], 
+            agent['id'],
             agent['addr'],
             invoke_timeout=None,
             keepalive_timeout=self.rpc_keepalive_timeout,
