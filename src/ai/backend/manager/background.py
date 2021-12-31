@@ -133,11 +133,11 @@ class BackgroundTaskManager:
         task_result: TaskResult
         reporter = ProgressReporter(self.event_producer, task_id)
         message = ''
-        event_cls: Type[BgtaskDoneEvent] | Type[BgtaskCancelledEvent] | Type[BgtaskFailedEvent]
+        event_cls: Type[BgtaskDoneEvent] | Type[BgtaskCancelledEvent] | Type[BgtaskFailedEvent] = \
+            BgtaskDoneEvent
         try:
             message = await func(reporter) or ''
             task_result = 'bgtask_done'
-            event_cls = BgtaskDoneEvent
         except asyncio.CancelledError:
             task_result = 'bgtask_cancelled'
             event_cls = BgtaskCancelledEvent

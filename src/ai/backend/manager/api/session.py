@@ -1468,6 +1468,42 @@ async def stats_report_timer(root_ctx: RootContext):
             break
 
 
+@server_status_required(ALL_ALLOWED)
+@auth_required
+@check_api_params(
+    t.Dict({
+        tx.AliasedKey(['name', 'clientSessionToken']) >> 'session_name':
+            t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
+    }),
+)
+async def rename_session(request: web.Request, params: Any) -> web.Response:
+    root_ctx: RootContext = request.app['_root.context']
+    session_name = request.match_info['session_name']
+    new_name = params['session_name']
+    requester_access_key, owner_access_key = await get_access_key_scopes(request)
+    log.info(
+        'RENAME_SESSION (ak:{0}/{1}, s:{2}, newname:{3})',
+        request, owner_access_key, session_name, new_name,
+    )
+    async with root_ctx.db.begin() as conn:
+        compute_session = await root_ctx.registry.get_session(
+            session_name, owner_access_key,
+            allow_stale=True,
+            db_connection=conn,
+        )
+        if compute_session['status'] != KernelStatus.RUNNING:
+            raise InvalidAPIParameters('Can\'t change name of not running session')
+
+        query = (
+            sa.update(kernels)
+            .values(session_name=new_name)
+            .where(kernels.c.session_id == compute_session['session_id'])
+        )
+        await conn.execute(query)
+
+    return web.Response(status=204)
+
+
 @server_status_required(READ_ALLOWED)
 @auth_required
 @check_api_params(
@@ -1638,6 +1674,8 @@ async def execute(request: web.Request) -> web.Response:
                 assert run_id is not None, 'continuation requires explicit run ID'
             code = params.get('code', None)
             opts = params.get('options', None)
+        else:
+            raise RuntimeError("should not reach here")
         # handle cases when some params are deliberately set to None
         if code is None: code = ''  # noqa
         if opts is None: opts = {}  # noqa
@@ -2101,6 +2139,7 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     cors.add(task_log_resource.add_route('HEAD', get_task_logs))
     cors.add(task_log_resource.add_route('GET',  get_task_logs))
     cors.add(app.router.add_route('GET',  '/{session_name}/logs', get_container_logs))
+    cors.add(app.router.add_route('POST', '/{session_name}/rename', rename_session))
     cors.add(app.router.add_route('POST', '/{session_name}/interrupt', interrupt))
     cors.add(app.router.add_route('POST', '/{session_name}/complete', complete))
     cors.add(app.router.add_route('POST', '/{session_name}/shutdown-service', shutdown_service))

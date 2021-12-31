@@ -746,10 +746,10 @@ class SharedConfig(AbstractConfig):
         return await self.etcd.get_prefix_dict('nodes/manager')
 
     @aiotools.lru_cache(maxsize=1, expire_after=2.0)
-    async def get_manager_status(self) -> Optional[ManagerStatus]:
+    async def get_manager_status(self) -> ManagerStatus:
         status = await self.etcd.get('manager/status')
         if status is None:
-            return None
+            return ManagerStatus.TERMINATED
         return ManagerStatus(status)
 
     async def watch_manager_status(self):
@@ -761,7 +761,7 @@ class SharedConfig(AbstractConfig):
     #       in a per-request basis.
     @aiotools.lru_cache(maxsize=1, expire_after=2.0)
     async def get_allowed_origins(self):
-        return await self.get('config/api/allow-origins')
+        return await self.etcd.get('config/api/allow-origins')
 
     # TODO: refactor using contextvars in Python 3.7 so that the result is cached
     #       in a per-request basis.

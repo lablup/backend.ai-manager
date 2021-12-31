@@ -2,6 +2,8 @@
 WebSocket-based streaming kernel interaction APIs.
 """
 
+from __future__ import annotations
+
 from abc import ABCMeta, abstractmethod
 import asyncio
 import logging
@@ -30,8 +32,12 @@ class ServiceProxy(metaclass=ABCMeta):
     """
 
     __slots__ = (
-        'ws', 'host', 'port',
-        'downstream_cb', 'upstream_cb', 'ping_cb',
+        'ws',
+        'host',
+        'port',
+        'downstream_cb',
+        'upstream_cb',
+        'ping_cb',
     )
 
     def __init__(
@@ -58,7 +64,10 @@ class ServiceProxy(metaclass=ABCMeta):
 
 class TCPProxy(ServiceProxy):
 
-    __slots__ = ServiceProxy.__slots__ + ('down_task', )
+    __slots__ = (
+        *ServiceProxy.__slots__,
+        'down_task',
+    )
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -142,15 +151,19 @@ class WebSocketProxy:
     # FIXME: use __future__.annotations in Python 3.7+
     upstream_buffer: asyncio.Queue  # contains: Tuple[Union[bytes, str], web.WSMsgType]
     upstream_buffer_task: Optional[asyncio.Task]
-    downstream_cb: Optional[Awaitable]
-    upstream_cb: Optional[Awaitable]
-    ping_cb: Optional[Awaitable]
+    downstream_cb: Callable[[str | bytes], Awaitable[None]] | None
+    upstream_cb: Callable[[str | bytes], Awaitable[None]] | None
+    ping_cb: Callable[[str | bytes], Awaitable[None]] | None
 
-    def __init__(self, up_conn: aiohttp.ClientWebSocketResponse,
-                 down_conn: web.WebSocketResponse, *,
-                 downstream_callback: Awaitable = None,
-                 upstream_callback: Awaitable = None,
-                 ping_callback: Awaitable = None):
+    def __init__(
+        self,
+        up_conn: aiohttp.ClientWebSocketResponse,
+        down_conn: web.WebSocketResponse,
+        *,
+        downstream_callback: Callable[[str | bytes], Awaitable[None]] = None,
+        upstream_callback: Callable[[str | bytes], Awaitable[None]] = None,
+        ping_callback: Callable[[str | bytes], Awaitable[None]] = None,
+    ):
         self.up_conn = up_conn
         self.down_conn = down_conn
         self.upstream_buffer = asyncio.Queue()
@@ -159,11 +172,11 @@ class WebSocketProxy:
         self.upstream_cb = upstream_callback
         self.ping_cb = ping_callback
 
-    async def proxy(self):
-        asyncio.ensure_future(self.downstream())
+    async def proxy(self) -> None:
+        asyncio.create_task(self.downstream())
         await self.upstream()
 
-    async def upstream(self):
+    async def upstream(self) -> None:
         try:
             async for msg in self.down_conn:
                 if msg.type in (web.WSMsgType.TEXT, web.WSMsgType.binary):
@@ -186,10 +199,11 @@ class WebSocketProxy:
         finally:
             await self.close_downstream()
 
-    async def downstream(self):
+    async def downstream(self) -> None:
         try:
-            self.upstream_buffer_task = \
-                    asyncio.ensure_future(self.consume_upstream_buffer())
+            self.upstream_buffer_task = asyncio.create_task(
+                self.consume_upstream_buffer(),
+            )
             async for msg in self.up_conn:
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     await self.down_conn.send_str(msg.data)
@@ -211,25 +225,28 @@ class WebSocketProxy:
         finally:
             await self.close_upstream()
 
-    async def consume_upstream_buffer(self):
+    async def consume_upstream_buffer(self) -> None:
         while True:
             msg, tp = await self.upstream_buffer.get()
-            if self.up_conn:
-                if tp == aiohttp.WSMsgType.TEXT:
-                    await self.up_conn.send_str(msg)
-                elif tp == aiohttp.WSMsgType.binary:
-                    await self.up_conn.send_bytes(msg)
-            else:
-                await self.close()
+            try:
+                if self.up_conn and not self.up_conn.closed:
+                    if tp == aiohttp.WSMsgType.TEXT:
+                        await self.up_conn.send_str(msg)
+                    elif tp == aiohttp.WSMsgType.binary:
+                        await self.up_conn.send_bytes(msg)
+                else:
+                    await self.close_downstream()
+            finally:
+                self.upstream_buffer.task_done()
 
-    async def write(self, msg: Union[bytes, str], tp: web.WSMsgType):
+    async def write(self, msg: Union[bytes, str], tp: web.WSMsgType) -> None:
         await self.upstream_buffer.put((msg, tp))
 
-    async def close_downstream(self):
+    async def close_downstream(self) -> None:
         if not self.down_conn.closed:
             await self.down_conn.close()
 
-    async def close_upstream(self):
+    async def close_upstream(self) -> None:
         if self.upstream_buffer_task:
             self.upstream_buffer_task.cancel()
             await self.upstream_buffer_task
