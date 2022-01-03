@@ -182,8 +182,11 @@ class SchedulerDispatcher(aobject):
         log.info('Session scheduler started')
 
     async def close(self) -> None:
-        await self.prepare_timer.leave()
-        await self.schedule_timer.leave()
+        await asyncio.gather(
+            self.prepare_timer.leave(),
+            self.schedule_timer.leave(),
+            return_exceptions=True,
+        )
         log.info('Session scheduler stopped')
 
     async def schedule(
