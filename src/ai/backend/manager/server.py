@@ -8,6 +8,7 @@ import importlib
 import logging
 import os
 import pwd, grp
+import pdb
 import ssl
 import sys
 import traceback
@@ -630,9 +631,9 @@ async def server_main(
         try:
             yield
         finally:
-            m.close()
             log.info('shutting down...')
             await runner.cleanup()
+            m.close()
 
 
 @actxmgr

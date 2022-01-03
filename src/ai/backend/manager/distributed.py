@@ -54,4 +54,7 @@ class GlobalTimer:
 
     async def leave(self) -> None:
         self._tick_task.cancel()
-        await self._tick_task
+        try:
+            await self._tick_task
+        except asyncio.CancelledError:
+            pass
