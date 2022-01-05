@@ -101,6 +101,7 @@ from .api.exceptions import (
     VFolderNotFound,
     AgentError,
     GenericForbidden,
+    QuotaExceeded,
 )
 from .config import SharedConfig
 from .exceptions import MultiAgentError
@@ -758,7 +759,7 @@ class AgentRegistry:
         kernel_enqueue_configs: List[KernelEnqueueingConfig],
         scaling_group: Optional[str],
         session_type: SessionTypes,
-        resource_policy: str,
+        resource_policy: dict,
         *,
         domain_name: str,
         group_id: uuid.UUID,
@@ -776,6 +777,13 @@ class AgentRegistry:
         mounts = kernel_enqueue_configs[0]['creation_config'].get('mounts') or []
         mount_map = kernel_enqueue_configs[0]['creation_config'].get('mount_map') or {}
         session_id = SessionId(uuid.uuid4())
+
+        # Check keypair resource limit
+        if cluster_size > int(resource_policy['max_containers_per_session']):
+            raise QuotaExceeded(
+                f"You cannot create session with more than "
+                f"{resource_policy['max_containers_per_session']} containers.",
+            )
 
         # Check scaling group availability if scaling_group parameter is given.
         # If scaling_group is not provided, it will be selected as the first one among
