@@ -119,13 +119,6 @@ async def check_keypair_resource_limit(
     )
     result = await db_conn.execute(query)
     resource_policy = result.first()
-    if len(sess_ctx.kernels) > resource_policy['max_containers_per_session']:
-        return PredicateResult(
-            False,
-            f"You cannot create session with more than "
-            f"{resource_policy['max_containers_per_session']} containers.",
-            permanent=True,
-        )
     total_keypair_allowed = ResourceSlot.from_policy(resource_policy,
                                                      sched_ctx.known_slot_types)
     key_occupied = await sched_ctx.registry.get_keypair_occupancy(
