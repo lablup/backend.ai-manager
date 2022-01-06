@@ -147,3 +147,38 @@ async def test_global_timer(test_id, local_config, shared_config, database_engin
     num_records = len(event_records)
     print(f"{num_records=}")
     assert target_count - 2 <= num_records <= target_count + 2
+
+
+@pytest.mark.asyncio
+async def test_global_timer_join_leave(test_id, local_config, shared_config, database_engine) -> None:
+
+    event_records = []
+
+    async def _tick(context: Any, source: AgentId, event: NoopEvent) -> None:
+        print("_tick")
+        event_records.append(time.monotonic())
+
+    event_dispatcher = await EventDispatcher.new(
+        shared_config.data['redis'],
+        db=REDIS_STREAM_DB,
+    )
+    event_producer = await EventProducer.new(
+        shared_config.data['redis'],
+        db=REDIS_STREAM_DB,
+    )
+    event_dispatcher.consume(NoopEvent, None, _tick)
+
+    for _ in range(10):
+        async with connect_database(local_config) as db:
+            timer = GlobalTimer(
+                db,
+                AdvisoryLock.LOCKID_TEST,
+                event_producer,
+                lambda: NoopEvent(test_id),
+                0.01,
+            )
+            await timer.join()
+            await timer.leave()
+
+    await event_producer.close()
+    await event_dispatcher.close()
