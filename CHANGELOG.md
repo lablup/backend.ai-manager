@@ -16,6 +16,14 @@ Changes
 
 .. towncrier release notes start
 
+21.03.27 (2022-01-11)
+---------------------
+
+### Fixes
+* Use a fixed value as the node ID in `EventDispatcher` instances, either auto-generated from the hostname or manually configured `manager.id` value of `manager.toml`.
+  - **IMPORTANT: An explicit admin/developer action is required** to fix up the corrupted Redis database and configuration. Check out the description of [lablup/backend.ai-manager#513](https://github.com/lablup/backend.ai-manager/pull/513) for details. ([#513](https://github.com/lablup/backend.ai-manager/issues/513))
+
+
 21.03.26 (2022-01-10)
 ---------------------
 
