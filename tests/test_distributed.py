@@ -161,10 +161,12 @@ async def test_global_timer_join_leave(test_id, local_config, shared_config, dat
     event_dispatcher = await EventDispatcher.new(
         shared_config.data['redis'],
         db=REDIS_STREAM_DB,
+        node_id=local_config['manager']['id'],
     )
     event_producer = await EventProducer.new(
         shared_config.data['redis'],
         db=REDIS_STREAM_DB,
+        node_id=local_config['manager']['id'],
     )
     event_dispatcher.consume(NoopEvent, None, _tick)
 

@@ -321,6 +321,7 @@ async def event_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
         root_ctx.shared_config.data['redis'],
         db=REDIS_STREAM_DB,
         log_events=root_ctx.local_config['debug']['log-events'],
+        node_id=root_ctx.local_config['manager']['id'],
     )
     yield
     await root_ctx.event_dispatcher.close()
