@@ -16,6 +16,20 @@ Changes
 
 .. towncrier release notes start
 
+## 21.09.3 (2022-01-10)
+
+### Features
+* Add `session.start_service` API to support wsproxy v2 ([#479](https://github.com/lablup/backend.ai-manager/issues/479))
+* Move 'max_containers_per_session' policy check from predicates to registry.enqueue_session ([#504](https://github.com/lablup/backend.ai-manager/issues/504))
+* Add support for session renaming ([#505](https://github.com/lablup/backend.ai-manager/issues/505))
+
+### Fixes
+* Fix "too many sessions matched" error when the given session name has an exact match with additional prefix matches ([#506](https://github.com/lablup/backend.ai-manager/issues/506))
+* Update mypy to 0.930 and fix newly discovered type errors ([#508](https://github.com/lablup/backend.ai-manager/issues/508))
+* Update type annotations and correct typing errors additionally found by pyright and latest mypy ([#509](https://github.com/lablup/backend.ai-manager/issues/509))
+* Fix a potential reason of hang-up while shutting down the manager service, by explicitly handling cancellations in global timers better ([#510](https://github.com/lablup/backend.ai-manager/issues/510))
+
+
 ## 21.09.2 (2021-12-15)
 
 ### Features
