@@ -58,6 +58,8 @@ heartbeat-timeout = 30.0
 # Override the name of this manager node.
 # If empty or unspecified, the agent builds this from the hostname by prefixing it with "i-",
 # like "i-hostname".  The "i-" prefix is not mandatory, though.
+# Explicit configuration may be required if the hostname changes frequently,
+# to handle the event bus messages consistently.
 # This affects the per-node configuration scope.
 # id = ""
 
