@@ -1491,61 +1491,73 @@ class AgentRegistry:
     async def get_keypair_occupancy(self, access_key, *, conn=None):
         known_slot_types = \
             await self.shared_config.get_resource_slots()
-        async with reenter_txn(self.db, conn) as conn:
-            query = (
-                sa.select([kernels.c.occupied_slots])
-                .where(
-                    (kernels.c.access_key == access_key) &
-                    (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
+
+        async def _query() -> ResourceSlot:
+            async with reenter_txn(self.db, conn) as _conn:
+                query = (
+                    sa.select([kernels.c.occupied_slots])
+                    .where(
+                        (kernels.c.access_key == access_key) &
+                        (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
+                    )
                 )
-            )
-            zero = ResourceSlot()
-            key_occupied = sum([
-                row['occupied_slots']
-                async for row in (await conn.stream(query))], zero)
-            # drop no-longer used slot types
-            drops = [k for k in key_occupied.keys() if k not in known_slot_types]
-            for k in drops:
-                del key_occupied[k]
-            return key_occupied
+                zero = ResourceSlot()
+                key_occupied = sum([
+                    row['occupied_slots']
+                    async for row in (await _conn.stream(query))], zero)
+                # drop no-longer used slot types
+                drops = [k for k in key_occupied.keys() if k not in known_slot_types]
+                for k in drops:
+                    del key_occupied[k]
+                return key_occupied
+
+        return await execute_with_retry(_query)
 
     async def get_domain_occupancy(self, domain_name, *, conn=None):
         # TODO: store domain occupied_slots in Redis?
         known_slot_types = await self.shared_config.get_resource_slots()
-        async with reenter_txn(self.db, conn) as conn:
-            query = (
-                sa.select([kernels.c.occupied_slots])
-                .where(
-                    (kernels.c.domain_name == domain_name) &
-                    (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
+
+        async def _query() -> ResourceSlot:
+            async with reenter_txn(self.db, conn) as _conn:
+                query = (
+                    sa.select([kernels.c.occupied_slots])
+                    .where(
+                        (kernels.c.domain_name == domain_name) &
+                        (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
+                    )
                 )
-            )
-            zero = ResourceSlot()
-            key_occupied = sum([row['occupied_slots'] async for row in (await conn.stream(query))], zero)
-            # drop no-longer used slot types
-            drops = [k for k in key_occupied.keys() if k not in known_slot_types]
-            for k in drops:
-                del key_occupied[k]
-            return key_occupied
+                zero = ResourceSlot()
+                key_occupied = sum([row['occupied_slots'] async for row in (await _conn.stream(query))], zero)
+                # drop no-longer used slot types
+                drops = [k for k in key_occupied.keys() if k not in known_slot_types]
+                for k in drops:
+                    del key_occupied[k]
+                return key_occupied
+
+        return await execute_with_retry(_query)
 
     async def get_group_occupancy(self, group_id, *, conn=None):
         # TODO: store domain occupied_slots in Redis?
         known_slot_types = await self.shared_config.get_resource_slots()
-        async with reenter_txn(self.db, conn) as conn:
-            query = (
-                sa.select([kernels.c.occupied_slots])
-                .where(
-                    (kernels.c.group_id == group_id) &
-                    (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
+
+        async def _query() -> ResourceSlot:
+            async with reenter_txn(self.db, conn) as _conn:
+                query = (
+                    sa.select([kernels.c.occupied_slots])
+                    .where(
+                        (kernels.c.group_id == group_id) &
+                        (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
+                    )
                 )
-            )
-            zero = ResourceSlot()
-            key_occupied = sum([row['occupied_slots'] async for row in (await conn.stream(query))], zero)
-            # drop no-longer used slot types
-            drops = [k for k in key_occupied.keys() if k not in known_slot_types]
-            for k in drops:
-                del key_occupied[k]
-            return key_occupied
+                zero = ResourceSlot()
+                key_occupied = sum([row['occupied_slots'] async for row in (await _conn.stream(query))], zero)
+                # drop no-longer used slot types
+                drops = [k for k in key_occupied.keys() if k not in known_slot_types]
+                for k in drops:
+                    del key_occupied[k]
+                return key_occupied
+
+        return await execute_with_retry(_query)
 
     async def recalc_resource_usage(self) -> None:
         concurrency_used_per_key: MutableMapping[str, int] = defaultdict(lambda: 0)
