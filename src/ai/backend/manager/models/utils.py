@@ -26,6 +26,13 @@ from sqlalchemy.ext.asyncio import (
     AsyncConnection as SAConnection,
     AsyncEngine as SAEngine,
 )
+from tenacity import (
+    AsyncRetrying,
+    RetryError,
+    TryAgain,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from ai.backend.common.json import ExtendedJSONEncoder
 from ai.backend.common.logging import BraceStyleAdapter
@@ -174,19 +181,21 @@ TQueryResult = TypeVar('TQueryResult')
 
 
 async def execute_with_retry(txn_func: Callable[[], Awaitable[TQueryResult]]) -> TQueryResult:
-    max_retries: Final = 10
-    num_retries = 0
-    while True:
-        if num_retries == max_retries:
-            raise RuntimeError(f"DB serialization failed after {max_retries} retries")
-        try:
-            return await txn_func()
-        except DBAPIError as e:
-            num_retries += 1
-            if getattr(e.orig, 'pgcode', None) == '40001':
-                await asyncio.sleep((num_retries - 1) * 0.02)
-                continue
-            raise
+    max_attempts = 20
+    try:
+        async for attempt in AsyncRetrying(
+            wait=wait_exponential(multiplier=0.02, min=0.02, max=5.0),
+            stop=stop_after_attempt(max_attempts),
+        ):
+            with attempt:
+                try:
+                    return await txn_func()
+                except DBAPIError as e:
+                    if getattr(e.orig, 'pgcode', None) == '40001':
+                        raise TryAgain
+                    raise
+    except RetryError:
+        raise RuntimeError(f"DB serialization failed after {max_attempts} retries")
 
 
 def sql_json_merge(
