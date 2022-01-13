@@ -1527,7 +1527,13 @@ class AgentRegistry:
                     )
                 )
                 zero = ResourceSlot()
-                key_occupied = sum([row['occupied_slots'] async for row in (await _conn.stream(query))], zero)
+                key_occupied = sum(
+                    [
+                        row['occupied_slots']
+                        async for row in (await _conn.stream(query))
+                    ],
+                    zero,
+                )
                 # drop no-longer used slot types
                 drops = [k for k in key_occupied.keys() if k not in known_slot_types]
                 for k in drops:
@@ -1550,7 +1556,13 @@ class AgentRegistry:
                     )
                 )
                 zero = ResourceSlot()
-                key_occupied = sum([row['occupied_slots'] async for row in (await _conn.stream(query))], zero)
+                key_occupied = sum(
+                    [
+                        row['occupied_slots']
+                        async for row in (await _conn.stream(query))
+                    ],
+                    zero,
+                )
                 # drop no-longer used slot types
                 drops = [k for k in key_occupied.keys() if k not in known_slot_types]
                 for k in drops:

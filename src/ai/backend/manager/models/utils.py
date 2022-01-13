@@ -11,7 +11,6 @@ from typing import (
     AsyncIterator,
     Awaitable,
     Callable,
-    Final,
     Mapping,
     Tuple,
     TypeVar,
@@ -40,6 +39,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 if TYPE_CHECKING:
     from ..config import LocalConfig
 from ..defs import AdvisoryLock
+from ..types import Sentinel
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 
@@ -182,6 +182,7 @@ TQueryResult = TypeVar('TQueryResult')
 
 async def execute_with_retry(txn_func: Callable[[], Awaitable[TQueryResult]]) -> TQueryResult:
     max_attempts = 20
+    result: TQueryResult | Sentinel = Sentinel.token
     try:
         async for attempt in AsyncRetrying(
             wait=wait_exponential(multiplier=0.02, min=0.02, max=5.0),
@@ -189,13 +190,15 @@ async def execute_with_retry(txn_func: Callable[[], Awaitable[TQueryResult]]) ->
         ):
             with attempt:
                 try:
-                    return await txn_func()
+                    result = await txn_func()
                 except DBAPIError as e:
                     if getattr(e.orig, 'pgcode', None) == '40001':
                         raise TryAgain
                     raise
     except RetryError:
         raise RuntimeError(f"DB serialization failed after {max_attempts} retries")
+    assert result is not Sentinel.token
+    return result
 
 
 def sql_json_merge(
