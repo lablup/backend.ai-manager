@@ -116,7 +116,7 @@ class ExtendedAsyncSAEngine(SAEngine):
                 lock_acquired = True
                 yield
             finally:
-                if lock_acquired:
+                if lock_acquired and not lock_conn.closed:
                     await lock_conn.exec_driver_sql(
                         f"SELECT pg_advisory_unlock({lock_id:d})",
                     )
