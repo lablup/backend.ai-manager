@@ -16,6 +16,13 @@ Changes
 
 .. towncrier release notes start
 
+21.03.28 (2022-01-13)
+---------------------
+
+### Fixes
+* Improve kernel creation stability by applying improved transaction retries to more database queries including predicate checks ([#514](https://github.com/lablup/backend.ai-manager/issues/514))
+
+
 21.03.27 (2022-01-11)
 ---------------------
 
