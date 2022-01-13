@@ -183,6 +183,7 @@ def configure() -> None:
     """
     Take necessary inputs from user and generate toml file.
     """
+    # toml section
     with open('config/sample.toml', 'r') as f:
         config = tomlkit.loads(f.read())
     # Interactive user input
@@ -350,7 +351,9 @@ def configure() -> None:
     config['manager']['hide-agents'] = hide_agent
     config['manager']['event-loop'] = event_loop
     with open('manager.toml', 'w') as f:
+        print('\nDump to manager.toml\n')
         tomlkit.dump(config, f)
+
 
 
 def validate_ip(ip_address: str) -> bool:
