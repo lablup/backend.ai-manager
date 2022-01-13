@@ -1317,18 +1317,21 @@ class AgentRegistry:
         self,
         agent_alloc_ctx: AgentAllocationContext,
         created_info,
-    ):
+    ) -> None:
         # Wait until the kernel_started event.
         kernel_id = KernelId(uuid.UUID(created_info['id']))
-        start_event = self.kernel_creation_tracker[kernel_id]
         try:
+            start_event = self.kernel_creation_tracker[kernel_id]
             await start_event
         except asyncio.CancelledError:
             log.warning("post_create_kernel(k:{}) cancelled", kernel_id)
             return
-        # Record kernel access information
+        except Exception:
+            log.exception("post_create_kernel(k:{}) unexpected error", kernel_id)
+            return
 
         async def _finialize_running() -> None:
+            # Record kernel access information
             async with self.db.begin() as conn:
                 agent_host = URL(agent_alloc_ctx.agent_addr).host
                 kernel_host = created_info.get('kernel_host', agent_host)
@@ -1439,13 +1442,15 @@ class AgentRegistry:
                     agent_alloc_ctx.agent_id,
                 )
                 # Post-process kernel creation
-                async with aiotools.TaskGroup() as tg:
-                    for created_info in created_infos:
-                        post_task = tg.create_task(self._post_create_kernel(
-                            agent_alloc_ctx,
-                            created_info,
-                        ))
-                        self._post_kernel_creation_tasks[created_info['id']] = post_task
+                post_tasks = []
+                for created_info in created_infos:
+                    post_task = asyncio.create_task(self._post_create_kernel(
+                        agent_alloc_ctx,
+                        created_info,
+                    ))
+                    self._post_kernel_creation_tasks[created_info['id']] = post_task
+                    post_tasks.append(post_task)
+                await asyncio.gather(*post_tasks, return_exceptions=True)
             except Exception:
                 # The agent has already cancelled or issued the destruction lifecycle event
                 # for this batch of kernels.
@@ -1486,61 +1491,85 @@ class AgentRegistry:
     async def get_keypair_occupancy(self, access_key, *, conn=None):
         known_slot_types = \
             await self.shared_config.get_resource_slots()
-        async with reenter_txn(self.db, conn) as conn:
-            query = (
-                sa.select([kernels.c.occupied_slots])
-                .where(
-                    (kernels.c.access_key == access_key) &
-                    (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
+
+        async def _query() -> ResourceSlot:
+            async with reenter_txn(self.db, conn) as _conn:
+                query = (
+                    sa.select([kernels.c.occupied_slots])
+                    .where(
+                        (kernels.c.access_key == access_key) &
+                        (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
+                    )
                 )
-            )
-            zero = ResourceSlot()
-            key_occupied = sum([
-                row['occupied_slots']
-                async for row in (await conn.stream(query))], zero)
-            # drop no-longer used slot types
-            drops = [k for k in key_occupied.keys() if k not in known_slot_types]
-            for k in drops:
-                del key_occupied[k]
-            return key_occupied
+                zero = ResourceSlot()
+                key_occupied = sum([
+                    row['occupied_slots']
+                    async for row in (await _conn.stream(query))], zero)
+                # drop no-longer used slot types
+                drops = [k for k in key_occupied.keys() if k not in known_slot_types]
+                for k in drops:
+                    del key_occupied[k]
+                return key_occupied
+
+        return await execute_with_retry(_query)
 
     async def get_domain_occupancy(self, domain_name, *, conn=None):
         # TODO: store domain occupied_slots in Redis?
         known_slot_types = await self.shared_config.get_resource_slots()
-        async with reenter_txn(self.db, conn) as conn:
-            query = (
-                sa.select([kernels.c.occupied_slots])
-                .where(
-                    (kernels.c.domain_name == domain_name) &
-                    (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
+
+        async def _query() -> ResourceSlot:
+            async with reenter_txn(self.db, conn) as _conn:
+                query = (
+                    sa.select([kernels.c.occupied_slots])
+                    .where(
+                        (kernels.c.domain_name == domain_name) &
+                        (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
+                    )
                 )
-            )
-            zero = ResourceSlot()
-            key_occupied = sum([row['occupied_slots'] async for row in (await conn.stream(query))], zero)
-            # drop no-longer used slot types
-            drops = [k for k in key_occupied.keys() if k not in known_slot_types]
-            for k in drops:
-                del key_occupied[k]
-            return key_occupied
+                zero = ResourceSlot()
+                key_occupied = sum(
+                    [
+                        row['occupied_slots']
+                        async for row in (await _conn.stream(query))
+                    ],
+                    zero,
+                )
+                # drop no-longer used slot types
+                drops = [k for k in key_occupied.keys() if k not in known_slot_types]
+                for k in drops:
+                    del key_occupied[k]
+                return key_occupied
+
+        return await execute_with_retry(_query)
 
     async def get_group_occupancy(self, group_id, *, conn=None):
         # TODO: store domain occupied_slots in Redis?
         known_slot_types = await self.shared_config.get_resource_slots()
-        async with reenter_txn(self.db, conn) as conn:
-            query = (
-                sa.select([kernels.c.occupied_slots])
-                .where(
-                    (kernels.c.group_id == group_id) &
-                    (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
+
+        async def _query() -> ResourceSlot:
+            async with reenter_txn(self.db, conn) as _conn:
+                query = (
+                    sa.select([kernels.c.occupied_slots])
+                    .where(
+                        (kernels.c.group_id == group_id) &
+                        (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
+                    )
                 )
-            )
-            zero = ResourceSlot()
-            key_occupied = sum([row['occupied_slots'] async for row in (await conn.stream(query))], zero)
-            # drop no-longer used slot types
-            drops = [k for k in key_occupied.keys() if k not in known_slot_types]
-            for k in drops:
-                del key_occupied[k]
-            return key_occupied
+                zero = ResourceSlot()
+                key_occupied = sum(
+                    [
+                        row['occupied_slots']
+                        async for row in (await _conn.stream(query))
+                    ],
+                    zero,
+                )
+                # drop no-longer used slot types
+                drops = [k for k in key_occupied.keys() if k not in known_slot_types]
+                for k in drops:
+                    del key_occupied[k]
+                return key_occupied
+
+        return await execute_with_retry(_query)
 
     async def recalc_resource_usage(self) -> None:
         concurrency_used_per_key: MutableMapping[str, int] = defaultdict(lambda: 0)
