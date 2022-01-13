@@ -200,11 +200,16 @@ async def check_scaling_group(
     sched_ctx: SchedulingContext,
     sess_ctx: PendingSession,
 ) -> PredicateResult:
-    sgroups = await query_allowed_sgroups(
-        db_conn,
-        sess_ctx.domain_name,
-        sess_ctx.group_id,
-        sess_ctx.access_key)
+
+    async def _query():
+        return await query_allowed_sgroups(
+            db_conn,
+            sess_ctx.domain_name,
+            sess_ctx.group_id,
+            sess_ctx.access_key,
+        )
+
+    sgroups = await execute_with_retry(_query)
     target_sgroup_names: List[str] = []
     preferred_sgroup_name = sess_ctx.scaling_group
     if preferred_sgroup_name is not None:
