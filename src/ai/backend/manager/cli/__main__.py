@@ -1,31 +1,30 @@
 from __future__ import annotations
 
+import asyncio
 import configparser
 import ipaddress
 import json.decoder
-import os
-from datetime import datetime
 import logging
-
-import etcd3
-import requests
-import toml
-import tomlkit as tomlkit
-from setproctitle import setproctitle
+import os
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import aioredis
 import click
 import psycopg2
-
+import requests
+import tomlkit as tomlkit
 from ai.backend.common.cli import LazyGroup
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.validators import TimeDuration
+from setproctitle import setproctitle
 
+from .context import CLIContext, init_logger
 from ..config import load as load_config
 from ..models.keypair import generate_keypair as _gen_keypair
-from .context import CLIContext, init_logger
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.cli'))
 
@@ -364,6 +363,54 @@ def configure() -> None:
     with open('alembic.ini', 'w') as f:
         print('\nDump to alembic.ini\n')
         config.write(f)
+
+    # Dump etcd config json
+    with open('config/sample.etcd.config.json') as f:
+        config = json.load(f)
+
+    while True:
+        while True:
+            redis_address = input('Input redis host: ')
+            if validate_ip(redis_address):
+                break
+            print('Please input correct redis IP address.')
+
+        while True:
+            redis_port = input('Input redis port: ')
+            if validate_port(redis_port):
+                redis_port = int(redis_port)
+                break
+            print('Please input correct redis port.')
+        redis_password = input('Input redis password. If you don\'t want, just leave empty: ')
+
+        if redis_password:
+            redis_client = aioredis.Redis(host=redis_address, port=redis_port, password=redis_password)
+        else:
+            redis_client = aioredis.Redis(host=redis_address, port=redis_port)
+
+        try:
+            loop = asyncio.get_event_loop()
+            coroutine = redis_client.get("")
+            loop.run_until_complete(coroutine)
+            break
+        except (aioredis.exceptions.ConnectionError, aioredis.exceptions.BusyLoadingError):
+            print('Cannot connect to etcd. Please input etcd information again.')
+
+    while True:
+        timezone = input('Input system timezone: ')
+        try:
+            _ = ZoneInfo(timezone)
+            break
+        except (ValueError, ZoneInfoNotFoundError):
+            print('Please input correct timezone.')
+
+    config['system']['timezone'] = timezone
+    config['redis']['addr'] = f'{redis_address}:{redis_port}'
+    config['redis']['password'] = redis_password
+
+    with open('dev.etcd.config.json', 'w') as f:
+        print('\nDump to dev.etcd.config.json\n')
+        json.dump(config, f, indent=4)
 
 
 def validate_ip(ip_address: str) -> bool:
