@@ -355,12 +355,15 @@ def configure() -> None:
         print('\nDump to manager.toml\n')
         tomlkit.dump(config, f)
 
-    # alembic.ini
+    # Dump alembic.ini
     config = configparser.ConfigParser()
-    config.read('alembic.ini')
-
+    config.read('config/halfstack.alembic.ini')
     # modify database scheme
-    print(config)
+    config['alembic']['sqlalchemy.url'] = f'postgresql://{database_user}:{database_password}@' \
+                                          f'{database_address}:{database_port}/{database_name} '
+    with open('alembic.ini', 'w') as f:
+        print('\nDump to alembic.ini\n')
+        config.write(f)
 
 
 def validate_ip(ip_address: str) -> bool:
