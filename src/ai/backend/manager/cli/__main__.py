@@ -412,6 +412,12 @@ def configure() -> None:
         print('\nDump to dev.etcd.config.json\n')
         json.dump(config, f, indent=4)
 
+    print("Complete configure backend.ai manager. "
+          "If you want to control more value, edit following files.\n")
+    print("manager.toml : etcd, database, manager configuration, logging options and so on.")
+    print("alembic.ini : option about alembic")
+    print("dev.etcd.config.json : etcd options like timezone, host, port and so on.")
+
 
 def validate_ip(ip_address: str) -> bool:
     try:
