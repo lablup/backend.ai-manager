@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import configparser
 import ipaddress
 import json.decoder
 import os
@@ -316,7 +317,7 @@ def configure() -> None:
             break
         print('Please input a kind of event loop between asyncio and uvloop')
 
-    config['etcd']['addr'] = tomlkit.
+    config['etcd']['addr'] = {"host": etcd_address, "port": etcd_port}
     config['etcd']['user'] = etcd_user
     config['etcd']['password'] = etcd_password
 
@@ -354,6 +355,12 @@ def configure() -> None:
         print('\nDump to manager.toml\n')
         tomlkit.dump(config, f)
 
+    # alembic.ini
+    config = configparser.ConfigParser()
+    config.read('alembic.ini')
+
+    # modify database scheme
+    print(config)
 
 
 def validate_ip(ip_address: str) -> bool:
