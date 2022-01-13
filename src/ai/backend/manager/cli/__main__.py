@@ -1,7 +1,15 @@
 from __future__ import annotations
 
+import ipaddress
+import json.decoder
+import os
 from datetime import datetime
 import logging
+
+import etcd3
+import requests
+import toml
+import tomlkit as tomlkit
 from setproctitle import setproctitle
 import subprocess
 import sys
@@ -117,10 +125,10 @@ def generate_keypair(cli_ctx: CLIContext):
               help='The retention limit. e.g., 20d, 1mo, 6mo, 1yr')
 @click.option('-v', '--vacuum-full', type=bool, default=False,
               help='Reclaim storage occupied by dead tuples.'
-                    'If not set or set False, it will run VACUUM without FULL.'
-                    'If set True, it will run VACUUM FULL.'
-                    'When VACUUM FULL is being processed, the database is locked.'
-                    '[default: False]')
+                   'If not set or set False, it will run VACUUM without FULL.'
+                   'If set True, it will run VACUUM FULL.'
+                   'When VACUUM FULL is being processed, the database is locked.'
+                   '[default: False]')
 @click.pass_obj
 def clear_history(cli_ctx: CLIContext, retention, vacuum_full) -> None:
     """
@@ -168,6 +176,222 @@ def clear_history(cli_ctx: CLIContext, retention, vacuum_full) -> None:
             log.info(f'kernels table size: {table_size}')
 
         log.info('Cleaned up {:,} database records older than {:}.', deleted_count, expiration_date)
+
+
+@main.command()
+def configure() -> None:
+    """
+    Take necessary inputs from user and generate toml file.
+    """
+    with open('config/sample.toml', 'r') as f:
+        config = tomlkit.loads(f.read())
+    # Interactive user input
+    # etcd section
+    while True:
+        while True:
+            etcd_address = input('Input etcd host: ')
+            if validate_ip(etcd_address):
+                break
+            print('Please input correct etcd IP address.')
+
+        while True:
+            etcd_port = input('Input etcd port: ')
+            if validate_port(etcd_port):
+                etcd_port = int(etcd_port)
+                break
+            print('Please input correct etcd port.')
+
+        etcd_user = input('Input etcd user name: ')
+        etcd_password = input('Input etcd password: ')
+
+        if check_etcd_health(etcd_address, etcd_port):
+            break
+        print('Cannot connect to etcd. Please input etcd information again.')
+
+    # db section
+    while True:
+        while True:
+            database_address = input('Input database host: ')
+            if validate_ip(database_address):
+                break
+            print('Please input correct database IP address.')
+
+        while True:
+            database_port = input('Input database port: ')
+            if validate_port(database_port):
+                database_port = int(database_port)
+                break
+            print('Please input correct database port.')
+
+        database_name = input('Input database name: ')
+        database_user = input('Input database user: ')
+        database_password = input('Input database password: ')
+
+        if check_database_health(
+            database_address,
+            database_port,
+            database_name,
+            database_user,
+            database_password
+        ):
+            break
+
+    # manager section
+    while True:
+        no_of_processors = input(f'Input cpu count how many manager uses(1~{os.cpu_count()}): ')
+        if no_of_processors.isdigit() and 1 <= int(no_of_processors) <= os.cpu_count():
+            no_of_processors = int(no_of_processors)
+            break
+
+    secret_token = input('Input secret token, if you don\'t want, just leave empty: ').strip()
+    daemon_user = input(
+        'Input user name used for the manager daemon, if you don\'t want, just leave empty: ').strip()
+    daemon_group = input(
+        'Input group name used for the manager daemon, if you don\'t want, just leave empty: ').strip()
+
+    while True:
+        manager_address = input('Input manager host: ')
+        if validate_ip(manager_address):
+            break
+        print('Please input correct manager IP address.')
+
+    while True:
+        manager_port = input('Input manager port: ')
+        if validate_port(manager_port):
+            manager_port = int(manager_port)
+            break
+        print('Please input correct manager port.')
+
+    while True:
+        ssl_enabled = input('Input value used for enable ssl(True/False): ')
+        if ssl_enabled.lower() == 'true':
+            ssl_enabled = True
+            break
+        elif ssl_enabled.lower() == 'false':
+            ssl_enabled = False
+            break
+
+    ssl_cert = None
+    ssl_private_key = None
+    if ssl_enabled:
+        while True:
+            ssl_cert = input('Input ssl cert path: ')
+            if os.path.exists(ssl_cert):
+                break
+            print('Please input correct ssl certificate path.')
+        while True:
+            ssl_private_key = input('Input ssl private key path: ')
+            if os.path.exists(ssl_private_key):
+                break
+            print('Please input correct ssl private key path.')
+
+    while True:
+        heartbeat_timeout = input('Input heartbeat timeout: ')
+        try:
+            heartbeat_timeout = float(heartbeat_timeout)
+            break
+        except ValueError:
+            print('Please input correct pid file path.')
+    node_name = input('Input manager node name, if you don\'t want, just leave empty: ')
+
+    while True:
+        pid_path = input('Input pid file path: ')
+        if os.path.exists(pid_path):
+            break
+        print('Please input correct pid file path.')
+
+    while True:
+        hide_agent = input('Input value used for hide agent and container ID(True/False): ')
+        if hide_agent.lower() == 'true':
+            hide_agent = True
+            break
+        elif hide_agent.lower() == 'false':
+            hide_agent = False
+            break
+
+    while True:
+        event_loop = input('Input a kind of event loop(asyncio/uvloop): ')
+        if event_loop == 'asyncio' or event_loop == 'uvloop':
+            break
+        print('Please input a kind of event loop between asyncio and uvloop')
+
+    config['etcd']['addr'] = tomlkit.
+    config['etcd']['user'] = etcd_user
+    config['etcd']['password'] = etcd_password
+
+    config['db']['addr'] = {"host": database_address, "port": database_port}
+    config['db']['name'] = database_name
+    config['db']['user'] = database_user
+    config['db']['password'] = database_password
+
+    config['manager']['num-proc'] = no_of_processors
+    if secret_token:
+        config['manager']['secret'] = secret_token
+    else:
+        config['manager'].pop('secret')
+    if daemon_user:
+        config['manager']['user'] = daemon_user
+    else:
+        config['manager'].pop('user')
+    if daemon_group:
+        config['manager']['group'] = daemon_group
+    else:
+        config['manager'].pop('group')
+    config['manager']['service-addr'] = {"host": manager_address, "port": manager_port}
+    config['manager']['ssl-enabled'] = ssl_enabled
+    if ssl_enabled:
+        config['manager']['ssl-cert'] = ssl_cert
+        config['manager']['ssl-privkey'] = ssl_private_key
+    config['manager']['heartbeat-timeout'] = heartbeat_timeout
+    if node_name:
+        config['manager']['id'] = node_name
+    if pid_path:
+        config['manager']['pid-file'] = pid_path
+    config['manager']['hide-agents'] = hide_agent
+    config['manager']['event-loop'] = event_loop
+    with open('manager.toml', 'w') as f:
+        tomlkit.dump(config, f)
+
+
+def validate_ip(ip_address: str) -> bool:
+    try:
+        _ = ipaddress.ip_address(ip_address)
+        return True
+    except ValueError:
+        return False
+
+
+def validate_port(port: str) -> bool:
+    if port.isdigit() and 1 <= int(port) <= 65535:
+        return True
+    return False
+
+
+def check_etcd_health(host: str, port: int):
+    try:
+        response = requests.get(f'http://{host}:{port}/health')
+        body = response.json()
+        if body.get('health') == 'true':
+            return True
+        return False
+    except (json.decoder.JSONDecodeError, requests.exceptions.ConnectionError):
+        return False
+
+
+def check_database_health(host: str, port: int, database_name: str, user: str, password: str):
+    try:
+        database_client = psycopg2.connect(
+            host=host,
+            port=port,
+            user=user,
+            password=password,
+            dbname=database_name
+        )
+        database_client.close()
+        return True
+    except Exception as e:
+        print(e)
+        return False
 
 
 @main.group(cls=LazyGroup, import_name='ai.backend.manager.cli.dbschema:cli')
