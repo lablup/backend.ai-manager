@@ -1,0 +1,1 @@
+Non-entrypoint vfolder(none inside of /home/work directory) accept 
