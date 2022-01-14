@@ -1,0 +1,1 @@
+Fix get_wsproxy_version API raising GenericNotFound when user's current domain isn't associated with target scaling group
