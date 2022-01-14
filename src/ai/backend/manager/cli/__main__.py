@@ -10,12 +10,13 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import aioredis
 import click
+import etcd3
 import psycopg2
-import requests
 import tomlkit as tomlkit
 from ai.backend.common.cli import LazyGroup
 from ai.backend.common.logging import BraceStyleAdapter
@@ -196,11 +197,12 @@ def configure() -> None:
             print('Please input correct etcd IP address.')
 
         while True:
-            etcd_port = input('Input etcd port: ')
-            if validate_port(etcd_port):
-                etcd_port = int(etcd_port)
-                break
-            print('Please input correct etcd port.')
+            try:
+                etcd_port = int(input('Input etcd port: '))
+                if 1 <= etcd_port <= 65535:
+                    break
+            except ValueError:
+                print('Please input correct etcd port.')
 
         etcd_user = input('Input etcd user name: ')
         etcd_password = input('Input etcd password: ')
@@ -218,11 +220,12 @@ def configure() -> None:
             print('Please input correct database IP address.')
 
         while True:
-            database_port = input('Input database port: ')
-            if validate_port(database_port):
-                database_port = int(database_port)
-                break
-            print('Please input correct database port.')
+            try:
+                database_port = int(input('Input database port: '))
+                if 1 <= database_port <= 65535:
+                    break
+            except ValueError:
+                print('Please input correct database port.')
 
         database_name = input('Input database name: ')
         database_user = input('Input database user: ')
@@ -233,17 +236,24 @@ def configure() -> None:
             database_port,
             database_name,
             database_user,
-            database_password
+            database_password,
         ):
             break
 
     # manager section
     while True:
-        no_of_processors = input(f'Input cpu count how many manager uses(1~{os.cpu_count()}): ')
-        if no_of_processors.isdigit() and 1 <= int(no_of_processors) <= os.cpu_count():
-            no_of_processors = int(no_of_processors)
-            break
-
+        cpu_count: Optional[int] = os.cpu_count()
+        if cpu_count:
+            try:
+                no_of_processors = int(input(f'Input cpu count how many manager uses(1~{cpu_count}): '))
+                if 1 <= no_of_processors <= cpu_count:
+                    no_of_processors_integer = int(no_of_processors)
+                    break
+            except ValueError:
+                print('Please input correct cpu count.')
+        else:
+            print('Can\'t detect number of cpu.\n')
+            return
     secret_token = input('Input secret token, if you don\'t want, just leave empty: ').strip()
     daemon_user = input(
         'Input user name used for the manager daemon, if you don\'t want, just leave empty: ').strip()
@@ -257,18 +267,19 @@ def configure() -> None:
         print('Please input correct manager IP address.')
 
     while True:
-        manager_port = input('Input manager port: ')
-        if validate_port(manager_port):
-            manager_port = int(manager_port)
-            break
-        print('Please input correct manager port.')
+        try:
+            manager_port = int(input('Input manager port: '))
+            if 1 <= manager_port <= 65535:
+                break
+        except ValueError:
+            print('Please input correct manager port.')
 
     while True:
-        ssl_enabled = input('Input value used for enable ssl(True/False): ')
-        if ssl_enabled.lower() == 'true':
+        ssl_enabled_input = input('Input value used for enable ssl(True/False): ')
+        if ssl_enabled_input.lower() == 'true':
             ssl_enabled = True
             break
-        elif ssl_enabled.lower() == 'false':
+        elif ssl_enabled_input.lower() == 'false':
             ssl_enabled = False
             break
 
@@ -287,9 +298,8 @@ def configure() -> None:
             print('Please input correct ssl private key path.')
 
     while True:
-        heartbeat_timeout = input('Input heartbeat timeout: ')
         try:
-            heartbeat_timeout = float(heartbeat_timeout)
+            heartbeat_timeout = float(input('Input heartbeat timeout: '))
             break
         except ValueError:
             print('Please input correct pid file path.')
@@ -302,11 +312,11 @@ def configure() -> None:
         print('Please input correct pid file path.')
 
     while True:
-        hide_agent = input('Input value used for hide agent and container ID(True/False): ')
-        if hide_agent.lower() == 'true':
+        hide_agent_input = input('Input value used for hide agent and container ID(True/False): ')
+        if hide_agent_input.lower() == 'true':
             hide_agent = True
             break
-        elif hide_agent.lower() == 'false':
+        elif hide_agent_input.lower() == 'false':
             hide_agent = False
             break
 
@@ -325,7 +335,7 @@ def configure() -> None:
     config['db']['user'] = database_user
     config['db']['password'] = database_password
 
-    config['manager']['num-proc'] = no_of_processors
+    config['manager']['num-proc'] = no_of_processors_integer
     if secret_token:
         config['manager']['secret'] = secret_token
     else:
@@ -376,15 +386,19 @@ def configure() -> None:
             print('Please input correct redis IP address.')
 
         while True:
-            redis_port = input('Input redis port: ')
-            if validate_port(redis_port):
-                redis_port = int(redis_port)
-                break
-            print('Please input correct redis port.')
+            try:
+                redis_port = int(input('Input redis port: '))
+                if 1 <= redis_port <= 65535:
+                    break
+            except ValueError:
+                print('Please input correct redis port.')
         redis_password = input('Input redis password. If you don\'t want, just leave empty: ')
 
         if redis_password:
-            redis_client = aioredis.Redis(host=redis_address, port=redis_port, password=redis_password)
+            redis_client = aioredis.Redis(
+                host=redis_address,
+                port=redis_port,
+                password=redis_password)
         else:
             redis_client = aioredis.Redis(host=redis_address, port=redis_port)
 
@@ -427,20 +441,10 @@ def validate_ip(ip_address: str) -> bool:
         return False
 
 
-def validate_port(port: str) -> bool:
-    if port.isdigit() and 1 <= int(port) <= 65535:
-        return True
-    return False
-
-
 def check_etcd_health(host: str, port: int):
     try:
-        response = requests.get(f'http://{host}:{port}/health')
-        body = response.json()
-        if body.get('health') == 'true':
-            return True
-        return False
-    except (json.decoder.JSONDecodeError, requests.exceptions.ConnectionError):
+        _ = etcd3.Etcd3Client(host=host, port=port)
+    except (etcd3.exceptions.ConnectionFailedError, etcd3.exceptions.ConnectionTimeoutError):
         return False
 
 
@@ -451,7 +455,7 @@ def check_database_health(host: str, port: int, database_name: str, user: str, p
             port=port,
             user=user,
             password=password,
-            dbname=database_name
+            dbname=database_name,
         )
         database_client.close()
         return True
