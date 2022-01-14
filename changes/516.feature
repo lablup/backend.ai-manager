@@ -1,0 +1,1 @@
+Vfolder mounting to root path(none inside of /home/work directory) accept 
