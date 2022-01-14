@@ -237,6 +237,7 @@ class AgentRegistry:
 
     kernel_creation_tracker: Dict[KernelId, asyncio.Future]
     _post_kernel_creation_tasks: weakref.WeakValueDictionary[KernelId, asyncio.Task]
+    _post_kernel_creation_tasks: dict[KernelId, asyncio.Future]
 
     def __init__(
         self,
@@ -262,6 +263,7 @@ class AgentRegistry:
         self.hook_plugin_ctx = hook_plugin_ctx
         self.kernel_creation_tracker = {}
         self._post_kernel_creation_tasks = weakref.WeakValueDictionary()
+        self._post_kernel_creation_infos = {}
         self.rpc_keepalive_timeout = \
             int(shared_config.get("config/network/rpc/keepalive-timeout", "60"))
 
@@ -1316,11 +1318,11 @@ class AgentRegistry:
     async def _post_create_kernel(
         self,
         agent_alloc_ctx: AgentAllocationContext,
-        created_info,
+        kernel_id: KernelId,
     ) -> None:
         # Wait until the kernel_started event.
-        kernel_id = KernelId(uuid.UUID(created_info['id']))
         try:
+            created_info = await self._post_kernel_creation_infos[kernel_id]
             start_event = self.kernel_creation_tracker[kernel_id]
             await start_event
         except asyncio.CancelledError:
@@ -1386,6 +1388,16 @@ class AgentRegistry:
                 self.kernel_creation_tracker[
                     binding.kernel.kernel_id
                 ] = loop.create_future()
+            # Spawn post-processing tasks
+            post_tasks = []
+            for binding in items:
+                self._post_kernel_creation_infos[binding.kernel.kernel_id] = loop.create_future()
+                post_task = asyncio.create_task(self._post_create_kernel(
+                    agent_alloc_ctx,
+                    binding.kernel.kernel_id,
+                ))
+                self._post_kernel_creation_tasks[binding.kernel.kernel_id] = post_task
+                post_tasks.append(post_task)
             try:
                 # Issue a batched RPC call to create kernels on this agent
                 created_infos = await rpc.call.create_kernels(
@@ -1441,31 +1453,26 @@ class AgentRegistry:
                     [binding.kernel.kernel_id for binding in items],
                     agent_alloc_ctx.agent_id,
                 )
-                # Post-process kernel creation
-                post_tasks = []
+                # Pass the return value of RPC calls to post-processing tasks
                 for created_info in created_infos:
-                    post_task = asyncio.create_task(self._post_create_kernel(
-                        agent_alloc_ctx,
-                        created_info,
-                    ))
-                    self._post_kernel_creation_tasks[created_info['id']] = post_task
-                    post_tasks.append(post_task)
+                    created_kernel_id = KernelId(uuid.UUID(created_info['id']))
+                    self._post_kernel_creation_infos[created_kernel_id].set_result(created_info)
                 await asyncio.gather(*post_tasks, return_exceptions=True)
-            except Exception:
+            except Exception as e:
                 # The agent has already cancelled or issued the destruction lifecycle event
                 # for this batch of kernels.
                 for binding in items:
-                    start_event = self.kernel_creation_tracker[
-                        binding.kernel.kernel_id
-                    ]
-                    start_event.cancel()
+                    start_future = self.kernel_creation_tracker[binding.kernel.kernel_id]
+                    start_future.cancel()
+                    creation_info_future = self._post_kernel_creation_infos[binding.kernel.kernel_id]
+                    creation_info_future.set_exception(e)
+                await asyncio.sleep(0)
                 raise
             finally:
                 # clean up for sure
                 for binding in items:
-                    del self.kernel_creation_tracker[
-                        binding.kernel.kernel_id
-                    ]
+                    del self.kernel_creation_tracker[binding.kernel.kernel_id]
+                    del self._post_kernel_creation_infos[binding.kernel.kernel_id]
 
     async def create_cluster_ssh_keypair(self) -> ClusterSSHKeyPair:
         key = rsa.generate_private_key(
@@ -2003,10 +2010,10 @@ class AgentRegistry:
             loop = asyncio.get_running_loop()
             try:
                 kernel_creation_id = secrets.token_urlsafe(16)
-                start_event = loop.create_future()
+                start_future = loop.create_future()
                 self.kernel_creation_tracker[
                     kernel['id']
-                ] = start_event
+                ] = start_future
                 try:
                     async with self.db.begin() as conn:
                         query = (
@@ -2033,7 +2040,7 @@ class AgentRegistry:
                             str(kernel['id']),
                             updated_config,
                         )
-                    await start_event
+                    await start_future
                     async with self.db.begin() as conn:
                         query = (
                             kernels.update()
@@ -2604,7 +2611,10 @@ class AgentRegistry:
         post_task = self._post_kernel_creation_tasks.get(kernel_id, None)
         if post_task is not None and not post_task.done():
             post_task.cancel()
+            try:
             await post_task
+            except asyncio.CancelledError:
+                pass
 
         async def _update_kernel_status() -> Row | None:
             async with self.db.begin() as conn:
