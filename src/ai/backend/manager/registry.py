@@ -1915,7 +1915,7 @@ class AgentRegistry:
                     per_agent_tasks.append(_destroy_kernels_in_agent(session, destroyed_kernels))
 
             if per_agent_tasks:
-                await asyncio.gather(*per_agent_tasks)
+                await asyncio.gather(*per_agent_tasks, return_exceptions=True)
             await self.hook_plugin_ctx.notify(
                 'POST_DESTROY_SESSION',
                 (session['session_id'], session['session_name'], session['access_key']),
@@ -1930,7 +1930,7 @@ class AgentRegistry:
     ) -> None:
 
         async def _fetch() -> Row:
-            async with self.db.begin() as conn:
+            async with self.db.begin_readonly() as conn:
                 query = (
                     sa.select([
                         kernels.c.session_id,
@@ -2612,7 +2612,7 @@ class AgentRegistry:
         if post_task is not None and not post_task.done():
             post_task.cancel()
             try:
-            await post_task
+                await post_task
             except asyncio.CancelledError:
                 pass
 
@@ -2717,7 +2717,7 @@ class AgentRegistry:
                     # if already marked "session-terminated", skip the rest process
                     return False, session_id
                 all_terminated = all(map(
-                    lambda row: row['status'] == KernelStatus.TERMINATED,
+                    lambda row: row['status'] in (KernelStatus.TERMINATED, KernelStatus.CANCELLED),
                     rows,
                 ))
                 if all_terminated:
