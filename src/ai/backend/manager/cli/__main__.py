@@ -406,6 +406,7 @@ def configure() -> None:
             loop = asyncio.get_event_loop()
             coroutine = redis_client.get("")
             loop.run_until_complete(coroutine)
+            redis_client.close()
             break
         except (aioredis.exceptions.ConnectionError, aioredis.exceptions.BusyLoadingError):
             print('Cannot connect to etcd. Please input etcd information again.')
@@ -443,7 +444,8 @@ def validate_ip(ip_address: str) -> bool:
 
 def check_etcd_health(host: str, port: int):
     try:
-        _ = etcd3.Etcd3Client(host=host, port=port)
+        etcd_client = etcd3.Etcd3Client(host=host, port=port)
+        etcd_client.close()
     except (etcd3.exceptions.ConnectionFailedError, etcd3.exceptions.ConnectionTimeoutError):
         return False
 
