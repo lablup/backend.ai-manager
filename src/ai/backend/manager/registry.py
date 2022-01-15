@@ -237,7 +237,7 @@ class AgentRegistry:
 
     kernel_creation_tracker: Dict[KernelId, asyncio.Future]
     _post_kernel_creation_tasks: weakref.WeakValueDictionary[KernelId, asyncio.Task]
-    _post_kernel_creation_tasks: dict[KernelId, asyncio.Future]
+    _post_kernel_creation_infos: dict[KernelId, asyncio.Future]
 
     def __init__(
         self,
