@@ -17,7 +17,7 @@ import aioredis
 import click
 import etcd3
 import psycopg2
-import tomlkit as tomlkit
+import tomlkit
 from ai.backend.common.cli import LazyGroup
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.validators import TimeDuration
@@ -186,7 +186,7 @@ def configure() -> None:
     """
     # toml section
     with open('config/sample.toml', 'r') as f:
-        config = tomlkit.loads(f.read())
+        config_toml: dict = dict(tomlkit.loads(f.read()))
     # Interactive user input
     # etcd section
     while True:
@@ -326,57 +326,60 @@ def configure() -> None:
             break
         print('Please input a kind of event loop between asyncio and uvloop')
 
-    config['etcd']['addr'] = {"host": etcd_address, "port": etcd_port}
-    config['etcd']['user'] = etcd_user
-    config['etcd']['password'] = etcd_password
+    if type(config_toml.get('etcd')) == dict:
+        config_toml['etcd']['addr'] = {"host": etcd_address, "port": etcd_port}
+        config_toml['etcd']['user'] = etcd_user
+        config_toml['etcd']['password'] = etcd_password
 
-    config['db']['addr'] = {"host": database_address, "port": database_port}
-    config['db']['name'] = database_name
-    config['db']['user'] = database_user
-    config['db']['password'] = database_password
+    if type(config_toml.get('db')) == dict:
+        config_toml['db']['addr'] = {"host": database_address, "port": database_port}
+        config_toml['db']['name'] = database_name
+        config_toml['db']['user'] = database_user
+        config_toml['db']['password'] = database_password
 
-    config['manager']['num-proc'] = no_of_processors_integer
-    if secret_token:
-        config['manager']['secret'] = secret_token
-    else:
-        config['manager'].pop('secret')
-    if daemon_user:
-        config['manager']['user'] = daemon_user
-    else:
-        config['manager'].pop('user')
-    if daemon_group:
-        config['manager']['group'] = daemon_group
-    else:
-        config['manager'].pop('group')
-    config['manager']['service-addr'] = {"host": manager_address, "port": manager_port}
-    config['manager']['ssl-enabled'] = ssl_enabled
-    if ssl_enabled:
-        config['manager']['ssl-cert'] = ssl_cert
-        config['manager']['ssl-privkey'] = ssl_private_key
-    config['manager']['heartbeat-timeout'] = heartbeat_timeout
-    if node_name:
-        config['manager']['id'] = node_name
-    if pid_path:
-        config['manager']['pid-file'] = pid_path
-    config['manager']['hide-agents'] = hide_agent
-    config['manager']['event-loop'] = event_loop
+    if type(config_toml.get('manager')) == dict:
+        config_toml['manager']['num-proc'] = no_of_processors_integer
+        if secret_token:
+            config_toml['manager']['secret'] = secret_token
+        else:
+            config_toml['manager'].pop('secret')
+        if daemon_user:
+            config_toml['manager']['user'] = daemon_user
+        else:
+            config_toml['manager'].pop('user')
+        if daemon_group:
+            config_toml['manager']['group'] = daemon_group
+        else:
+            config_toml['manager'].pop('group')
+        config_toml['manager']['service-addr'] = {"host": manager_address, "port": manager_port}
+        config_toml['manager']['ssl-enabled'] = ssl_enabled
+        if ssl_enabled:
+            config_toml['manager']['ssl-cert'] = ssl_cert
+            config_toml['manager']['ssl-privkey'] = ssl_private_key
+        config_toml['manager']['heartbeat-timeout'] = heartbeat_timeout
+        if node_name:
+            config_toml['manager']['id'] = node_name
+        if pid_path:
+            config_toml['manager']['pid-file'] = pid_path
+        config_toml['manager']['hide-agents'] = hide_agent
+        config_toml['manager']['event-loop'] = event_loop
     with open('manager.toml', 'w') as f:
         print('\nDump to manager.toml\n')
-        tomlkit.dump(config, f)
+        tomlkit.dump(config_toml, f)
 
     # Dump alembic.ini
-    config = configparser.ConfigParser()
-    config.read('config/halfstack.alembic.ini')
+    config_parser = configparser.ConfigParser()
+    config_parser.read('config/halfstack.alembic.ini')
     # modify database scheme
-    config['alembic']['sqlalchemy.url'] = f'postgresql://{database_user}:{database_password}@' \
+    config_parser['alembic']['sqlalchemy.url'] = f'postgresql://{database_user}:{database_password}@' \
                                           f'{database_address}:{database_port}/{database_name} '
     with open('alembic.ini', 'w') as f:
         print('\nDump to alembic.ini\n')
-        config.write(f)
+        config_parser.write(f)
 
     # Dump etcd config json
     with open('config/sample.etcd.config.json') as f:
-        config = json.load(f)
+        config_json = json.load(f)
 
     while True:
         while True:
@@ -419,13 +422,13 @@ def configure() -> None:
         except (ValueError, ZoneInfoNotFoundError):
             print('Please input correct timezone.')
 
-    config['system']['timezone'] = timezone
-    config['redis']['addr'] = f'{redis_address}:{redis_port}'
-    config['redis']['password'] = redis_password
+    config_json['system']['timezone'] = timezone
+    config_json['redis']['addr'] = f'{redis_address}:{redis_port}'
+    config_json['redis']['password'] = redis_password
 
     with open('dev.etcd.config.json', 'w') as f:
         print('\nDump to dev.etcd.config.json\n')
-        json.dump(config, f, indent=4)
+        json.dump(config_json, f, indent=4)
 
     print("Complete configure backend.ai manager. "
           "If you want to control more value, edit following files.\n")
