@@ -61,9 +61,9 @@ class ExtendedAsyncSAEngine(SAEngine):
             self._generic_txn_count += 1
             if self._generic_txn_count >= self._txn_concurrency_threshold:
                 log.warning(
-                    "The number of concurrent read-only transaction ({}) exceeded the threshold {}.",
+                    "The number of concurrent generic transaction ({}) exceeded the threshold {}.",
                     self._generic_txn_count, self._txn_concurrency_threshold,
-                    stack_info=True,
+                    stack_info=False,
                 )
             try:
                 yield conn
@@ -76,9 +76,9 @@ class ExtendedAsyncSAEngine(SAEngine):
             self._readonly_txn_count += 1
             if self._readonly_txn_count >= self._txn_concurrency_threshold:
                 log.warning(
-                    "The number of concurrent generic transaction ({}) exceeded the threshold {}.",
+                    "The number of concurrent read-only transaction ({}) exceeded the threshold {}.",
                     self._readonly_txn_count, self._txn_concurrency_threshold,
-                    stack_info=True,
+                    stack_info=False,
                 )
             conn_with_exec_opts = await conn.execution_options(
                 postgresql_readonly=True,
