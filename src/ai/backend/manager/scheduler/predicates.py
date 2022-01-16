@@ -19,7 +19,7 @@ from ..models import (
     query_allowed_sgroups,
     DefaultForUnspecified,
 )
-from ..models.utils import execute_with_retry
+from ..models.utils import execute_with_retry, reenter_txn
 from .types import (
     SchedulingContext,
     PendingSession,
@@ -202,12 +202,13 @@ async def check_scaling_group(
 ) -> PredicateResult:
 
     async def _query():
-        return await query_allowed_sgroups(
-            db_conn,
-            sess_ctx.domain_name,
-            sess_ctx.group_id,
-            sess_ctx.access_key,
-        )
+        async with reenter_txn(sched_ctx.registry.db, db_conn) as _conn:
+            return await query_allowed_sgroups(
+                _conn,
+                sess_ctx.domain_name,
+                sess_ctx.group_id,
+                sess_ctx.access_key,
+            )
 
     sgroups = await execute_with_retry(_query)
     target_sgroup_names: List[str] = []
