@@ -1,0 +1,1 @@
+Prevent `AttributeError` in proxying app requests by declaring `down_task` in `TCPProxy` class explicitly.
