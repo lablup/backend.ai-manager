@@ -19,6 +19,7 @@ import etcd3
 import psycopg2
 import tomlkit
 from ai.backend.common.cli import LazyGroup
+from ai.backend.manager.cli.interaction import *
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.validators import TimeDuration
 from setproctitle import setproctitle
@@ -185,249 +186,183 @@ def configure() -> None:
     Take necessary inputs from user and generate toml file.
     """
     # toml section
-    with open('config/sample.toml', 'r') as f:
+    with open("config/sample.toml", "r") as f:
         config_toml: dict = dict(tomlkit.loads(f.read()))
     # Interactive user input
     # etcd section
-    while True:
-        while True:
-            etcd_address = input('Input etcd host: ')
-            if validate_ip(etcd_address):
-                break
-            print('Please input correct etcd IP address.')
-
+    try:
+        etcd_config: dict = config_toml.get("etcd")
         while True:
             try:
-                etcd_port = int(input('Input etcd port: '))
-                if 1 <= etcd_port <= 65535:
+                etcd_address: dict = etcd_config.get("addr")
+                etcd_host = ask_host("Etcd host: ", etcd_address.get("host"))
+                etcd_port = ask_number("Etcd port: ", etcd_address.get("port"), 1, 65535)
+
+                if check_etcd_health(etcd_host, etcd_port):
                     break
+                print("Cannot connect to etcd. Please input etcd information again.")
             except ValueError:
-                print('Please input correct etcd port.')
+                print("Invalid etcd address sample.")
 
-        etcd_user = input('Input etcd user name: ')
-        etcd_password = input('Input etcd password: ')
-
-        if check_etcd_health(etcd_address, etcd_port):
-            break
-        print('Cannot connect to etcd. Please input etcd information again.')
-
-    # db section
-    while True:
-        while True:
-            database_address = input('Input database host: ')
-            if validate_ip(database_address):
-                break
-            print('Please input correct database IP address.')
-
-        while True:
-            try:
-                database_port = int(input('Input database port: '))
-                if 1 <= database_port <= 65535:
-                    break
-            except ValueError:
-                print('Please input correct database port.')
-
-        database_name = input('Input database name: ')
-        database_user = input('Input database user: ')
-        database_password = input('Input database password: ')
-
-        if check_database_health(
-            database_address,
-            database_port,
-            database_name,
-            database_user,
-            database_password,
-        ):
-            break
-
-    # manager section
-    while True:
-        cpu_count: Optional[int] = os.cpu_count()
-        if cpu_count:
-            try:
-                no_of_processors = int(input(f'Input cpu count how many manager uses(1~{cpu_count}): '))
-                if 1 <= no_of_processors <= cpu_count:
-                    no_of_processors_integer = int(no_of_processors)
-                    break
-            except ValueError:
-                print('Please input correct cpu count.')
-        else:
-            print('Can\'t detect number of cpu.\n')
-            return
-    secret_token = input('Input secret token, if you don\'t want, just leave empty: ').strip()
-    daemon_user = input(
-        'Input user name used for the manager daemon, if you don\'t want, just leave empty: ').strip()
-    daemon_group = input(
-        'Input group name used for the manager daemon, if you don\'t want, just leave empty: ').strip()
-
-    while True:
-        manager_address = input('Input manager host: ')
-        if validate_ip(manager_address):
-            break
-        print('Please input correct manager IP address.')
-
-    while True:
-        try:
-            manager_port = int(input('Input manager port: '))
-            if 1 <= manager_port <= 65535:
-                break
-        except ValueError:
-            print('Please input correct manager port.')
-
-    while True:
-        ssl_enabled_input = input('Input value used for enable ssl(True/False): ')
-        if ssl_enabled_input.lower() == 'true':
-            ssl_enabled = True
-            break
-        elif ssl_enabled_input.lower() == 'false':
-            ssl_enabled = False
-            break
-
-    ssl_cert = None
-    ssl_private_key = None
-    if ssl_enabled:
-        while True:
-            ssl_cert = input('Input ssl cert path: ')
-            if os.path.exists(ssl_cert):
-                break
-            print('Please input correct ssl certificate path.')
-        while True:
-            ssl_private_key = input('Input ssl private key path: ')
-            if os.path.exists(ssl_private_key):
-                break
-            print('Please input correct ssl private key path.')
-
-    while True:
-        try:
-            heartbeat_timeout = float(input('Input heartbeat timeout: '))
-            break
-        except ValueError:
-            print('Please input correct pid file path.')
-    node_name = input('Input manager node name, if you don\'t want, just leave empty: ')
-
-    while True:
-        pid_path = input('Input pid file path: ')
-        if os.path.exists(pid_path):
-            break
-        print('Please input correct pid file path.')
-
-    while True:
-        hide_agent_input = input('Input value used for hide agent and container ID(True/False): ')
-        if hide_agent_input.lower() == 'true':
-            hide_agent = True
-            break
-        elif hide_agent_input.lower() == 'false':
-            hide_agent = False
-            break
-
-    while True:
-        event_loop = input('Input a kind of event loop(asyncio/uvloop): ')
-        if event_loop == 'asyncio' or event_loop == 'uvloop':
-            break
-        print('Please input a kind of event loop between asyncio and uvloop')
-
-    if type(config_toml.get('etcd')) == dict:
-        config_toml['etcd']['addr'] = {"host": etcd_address, "port": etcd_port}
+        etcd_user = ask_string("Etcd user name", etcd_config.get("user"))
+        etcd_password = ask_string("Etcd password", etcd_config.get("password"))
+        config_toml['etcd']['addr'] = {"host": etcd_host, "port": etcd_port}
         config_toml['etcd']['user'] = etcd_user
         config_toml['etcd']['password'] = etcd_password
+    except ValueError:
+        print("Invalid sample file.")
 
-    if type(config_toml.get('db')) == dict:
-        config_toml['db']['addr'] = {"host": database_address, "port": database_port}
-        config_toml['db']['name'] = database_name
-        config_toml['db']['user'] = database_user
-        config_toml['db']['password'] = database_password
+    # db section
+    database_user = None
+    database_password = None
+    database_name = None
+    database_host = None
+    database_port = None
+    if type(config_toml.get("db")) == dict:
+        while True:
+            database_config: dict = config_toml.get("db")
+            if type(database_config.get("addr")) == dict:
+                database_address: dict = database_config.get("addr")
+                database_host = ask_host("Database host: ", database_address.get("host"))
+                database_port = ask_number("Database port: ", database_address.get("port"), 1, 65535)
+                database_name = ask_string("Database name", database_config.get("name"))
+                database_user = ask_string("Database user", database_config.get("user"))
+                database_password = ask_string("Database password", database_config.get("password"))
 
+                if check_database_health(
+                    database_host,
+                    database_port,
+                    database_name,
+                    database_user,
+                    database_password,
+                ):
+                    config_toml['db']['addr'] = {"host": database_address, "port": database_port}
+                    config_toml['db']['name'] = database_name
+                    config_toml['db']['user'] = database_user
+                    config_toml['db']['password'] = database_password
+                    break
+
+    # manager section
     if type(config_toml.get('manager')) == dict:
-        config_toml['manager']['num-proc'] = no_of_processors_integer
+        manager_config: dict = config_toml.get("manager")
+        cpu_count: Optional[int] = os.cpu_count()
+        if cpu_count:
+            no_of_processors: int = ask_number("How many processors that manager uses: ", 1, 1,
+                                               cpu_count)
+            config_toml["manager"]["num-proc"] = no_of_processors
+
+        secret_token: str = ask_string("Secret token", use_default=False)
         if secret_token:
-            config_toml['manager']['secret'] = secret_token
+            config_toml["manager"]["secret"] = secret_token
         else:
-            config_toml['manager'].pop('secret')
+            config_toml["manager"].pop("secret")
+
+        daemon_user: str = ask_string("User name used for the manager daemon", use_default=False)
+        daemon_group: str = ask_string("Group name used for the manager daemon", use_default=False)
         if daemon_user:
-            config_toml['manager']['user'] = daemon_user
+            config_toml["manager"]["user"] = daemon_user
         else:
-            config_toml['manager'].pop('user')
+            config_toml["manager"].pop("user")
         if daemon_group:
-            config_toml['manager']['group'] = daemon_group
+            config_toml["manager"]["group"] = daemon_group
         else:
-            config_toml['manager'].pop('group')
-        config_toml['manager']['service-addr'] = {"host": manager_address, "port": manager_port}
-        config_toml['manager']['ssl-enabled'] = ssl_enabled
-        if ssl_enabled:
-            config_toml['manager']['ssl-cert'] = ssl_cert
-            config_toml['manager']['ssl-privkey'] = ssl_private_key
-        config_toml['manager']['heartbeat-timeout'] = heartbeat_timeout
+            config_toml["manager"].pop("group")
+
+        if type(manager_config.get("service-addr")) == dict:
+            manager_address: dict = manager_config.get("service-addr")
+            manager_host = ask_host("Manager host: ", manager_address.get("host"))
+            manager_port = ask_number("Manager port: ", manager_address.get("port"), 1, 65535)
+            config_toml["manager"]["service-addr"] = {"host": manager_host, "port": manager_port}
+
+        ssl_enabled = ask_string_in_array("Enable SSL", choices=["True", "False"])
+        config_toml["manager"]["ssl-enabled"] = ssl_enabled
+
+        if ssl_enabled == "True":
+            ssl_cert = ask_file_path("SSL cert path")
+            ssl_private_key = ask_file_path("SSL private key path")
+            config_toml["manager"]["ssl-cert"] = ssl_cert
+            config_toml["manager"]["ssl-privkey"] = ssl_private_key
+
+        while True:
+            try:
+                heartbeat_timeout = float(input("Heartbeat timeout: "))
+                config_toml["manager"]["heartbeat-timeout"] = heartbeat_timeout
+                break
+            except ValueError:
+                print("Please input correct heartbeat timeout value as float.")
+
+        node_name = ask_string("Manager node name", use_default=False)
         if node_name:
-            config_toml['manager']['id'] = node_name
+            config_toml["manager"]["id"] = node_name
+
+        pid_path = ask_file_path("PID file path")
         if pid_path:
-            config_toml['manager']['pid-file'] = pid_path
-        config_toml['manager']['hide-agents'] = hide_agent
-        config_toml['manager']['event-loop'] = event_loop
-    with open('manager.toml', 'w') as f:
-        print('\nDump to manager.toml\n')
+            config_toml["manager"]["pid-file"] = pid_path
+
+        hide_agent = ask_string_in_array("Hide agent and container ID", choices=["True", "False"])
+        config_toml["manager"]["hide-agents"] = hide_agent
+
+        event_loop = ask_string_in_array("Event loop", choices=["asyncio", "uvloop"])
+        config_toml["manager"]["event-loop"] = event_loop
+
+    with open("manager.toml", "w") as f:
+        print("\nDump to manager.toml\n")
         tomlkit.dump(config_toml, f)
 
     # Dump alembic.ini
     config_parser = configparser.ConfigParser()
-    config_parser.read('config/halfstack.alembic.ini')
+    config_parser.read("config/halfstack.alembic.ini")
     # modify database scheme
-    config_parser['alembic']['sqlalchemy.url'] = f'postgresql://{database_user}:{database_password}@' \
-                                          f'{database_address}:{database_port}/{database_name} '
-    with open('alembic.ini', 'w') as f:
-        print('\nDump to alembic.ini\n')
+    if all([x is not None for x in
+            [database_user, database_password, database_name, database_host, database_port]]):
+        config_parser["alembic"]["sqlalchemy.url"] = \
+            f"postgresql://{database_user}:{database_password}" \
+            f"@{database_host}:{database_port}/{database_name}"
+    with open("alembic.ini", 'w') as f:
+        print("\nDump to alembic.ini\n")
         config_parser.write(f)
 
     # Dump etcd config json
-    with open('config/sample.etcd.config.json') as f:
-        config_json = json.load(f)
+    with open("config/sample.etcd.config.json") as f:
+        config_json: dict = json.load(f)
 
-    while True:
+    if type(config_json.get("json")) == dict:
+        redis_config: dict = config_json.get("redis")
         while True:
-            redis_address = input('Input redis host: ')
-            if validate_ip(redis_address):
-                break
-            print('Please input correct redis IP address.')
+            redis_host, redis_port = str(redis_config.get("addr")).split(":")
+            redis_host = ask_host("Redis host: ", redis_host)
+            redis_port = ask_number("Redis port: ", redis_port, 1, 65535)
+            redis_password = ask_string("Redis password", redis_config.get("password"))
+            if redis_password:
+                redis_client = aioredis.Redis(
+                    host=redis_host,
+                    port=redis_port,
+                    password=redis_password)
+            else:
+                redis_client = aioredis.Redis(host=redis_host, port=redis_port)
 
-        while True:
             try:
-                redis_port = int(input('Input redis port: '))
-                if 1 <= redis_port <= 65535:
-                    break
-            except ValueError:
-                print('Please input correct redis port.')
-        redis_password = input('Input redis password. If you don\'t want, just leave empty: ')
+                loop = asyncio.get_event_loop()
+                coroutine = redis_client.get("")
+                loop.run_until_complete(coroutine)
+                redis_client.close()
+                config_json["redis"]["addr"] = f"{redis_host}:{redis_port}"
+                config_json["redis"]["password"] = redis_password
+                break
+            except (aioredis.exceptions.ConnectionError, aioredis.exceptions.BusyLoadingError):
+                print("Cannot connect to etcd. Please input etcd information again.")
 
-        if redis_password:
-            redis_client = aioredis.Redis(
-                host=redis_address,
-                port=redis_port,
-                password=redis_password)
-        else:
-            redis_client = aioredis.Redis(host=redis_address, port=redis_port)
+        while True:
+            timezone = input("System timezone: ")
+            try:
+                _ = ZoneInfo(timezone)
+                config_json["system"]["timezone"] = timezone
+                break
+            except (ValueError, ZoneInfoNotFoundError):
+                print('Please input correct timezone.')
 
-        try:
-            loop = asyncio.get_event_loop()
-            coroutine = redis_client.get("")
-            loop.run_until_complete(coroutine)
-            redis_client.close()
-            break
-        except (aioredis.exceptions.ConnectionError, aioredis.exceptions.BusyLoadingError):
-            print('Cannot connect to etcd. Please input etcd information again.')
-
-    while True:
-        timezone = input('Input system timezone: ')
-        try:
-            _ = ZoneInfo(timezone)
-            break
-        except (ValueError, ZoneInfoNotFoundError):
-            print('Please input correct timezone.')
-
-    config_json['system']['timezone'] = timezone
-    config_json['redis']['addr'] = f'{redis_address}:{redis_port}'
-    config_json['redis']['password'] = redis_password
-
-    with open('dev.etcd.config.json', 'w') as f:
-        print('\nDump to dev.etcd.config.json\n')
+    with open("dev.etcd.config.json", "w") as f:
+        print("\nDump to dev.etcd.config.json\n")
         json.dump(config_json, f, indent=4)
 
     print("Complete configure backend.ai manager. "
@@ -435,14 +370,6 @@ def configure() -> None:
     print("manager.toml : etcd, database, manager configuration, logging options and so on.")
     print("alembic.ini : option about alembic")
     print("dev.etcd.config.json : etcd options like timezone, host, port and so on.")
-
-
-def validate_ip(ip_address: str) -> bool:
-    try:
-        _ = ipaddress.ip_address(ip_address)
-        return True
-    except ValueError:
-        return False
 
 
 def check_etcd_health(host: str, port: int):
