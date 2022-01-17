@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import configparser
-import ipaddress
 import json.decoder
 import logging
 import os
@@ -19,9 +18,10 @@ import etcd3
 import psycopg2
 import tomlkit
 from ai.backend.common.cli import LazyGroup
-from ai.backend.manager.cli.interaction import *
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.validators import TimeDuration
+from ai.backend.manager.cli.interaction import ask_host, ask_number
+from ai.backend.manager.cli.interaction import ask_string, ask_string_in_array, ask_file_path
 from setproctitle import setproctitle
 
 from .context import CLIContext, init_logger
@@ -191,12 +191,12 @@ def configure() -> None:
     # Interactive user input
     # etcd section
     try:
-        etcd_config: dict = config_toml.get("etcd")
+        etcd_config: dict = dict(config_toml.get("etcd"))
         while True:
             try:
-                etcd_address: dict = etcd_config.get("addr")
-                etcd_host = ask_host("Etcd host: ", etcd_address.get("host"))
-                etcd_port = ask_number("Etcd port: ", etcd_address.get("port"), 1, 65535)
+                etcd_address: dict = dict(etcd_config.get("addr"))
+                etcd_host = ask_host("Etcd host: ", str(etcd_address.get("host")))
+                etcd_port = ask_number("Etcd port: ", int(etcd_address.get("port")), 1, 65535)
 
                 if check_etcd_health(etcd_host, etcd_port):
                     break
@@ -204,31 +204,25 @@ def configure() -> None:
             except ValueError:
                 print("Invalid etcd address sample.")
 
-        etcd_user = ask_string("Etcd user name", etcd_config.get("user"))
-        etcd_password = ask_string("Etcd password", etcd_config.get("password"))
+        etcd_user = ask_string("Etcd user name", use_default=False)
+        etcd_password = ask_string("Etcd password", use_default=False)
         config_toml['etcd']['addr'] = {"host": etcd_host, "port": etcd_port}
         config_toml['etcd']['user'] = etcd_user
         config_toml['etcd']['password'] = etcd_password
     except ValueError:
-        print("Invalid sample file.")
+        raise ValueError
 
     # db section
-    database_user = None
-    database_password = None
-    database_name = None
-    database_host = None
-    database_port = None
-    if type(config_toml.get("db")) == dict:
+    try:
+        database_config: dict = dict(config_toml.get("db"))
         while True:
-            database_config: dict = config_toml.get("db")
-            if type(database_config.get("addr")) == dict:
-                database_address: dict = database_config.get("addr")
-                database_host = ask_host("Database host: ", database_address.get("host"))
-                database_port = ask_number("Database port: ", database_address.get("port"), 1, 65535)
-                database_name = ask_string("Database name", database_config.get("name"))
-                database_user = ask_string("Database user", database_config.get("user"))
-                database_password = ask_string("Database password", database_config.get("password"))
-
+            try:
+                database_address: dict = dict(database_config.get("addr"))
+                database_host = ask_host("Database host: ", str(database_address.get("host")))
+                database_port = ask_number("Database port: ", int(database_address.get("port")), 1, 65535)
+                database_name = ask_string("Database name", str(database_config.get("name")))
+                database_user = ask_string("Database user", str(database_config.get("user")))
+                database_password = ask_string("Database password", use_default=False)
                 if check_database_health(
                     database_host,
                     database_port,
@@ -241,10 +235,14 @@ def configure() -> None:
                     config_toml['db']['user'] = database_user
                     config_toml['db']['password'] = database_password
                     break
+            except ValueError:
+                raise ValueError
+    except ValueError:
+        raise ValueError
 
     # manager section
-    if type(config_toml.get('manager')) == dict:
-        manager_config: dict = config_toml.get("manager")
+    try:
+        manager_config: dict = dict(config_toml.get("manager"))
         cpu_count: Optional[int] = os.cpu_count()
         if cpu_count:
             no_of_processors: int = ask_number("How many processors that manager uses: ", 1, 1,
@@ -268,16 +266,18 @@ def configure() -> None:
         else:
             config_toml["manager"].pop("group")
 
-        if type(manager_config.get("service-addr")) == dict:
-            manager_address: dict = manager_config.get("service-addr")
-            manager_host = ask_host("Manager host: ", manager_address.get("host"))
-            manager_port = ask_number("Manager port: ", manager_address.get("port"), 1, 65535)
+        try:
+            manager_address: dict = dict(manager_config.get("service-addr"))
+            manager_host = ask_host("Manager host: ", str(manager_address.get("host")))
+            manager_port = ask_number("Manager port: ", int(manager_address.get("port")), 1, 65535)
             config_toml["manager"]["service-addr"] = {"host": manager_host, "port": manager_port}
+        except ValueError:
+            raise ValueError
 
-        ssl_enabled = ask_string_in_array("Enable SSL", choices=["True", "False"])
-        config_toml["manager"]["ssl-enabled"] = ssl_enabled
+        ssl_enabled = ask_string_in_array("Enable SSL", choices=["true", "false"])
+        config_toml["manager"]["ssl-enabled"] = ssl_enabled == "true"
 
-        if ssl_enabled == "True":
+        if ssl_enabled == "true":
             ssl_cert = ask_file_path("SSL cert path")
             ssl_private_key = ask_file_path("SSL private key path")
             config_toml["manager"]["ssl-cert"] = ssl_cert
@@ -299,11 +299,13 @@ def configure() -> None:
         if pid_path:
             config_toml["manager"]["pid-file"] = pid_path
 
-        hide_agent = ask_string_in_array("Hide agent and container ID", choices=["True", "False"])
-        config_toml["manager"]["hide-agents"] = hide_agent
+        hide_agent = ask_string_in_array("Hide agent and container ID", choices=["true", "false"])
+        config_toml["manager"]["hide-agents"] = hide_agent == "true"
 
         event_loop = ask_string_in_array("Event loop", choices=["asyncio", "uvloop"])
         config_toml["manager"]["event-loop"] = event_loop
+    except ValueError:
+        raise ValueError
 
     with open("manager.toml", "w") as f:
         print("\nDump to manager.toml\n")
@@ -326,13 +328,13 @@ def configure() -> None:
     with open("config/sample.etcd.config.json") as f:
         config_json: dict = json.load(f)
 
-    if type(config_json.get("json")) == dict:
-        redis_config: dict = config_json.get("redis")
+    try:
+        redis_config: dict = dict(config_json.get("redis"))
         while True:
             redis_host, redis_port = str(redis_config.get("addr")).split(":")
-            redis_host = ask_host("Redis host: ", redis_host)
-            redis_port = ask_number("Redis port: ", redis_port, 1, 65535)
-            redis_password = ask_string("Redis password", redis_config.get("password"))
+            redis_host = ask_host("Redis host: ", str(redis_host))
+            redis_port = ask_number("Redis port: ", int(redis_port), 1, 65535)
+            redis_password = ask_string("Redis password", use_default=False)
             if redis_password:
                 redis_client = aioredis.Redis(
                     host=redis_host,
@@ -345,7 +347,8 @@ def configure() -> None:
                 loop = asyncio.get_event_loop()
                 coroutine = redis_client.get("")
                 loop.run_until_complete(coroutine)
-                redis_client.close()
+                coroutine = redis_client.close()
+                loop.run_until_complete(coroutine)
                 config_json["redis"]["addr"] = f"{redis_host}:{redis_port}"
                 config_json["redis"]["password"] = redis_password
                 break
@@ -360,6 +363,8 @@ def configure() -> None:
                 break
             except (ValueError, ZoneInfoNotFoundError):
                 print('Please input correct timezone.')
+    except ValueError:
+        raise ValueError
 
     with open("dev.etcd.config.json", "w") as f:
         print("\nDump to dev.etcd.config.json\n")
@@ -378,6 +383,7 @@ def check_etcd_health(host: str, port: int):
         etcd_client.close()
     except (etcd3.exceptions.ConnectionFailedError, etcd3.exceptions.ConnectionTimeoutError):
         return False
+    return True
 
 
 def check_database_health(host: str, port: int, database_name: str, user: str, password: str):
