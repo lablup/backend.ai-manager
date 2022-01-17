@@ -23,6 +23,7 @@ from ai.backend.common.validators import TimeDuration
 from ai.backend.manager.cli.interaction import ask_host, ask_number
 from ai.backend.manager.cli.interaction import ask_string, ask_string_in_array, ask_file_path
 from setproctitle import setproctitle
+from tomlkit.items import Table, InlineTable
 
 from .context import CLIContext, init_logger
 from ..config import load as load_config
@@ -191,13 +192,23 @@ def configure() -> None:
     # Interactive user input
     # etcd section
     try:
+        if config_toml.get("etcd") is None:
+            raise KeyError
+        elif type(config_toml.get("etcd")) != Table:
+            raise TypeError
         etcd_config: dict = dict(config_toml.get("etcd"))
         while True:
             try:
+                if etcd_config.get("addr") is None:
+                    raise KeyError
+                elif type(etcd_config.get("addr")) != InlineTable:
+                    raise TypeError
                 etcd_address: dict = dict(etcd_config.get("addr"))
                 etcd_host = ask_host("Etcd host: ", str(etcd_address.get("host")))
-                etcd_port = ask_number("Etcd port: ", int(etcd_address.get("port")), 1, 65535)
-
+                if type(etcd_address.get("port")) != str:
+                    etcd_port = ask_number("Etcd port: ", int(etcd_address.get("port")), 1, 65535)
+                else:
+                    raise TypeError
                 if check_etcd_health(etcd_host, etcd_port):
                     break
                 print("Cannot connect to etcd. Please input etcd information again.")
@@ -214,12 +225,24 @@ def configure() -> None:
 
     # db section
     try:
+        if config_toml.get("db") is None:
+            raise KeyError
+        elif type(config_toml.get("db")) != Table:
+            raise TypeError
         database_config: dict = dict(config_toml.get("db"))
         while True:
             try:
+                if database_config.get("addr") is None:
+                    raise KeyError
+                elif type(database_config.get("addr")) != InlineTable:
+                    raise TypeError
                 database_address: dict = dict(database_config.get("addr"))
                 database_host = ask_host("Database host: ", str(database_address.get("host")))
-                database_port = ask_number("Database port: ", int(database_address.get("port")), 1, 65535)
+                if type(database_address.get("port")) != str:
+                    database_port = ask_number("Database port: ",
+                                               int(database_address.get("port")), 1, 65535)
+                else:
+                    raise TypeError
                 database_name = ask_string("Database name", str(database_config.get("name")))
                 database_user = ask_string("Database user", str(database_config.get("user")))
                 database_password = ask_string("Database password", use_default=False)
@@ -242,6 +265,10 @@ def configure() -> None:
 
     # manager section
     try:
+        if config_toml.get("manager") is None:
+            raise KeyError
+        elif type(config_toml.get("manager")) != Table:
+            raise TypeError
         manager_config: dict = dict(config_toml.get("manager"))
         cpu_count: Optional[int] = os.cpu_count()
         if cpu_count:
@@ -267,9 +294,16 @@ def configure() -> None:
             config_toml["manager"].pop("group")
 
         try:
+            if manager_config.get("service-addr") is None:
+                raise KeyError
+            elif type(manager_config.get("service-addr")) != InlineTable:
+                raise TypeError
             manager_address: dict = dict(manager_config.get("service-addr"))
             manager_host = ask_host("Manager host: ", str(manager_address.get("host")))
-            manager_port = ask_number("Manager port: ", int(manager_address.get("port")), 1, 65535)
+            if type(manager_address.get("port")) != str:
+                manager_port = ask_number("Manager port: ", int(manager_address.get("port")), 1, 65535)
+            else:
+                raise TypeError
             config_toml["manager"]["service-addr"] = {"host": manager_host, "port": manager_port}
         except ValueError:
             raise ValueError
@@ -329,11 +363,17 @@ def configure() -> None:
         config_json: dict = json.load(f)
 
     try:
+        if config_json.get("redis") is None:
+            raise KeyError
+        elif type(config_json.get("redis")) != dict:
+            raise TypeError
         redis_config: dict = dict(config_json.get("redis"))
         while True:
-            redis_host, redis_port = str(redis_config.get("addr")).split(":")
-            redis_host = ask_host("Redis host: ", str(redis_host))
-            redis_port = ask_number("Redis port: ", int(redis_port), 1, 65535)
+            redis_host_str, redis_port_str = str(redis_config.get("addr")).split(":")
+            redis_host = ask_host("Redis host: ", str(redis_host_str))
+            if type(redis_port_str) != str:
+                raise TypeError
+            redis_port = ask_number("Redis port: ", int(redis_port_str), 1, 65535)
             redis_password = ask_string("Redis password", use_default=False)
             if redis_password:
                 redis_client = aioredis.Redis(
