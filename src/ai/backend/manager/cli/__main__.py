@@ -192,21 +192,19 @@ def configure() -> None:
     # Interactive user input
     # etcd section
     try:
-        if config_toml.get("etcd") is None:
-            raise KeyError
-        elif type(config_toml.get("etcd")) != Table:
+        if type(config_toml.get("etcd")) != dict:
             raise TypeError
-        etcd_config: dict = dict(config_toml.get("etcd"))
+        etcd_config: dict = dict(config_toml["etcd"])
         while True:
             try:
                 if etcd_config.get("addr") is None:
                     raise KeyError
                 elif type(etcd_config.get("addr")) != InlineTable:
                     raise TypeError
-                etcd_address: dict = dict(etcd_config.get("addr"))
-                etcd_host = ask_host("Etcd host: ", str(etcd_address.get("host")))
+                etcd_address: dict = dict(etcd_config["addr"])
+                etcd_host = ask_host("Etcd host: ", etcd_address["host"])
                 if type(etcd_address.get("port")) != str:
-                    etcd_port = ask_number("Etcd port: ", int(etcd_address.get("port")), 1, 65535)
+                    etcd_port = ask_number("Etcd port: ", int(etcd_address["port"]), 1, 65535)
                 else:
                     raise TypeError
                 if check_etcd_health(etcd_host, etcd_port):
@@ -229,18 +227,18 @@ def configure() -> None:
             raise KeyError
         elif type(config_toml.get("db")) != Table:
             raise TypeError
-        database_config: dict = dict(config_toml.get("db"))
+        database_config: dict = dict(config_toml["db"])
         while True:
             try:
                 if database_config.get("addr") is None:
                     raise KeyError
                 elif type(database_config.get("addr")) != InlineTable:
                     raise TypeError
-                database_address: dict = dict(database_config.get("addr"))
+                database_address: dict = dict(database_config["addr"])
                 database_host = ask_host("Database host: ", str(database_address.get("host")))
                 if type(database_address.get("port")) != str:
                     database_port = ask_number("Database port: ",
-                                               int(database_address.get("port")), 1, 65535)
+                                               int(database_address["port"]), 1, 65535)
                 else:
                     raise TypeError
                 database_name = ask_string("Database name", str(database_config.get("name")))
@@ -269,7 +267,7 @@ def configure() -> None:
             raise KeyError
         elif type(config_toml.get("manager")) != Table:
             raise TypeError
-        manager_config: dict = dict(config_toml.get("manager"))
+        manager_config: dict = dict(config_toml["manager"])
         cpu_count: Optional[int] = os.cpu_count()
         if cpu_count:
             no_of_processors: int = ask_number("How many processors that manager uses: ", 1, 1,
@@ -298,10 +296,10 @@ def configure() -> None:
                 raise KeyError
             elif type(manager_config.get("service-addr")) != InlineTable:
                 raise TypeError
-            manager_address: dict = dict(manager_config.get("service-addr"))
-            manager_host = ask_host("Manager host: ", str(manager_address.get("host")))
+            manager_address: dict = dict(manager_config["service-addr"])
+            manager_host = ask_host("Manager host: ", manager_address["host"])
             if type(manager_address.get("port")) != str:
-                manager_port = ask_number("Manager port: ", int(manager_address.get("port")), 1, 65535)
+                manager_port = ask_number("Manager port: ", int(manager_address["port"]), 1, 65535)
             else:
                 raise TypeError
             config_toml["manager"]["service-addr"] = {"host": manager_host, "port": manager_port}
@@ -367,7 +365,7 @@ def configure() -> None:
             raise KeyError
         elif type(config_json.get("redis")) != dict:
             raise TypeError
-        redis_config: dict = dict(config_json.get("redis"))
+        redis_config: dict = dict(config_json["redis"])
         while True:
             redis_host_str, redis_port_str = str(redis_config.get("addr")).split(":")
             redis_host = ask_host("Redis host: ", str(redis_host_str))
