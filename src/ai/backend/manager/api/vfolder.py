@@ -321,6 +321,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
             folder_id = uuid.uuid4()
             if not unmanaged_path:
                 # Try to create actual only if vFolder is managed one
+                print("debug ", folder_host, root_ctx.storage_manager.split_host(folder_host))
+
                 async with root_ctx.storage_manager.request(
                     folder_host, 'POST', 'folder/create',
                     json={
@@ -887,6 +889,7 @@ async def update_vfolder_options(request: web.Request, params: Any, row: VFolder
     }))
 async def mkdir(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
+    root_ctx.storage_manager.request
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.MKDIR (ak:{}, vf:{}, path:{})', access_key, folder_name, params['path'])
