@@ -20,8 +20,8 @@ import tomlkit
 from ai.backend.common.cli import LazyGroup
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.validators import TimeDuration
-from ai.backend.manager.cli.interaction import ask_host, ask_number
-from ai.backend.manager.cli.interaction import ask_string, ask_string_in_array, ask_file_path
+from ai.backend.cli.interaction import ask_host, ask_number
+from ai.backend.cli.interaction import ask_string, ask_string_in_array, ask_file_path
 from setproctitle import setproctitle
 from tomlkit.items import Table, InlineTable
 
