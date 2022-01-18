@@ -192,7 +192,9 @@ def configure() -> None:
     # Interactive user input
     # etcd section
     try:
-        if type(config_toml.get("etcd")) != dict:
+        if config_toml.get("etcd") is None:
+            raise KeyError
+        elif type(config_toml.get("etcd")) != Table:
             raise TypeError
         etcd_config: dict = dict(config_toml["etcd"])
         while True:
