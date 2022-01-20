@@ -98,7 +98,7 @@ def check_task_template(raw_data: Mapping[str, Any]) -> Mapping[str, Any]:
                 continue
             if not p.startswith('/'):
                 raise InvalidArgument(f'Path {p} should be absolute path')
-            if not verify_vfolder_name(p.replace('/home/work/', '')):
+            if not verify_vfolder_name(p.replace('/', '')):
                 raise InvalidArgument(f'Path {p} is reserved for internal operations.')
     return data
 

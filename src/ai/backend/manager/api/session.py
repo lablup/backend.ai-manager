@@ -409,6 +409,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
 
         alias_name: str
         for alias_name in alias_folders:
+            alias_name = alias_name.replace('/', '')
             if alias_name is None:
                 continue
             if alias_name == '':
