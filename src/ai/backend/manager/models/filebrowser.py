@@ -94,34 +94,6 @@ class BrowserSessionManager:
         print("Split host result: ", proxy_name, volume_name)
         return proxy_name, volume_name
 
-    async def get_all_volumes(self) -> Iterable[Tuple[str, VolumeInfo]]:
-        try:
-            # per-asyncio-task cache
-            return _ctx_volumes_cache.get()
-        except LookupError:
-            pass
-        fetch_aws = []
-
-        async def _fetch(
-            proxy_name: str,
-            proxy_info: StorageProxyInfo,
-        ) -> Iterable[Tuple[str, VolumeInfo]]:
-            print("Proxy address: ", proxy_info.manager_api_url / 'volumes')
-            async with proxy_info.session.request(
-                'GET', proxy_info.manager_api_url / 'volumes',
-                raise_for_status=True,
-                headers={AUTH_TOKEN_HDR: proxy_info.secret},
-            ) as resp:
-                reply = await resp.json()
-                print("volume_Data: ", reply)
-                return ((proxy_name, volume_data) for volume_data in reply['volumes'])
-
-        for proxy_name, proxy_info in self._proxies.items():
-            fetch_aws.append(_fetch(proxy_name, proxy_info))
-        results = [*itertools.chain(*await asyncio.gather(*fetch_aws))]
-        _ctx_volumes_cache.set(results)
-        return results
-
     async def get_mount_path(self, vfolder_host: str, vfolder_id: UUID) -> str:
         async with self.request(
             vfolder_host, 'GET', 'folder/mount',
@@ -146,6 +118,7 @@ class BrowserSessionManager:
         proxy_name, _ = self.split_host(vfolder_host_or_proxy_name)
         try:
             proxy_info = self._proxies[proxy_name]
+            print("proxy info ", proxy_info)
         except KeyError:
             raise InvalidArgument('There is no such storage proxy', proxy_name)
         headers = kwargs.pop('headers', {})
