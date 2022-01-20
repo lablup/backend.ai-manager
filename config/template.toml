@@ -1,0 +1,71 @@
+[etcd]
+namespace = "local"
+addr = { host = "127.0.0.1", port = 2379 }
+user = "manager"
+password = "ETCD_PASSWORD"
+
+
+[db]
+type = "postgresql"
+addr = { host = "localhost", port = 5432 }
+name = "backend"
+user = "postgres"
+password = "DB_PASSWORD"
+
+
+[manager]
+num-proc = 4
+secret = "XXXXXXXXXXXXXX"
+user = "nobody"
+group = "nobody"
+service-addr = { host = "0.0.0.0", port = 8080 }
+ssl-enabled = false
+ssl-cert = "/etc/backend.ai/ssl/apiserver-fullchain.pem"
+ssl-privkey = "/etc/backend.ai/ssl/apiserver-privkey.pem"
+heartbeat-timeout = 30.0
+id = ""
+pid-file = "./manager.pid"
+disabled-plugins = []
+hide-agents = false
+event-loop = "asyncio"
+importer-image = "lablup/importer:manylinux2010"
+
+
+[docker-registry]
+ssl-verify = false
+
+
+[logging]
+level = "INFO"
+drivers = ["console", "file"]
+
+
+[logging.console]
+colored = true
+format = "verbose"
+
+
+[logging.file]
+path = "./logs"
+filename = "manager.log"
+backup-count = 5
+rotation-size = "10M"
+
+
+[logging.logstash]
+endpoint = { host = "localhost", port = 9300 }
+protocol = "tcp"
+ssl-enabled = true
+ssl-verify = true
+
+[logging.pkg-ns]
+"" = "WARNING"
+"aiotools" = "INFO"
+"aiohttp" = "INFO"
+"ai.backend" = "INFO"
+"alembic" = "INFO"
+"sqlalchemy" = "WARNING"
+
+
+[debug]
+enabled = false
