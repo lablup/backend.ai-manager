@@ -325,6 +325,7 @@ class Agent(graphene.ObjectType):
 
 class ModifyAgentInput(graphene.InputObjectType):
     schedulable = graphene.Boolean(required=False, default=True)
+    scaling_group = graphene.String(required=False)
 
 
 class AgentList(graphene.ObjectType):
@@ -385,6 +386,8 @@ class ModifyAgent(graphene.Mutation):
         graph_ctx: GraphQueryContext = info.context
         data: Dict[str, Any] = {}
         set_if_set(props, data, 'schedulable')
+        set_if_set(props, data, 'scaling_group')
+        await graph_ctx.registry.update_scaling_group(id, data['scaling_group'])
 
         update_query = (
             sa.update(agents).values(data).where(agents.c.id == id)
