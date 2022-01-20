@@ -46,6 +46,7 @@ from ai.backend.common.types import (
     AgentId,
     ClusterMode,
     ResourceSlot,
+    SessionTypes,
 )
 
 from ..api.exceptions import InstanceNotAvailable
@@ -731,16 +732,28 @@ class SchedulerDispatcher(aobject):
                 log.debug("prepare(): preparing {} session(s)", len(scheduled_sessions))
                 async with aiotools.TaskGroup() as tg:
                     for scheduled_session in scheduled_sessions:
-                        await self.registry.event_producer.produce_event(
-                            SessionPreparingEvent(
-                                scheduled_session.session_id,
-                                scheduled_session.session_creation_id,
-                            ),
-                        )
-                        tg.create_task(self.start_session(
-                            sched_ctx,
-                            scheduled_session,
-                        ))
+                        sgroup_name = scheduled_session.scaling_group
+                        async with self.db.begin() as conn:
+                            query = (
+                            sa.select(scaling_groups.c.scheduler_opts)
+                            .select_from(scaling_groups)
+                            .where(scaling_groups.c.name == sgroup_name)
+                            )
+                            result = await conn.execute(query)
+                            row = result.first()
+                            allowed_session_type = row['scheduler_opts']['allowed_session_type']
+                        if(scheduled_session.session_type.value == allowed_session_type.lower()):
+                            await self.registry.event_producer.produce_event(
+                                SessionPreparingEvent(
+                                    scheduled_session.session_id,
+                                    scheduled_session.session_creation_id,
+                                ),
+                            )
+                            tg.create_task(self.start_session(
+                                sched_ctx,
+                                scheduled_session,
+                            ))
+
         except DBAPIError as e:
             if getattr(e.orig, 'pgcode', None) == '55P03':
                 log.info("prepare(): cancelled due to advisory lock timeout; "
