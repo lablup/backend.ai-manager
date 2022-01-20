@@ -28,11 +28,15 @@ jobs:
           export GHBRANCH="${GITHUB_REF#refs/heads/}"
         fi
         echo "HEAD: ${GHBRANCH} (${GITHUB_REF}, ${GITHUB_HEAD_REF})"
-        # Use the same branch (if exists) for the backend.ai-common installation
+        # Use the same branch (if exists) for the backend.ai-common and backend.ai-cli installation
         set +e
         git ls-remote --heads 'https://github.com/lablup/backend.ai-common' | grep -q "refs/heads/${GHBRANCH}"
         if [ $? -eq 0 ]; then
           sed -i "s%\(backend.ai-common\)@main%\1@${GHBRANCH}%" requirements/${REQUIREMENTS_FILE}.txt
+        fi
+        git ls-remote --heads 'https://github.com/lablup/backend.ai-cli' | grep -q "refs/heads/${GHBRANCH}"
+        if [ $? -eq 0 ]; then
+          sed -i "s%\(backend.ai-cli\)@main%\1@${GHBRANCH}%" requirements/${REQUIREMENTS_FILE}.txt
         fi
         set -e
         python -m pip install -U -r requirements/${REQUIREMENTS_FILE}.txt
@@ -70,11 +74,15 @@ jobs:
           export GHBRANCH="${GITHUB_REF#refs/heads/}"
         fi
         echo "HEAD: ${GHBRANCH} (${GITHUB_REF}, ${GITHUB_HEAD_REF})"
-        # Use the same branch (if exists) for the backend.ai-common installation
+        # Use the same branch (if exists) for the backend.ai-common and backend.ai-cli installation
         set +e
         git ls-remote --heads 'https://github.com/lablup/backend.ai-common' | grep -q "refs/heads/${GHBRANCH}"
         if [ $? -eq 0 ]; then
           sed -i "s%\(backend.ai-common\)@main%\1@${GHBRANCH}%" requirements/${REQUIREMENTS_FILE}.txt
+        fi
+        git ls-remote --heads 'https://github.com/lablup/backend.ai-cli' | grep -q "refs/heads/${GHBRANCH}"
+        if [ $? -eq 0 ]; then
+          sed -i "s%\(backend.ai-cli\)@main%\1@${GHBRANCH}%" requirements/${REQUIREMENTS_FILE}.txt
         fi
         set -e
         python -m pip install -U -r requirements/${REQUIREMENTS_FILE}.txt
@@ -132,11 +140,15 @@ jobs:
           export GHBRANCH="${GITHUB_REF#refs/heads/}"
         fi
         echo "HEAD: ${GHBRANCH} (${GITHUB_REF}, ${GITHUB_HEAD_REF})"
-        # Use the same branch (if exists) for the backend.ai-common installation
+        # Use the same branch (if exists) for the backend.ai-common and backend.ai-cli installation
         set +e
         git ls-remote --heads 'https://github.com/lablup/backend.ai-common' | grep -q "refs/heads/${GHBRANCH}"
         if [ $? -eq 0 ]; then
           sed -i "s%\(backend.ai-common\)@main%\1@${GHBRANCH}%" requirements/${REQUIREMENTS_FILE}.txt
+        fi
+        git ls-remote --heads 'https://github.com/lablup/backend.ai-cli' | grep -q "refs/heads/${GHBRANCH}"
+        if [ $? -eq 0 ]; then
+          sed -i "s%\(backend.ai-cli\)@main%\1@${GHBRANCH}%" requirements/${REQUIREMENTS_FILE}.txt
         fi
         set -e
         python -m pip install -U -r requirements/${REQUIREMENTS_FILE}.txt
@@ -195,11 +207,15 @@ jobs:
           export GHBRANCH="${GITHUB_REF#refs/heads/}"
         fi
         echo "HEAD: ${GHBRANCH} (${GITHUB_REF}, ${GITHUB_HEAD_REF})"
-        # Use the same branch (if exists) for the backend.ai-common installation
+        # Use the same branch (if exists) for the backend.ai-common and backend.ai-cli installation
         set +e
         git ls-remote --heads 'https://github.com/lablup/backend.ai-common' | grep -q "refs/heads/${GHBRANCH}"
         if [ $? -eq 0 ]; then
           sed -i "s%\(backend.ai-common\)@main%\1@${GHBRANCH}%" requirements/${REQUIREMENTS_FILE}.txt
+        fi
+        git ls-remote --heads 'https://github.com/lablup/backend.ai-cli' | grep -q "refs/heads/${GHBRANCH}"
+        if [ $? -eq 0 ]; then
+          sed -i "s%\(backend.ai-cli\)@main%\1@${GHBRANCH}%" requirements/${REQUIREMENTS_FILE}.txt
         fi
         set -e
         python -m pip install -U -r requirements/${REQUIREMENTS_FILE}.txt
