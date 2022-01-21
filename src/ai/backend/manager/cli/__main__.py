@@ -187,7 +187,7 @@ def configure() -> None:
     Take necessary inputs from user and generate toml file.
     """
     # toml section
-    with open("config/sample.toml", "r") as f:
+    with open("config/template.toml", "r") as f:
         config_toml: dict = dict(tomlkit.loads(f.read()))
     # Interactive user input
     # etcd section
@@ -197,6 +197,11 @@ def configure() -> None:
         elif type(config_toml.get("etcd")) != Table:
             raise TypeError
         etcd_config: dict = dict(config_toml["etcd"])
+
+        etcd_namespace = ask_string("Etcd name space: ",
+                                    etcd_config["namespace"] if etcd_config.get("namespace") else "")
+        config_toml["etcd"]["namespace"] = etcd_namespace
+
         while True:
             try:
                 if etcd_config.get("addr") is None:
@@ -217,9 +222,9 @@ def configure() -> None:
 
         etcd_user = ask_string("Etcd user name", use_default=False)
         etcd_password = ask_string("Etcd password", use_default=False)
-        config_toml['etcd']['addr'] = {"host": etcd_host, "port": etcd_port}
-        config_toml['etcd']['user'] = etcd_user
-        config_toml['etcd']['password'] = etcd_password
+        config_toml["etcd"]["addr"] = {"host": etcd_host, "port": etcd_port}
+        config_toml["etcd"]["user"] = etcd_user
+        config_toml["etcd"]["password"] = etcd_password
     except ValueError:
         raise ValueError
 
@@ -230,6 +235,10 @@ def configure() -> None:
         elif type(config_toml.get("db")) != Table:
             raise TypeError
         database_config: dict = dict(config_toml["db"])
+
+        database_type = ask_string_in_array("Database type", "postgresql", ["postgresql"])
+        config_toml["db"]["type"] = database_type
+
         while True:
             try:
                 if database_config.get("addr") is None:
@@ -253,10 +262,10 @@ def configure() -> None:
                     database_user,
                     database_password,
                 ):
-                    config_toml['db']['addr'] = {"host": database_address, "port": database_port}
-                    config_toml['db']['name'] = database_name
-                    config_toml['db']['user'] = database_user
-                    config_toml['db']['password'] = database_password
+                    config_toml["db"]["addr"] = {"host": database_address, "port": database_port}
+                    config_toml["db"]["name"] = database_name
+                    config_toml["db"]["user"] = database_user
+                    config_toml["db"]["password"] = database_password
                     break
             except ValueError:
                 raise ValueError
@@ -316,7 +325,9 @@ def configure() -> None:
             ssl_private_key = ask_file_path("SSL private key path")
             config_toml["manager"]["ssl-cert"] = ssl_cert
             config_toml["manager"]["ssl-privkey"] = ssl_private_key
-
+        else:
+            config_toml["manager"].pop("ssl-cert")
+            config_toml["manager"].pop("ssl-privkey")
         while True:
             try:
                 heartbeat_timeout = float(input("Heartbeat timeout: "))
@@ -328,16 +339,25 @@ def configure() -> None:
         node_name = ask_string("Manager node name", use_default=False)
         if node_name:
             config_toml["manager"]["id"] = node_name
+        else:
+            config_toml["manager"].pop("id")
 
-        pid_path = ask_file_path("PID file path")
-        if pid_path:
+        pid_path = ask_string("PID file path", use_default=False)
+        if pid_path == "":
+            config_toml["manager"].pop("pid-file")
+        elif pid_path and os.path.exists(pid_path):
             config_toml["manager"]["pid-file"] = pid_path
 
         hide_agent = ask_string_in_array("Hide agent and container ID", choices=["true", "false"])
         config_toml["manager"]["hide-agents"] = hide_agent == "true"
 
-        event_loop = ask_string_in_array("Event loop", choices=["asyncio", "uvloop"])
-        config_toml["manager"]["event-loop"] = event_loop
+        event_loop = ask_string_in_array("Event loop", choices=["asyncio", "uvloop", ""])
+        if event_loop:
+            config_toml["manager"]["event-loop"] = event_loop
+        else:
+            config_toml["manager"].pop("event-loop")
+        config_toml["manager"].pop("importer-image")
+
     except ValueError:
         raise ValueError
 
