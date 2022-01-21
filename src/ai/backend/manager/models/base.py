@@ -210,7 +210,7 @@ class StructuredJSONBColumn(TypeDecorator):
         schedulerOption = t.Dict(
             {
                 tx.AliasedKey(['allowed_session_type', 'session_type', 'sessionType'],
-                                default='interactive') >> 'allowed_session_type': tx.Enum(SessionTypes)
+                                default='interactive') >> 'allowed_session_type': tx.Enum(SessionTypes),
             }).allow_extra('*')
         allowed_session_type = {'allowed_session_type': raw_value.get('allowed_session_type').lower()}
         schedulerOption.check(allowed_session_type)
