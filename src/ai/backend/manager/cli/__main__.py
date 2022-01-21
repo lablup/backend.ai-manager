@@ -392,23 +392,17 @@ def configure() -> None:
         config_parser["alembic"].pop("truncate_slug_length")
 
     revision_environment = ask_string_in_array("Revision Environment", choices=["true", "false", ""])
-    if revision_environment:
-        config_parser["alembic"]["revision_environment"] = revision_environment == "true"
+    if revision_environment.strip():
+        config_parser["alembic"]["revision_environment"] = revision_environment
     else:
         config_parser["alembic"].pop("revision_environment")
 
     sourceless = ask_string_in_array("Sourceless(set to 'true' to allow .pyc and .pyo files "
                                      "without a source .py)", choices=["true", "false", ""])
-    if sourceless:
-        config_parser["alembic"]["sourceless"] = sourceless == "true"
+    if sourceless.strip():
+        config_parser["alembic"]["sourceless"] = sourceless
     else:
         config_parser["alembic"].pop("sourceless")
-
-    version_locations = ask_string("Version locations: ", use_default=False)
-    if version_locations:
-        config_parser["alembic"]["version_locations"] = version_locations
-    else:
-        config_parser["alembic"].pop("version_locations")
 
     # modify database scheme
     if all([x is not None for x in
@@ -465,13 +459,6 @@ def configure() -> None:
     config_parser["handler_console"]["args"] = handler_console_args
     config_parser["handler_console"]["level"] = handler_console_level
     config_parser["handler_console"]["formatter"] = handler_console_formatter
-
-    formatter_generic_format = ask_string("Formatter generic format",
-                                          default=config_parser["formatter_generic"]["format"])
-    formatter_generic_datefmt = ask_string("Formatter generic datefmt",
-                                           default=config_parser["formatter_generic"]["datefmt"])
-    config_parser["formatter_generic"]["format"] = formatter_generic_format
-    config_parser["formatter_generic"]["datefmt"] = formatter_generic_datefmt
 
     with open("alembic.ini", 'w') as f:
         print("\nDump to alembic.ini\n")
