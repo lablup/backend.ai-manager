@@ -198,8 +198,9 @@ class StructuredJSONBColumn(TypeDecorator):
     """
     A column type check scheduler_opts's validation using trafaret.
     """
-    impl=JSONB
-    cache_ok=True
+
+    impl = JSONB
+    cache_ok = True
 
     def process_bind_param(self, value, dialect):
         return value if value is not None else None
@@ -207,10 +208,11 @@ class StructuredJSONBColumn(TypeDecorator):
     def process_result_value(self, raw_value, dialect):
         # legacy handling
         schedulerOption = t.Dict(
-        { tx.AliasedKey(['allowed_session_type','session_type', 'sessionType'],
-                default='interactive') >> 'allowed_session_type': tx.Enum(SessionTypes)
-        }).allow_extra('*')
-        allowed_session_type = {'allowed_session_type' : raw_value.get('allowed_session_type').lower()}
+            {
+                tx.AliasedKey(['allowed_session_type', 'session_type', 'sessionType'],
+                                default='interactive') >> 'allowed_session_type': tx.Enum(SessionTypes)
+            }).allow_extra('*')
+        allowed_session_type = {'allowed_session_type': raw_value.get('allowed_session_type').lower()}
         schedulerOption.check(allowed_session_type)
         return raw_value if raw_value is not None else None
 
