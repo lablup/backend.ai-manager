@@ -2562,49 +2562,33 @@ class AgentRegistry:
         self, kernel_ids: Sequence[KernelId],
     ) -> None:
         per_kernel_updates = {}
-
+        log.debug('sync_kernel_stats(k:{!r})', kernel_ids)
         for kernel_id in kernel_ids:
             raw_kernel_id = str(kernel_id)
-            log.debug('sync_kernel_stats(k:{})', kernel_id)
-            updates = {}
-
-            async def _get_kstats_from_redis(r: Redis):
-                stat_type = await redis.execute(r, lambda r: r.type(raw_kernel_id), encoding='utf-8')
-                if stat_type == 'string':
-                    kern_stat = await r.get(raw_kernel_id)
-                    if kern_stat is not None:
-                        updates['last_stat'] = msgpack.unpackb(kern_stat)
-                else:
-                    kern_stat = await r.hgetall(raw_kernel_id)
-                    if kern_stat is not None and 'cpu_used' in kern_stat:
-                        updates.update({
-                            'cpu_used': int(float(kern_stat['cpu_used'])),
-                            'mem_max_bytes': int(kern_stat['mem_max_bytes']),
-                            'net_rx_bytes': int(kern_stat['net_rx_bytes']),
-                            'net_tx_bytes': int(kern_stat['net_tx_bytes']),
-                            'io_read_bytes': int(kern_stat['io_read_bytes']),
-                            'io_write_bytes': int(kern_stat['io_write_bytes']),
-                            'io_max_scratch_size': int(kern_stat['io_max_scratch_size']),
-                        })
-
-            await redis.execute(
+            kern_stat = await redis.execute(
                 self.redis_stat,
-                _get_kstats_from_redis,
+                lambda r: r.get(raw_kernel_id),
             )
-            if not updates:
+            if kern_stat is None:
                 log.warning('sync_kernel_stats(k:{}): no statistics updates', kernel_id)
                 continue
-            per_kernel_updates[kernel_id] = updates
+            else:
+                per_kernel_updates[kernel_id] = msgpack.unpackb(kern_stat)
 
         async def _update():
             async with self.db.begin() as conn:
+                update_query = (
+                    sa.update(kernels)
+                    .where(kernels.c.id == sa.bindparam('kernel_id'))
+                    .values({kernels.c.last_stat: sa.bindparam('last_stat')})
+                )
+                params = []
                 for kernel_id, updates in per_kernel_updates.items():
-                    update_query = (
-                        sa.update(kernels)
-                        .values(updates)
-                        .where(kernels.c.id == kernel_id)
-                    )
-                    await conn.execute(update_query)
+                    params.append({
+                        'kernel_id': kernel_id,
+                        'last_stat': updates,
+                    })
+                await conn.execute(update_query, params)
 
         await execute_with_retry(_update)
 
