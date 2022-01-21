@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager as actxmgr
+from contextlib import asynccontextmanager as actxmgr, closing
 from datetime import datetime
 import functools
 import importlib
@@ -321,6 +321,7 @@ async def event_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
         root_ctx.shared_config.data['redis'],
         db=REDIS_STREAM_DB,
         log_events=root_ctx.local_config['debug']['log-events'],
+        node_id=root_ctx.local_config['manager']['id'],
     )
     yield
     await root_ctx.event_dispatcher.close()
@@ -539,7 +540,10 @@ def build_root_app(
     async def _call_cleanup_context_shutdown_handlers(app: web.Application) -> None:
         for cctx in app['_cctx_instances']:
             if hasattr(cctx, 'shutdown'):
-                await cctx.shutdown()
+                try:
+                    await cctx.shutdown()
+                except Exception:
+                    log.exception("error while shutting down a cleanup context")
 
     app['_cctx_instances'] = []
     app.on_shutdown.append(_call_cleanup_context_shutdown_handlers)
@@ -588,59 +592,61 @@ async def server_main(
     root_app = build_root_app(pidx, _args[0], subapp_pkgs=subapp_pkgs)
     root_ctx: RootContext = root_app['_root.context']
 
+    # Start aiomonitor.
+    # Port is set by config (default=50001).
+    m = aiomonitor.Monitor(
+        loop,
+        port=root_ctx.local_config['manager']['aiomonitor-port'] + pidx,
+        console_enabled=False,
+    )
+    m.prompt = f"monitor (manager[{pidx}@{os.getpid()}]) >>> "
+    m.start()
+
     # Plugin webapps should be loaded before runner.setup(),
     # which freezes on_startup event.
-    async with shared_config_ctx(root_ctx), \
-               webapp_plugin_ctx(root_app):
-        ssl_ctx = None
-        if root_ctx.local_config['manager']['ssl-enabled']:
-            ssl_ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-            ssl_ctx.load_cert_chain(
-                str(root_ctx.local_config['manager']['ssl-cert']),
-                str(root_ctx.local_config['manager']['ssl-privkey']),
+    with closing(m):
+        async with (
+            shared_config_ctx(root_ctx),
+            webapp_plugin_ctx(root_app),
+        ):
+            ssl_ctx = None
+            if root_ctx.local_config['manager']['ssl-enabled']:
+                ssl_ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+                ssl_ctx.load_cert_chain(
+                    str(root_ctx.local_config['manager']['ssl-cert']),
+                    str(root_ctx.local_config['manager']['ssl-privkey']),
+                )
+
+            runner = web.AppRunner(root_app, keepalive_timeout=30.0)
+            await runner.setup()
+            service_addr = root_ctx.local_config['manager']['service-addr']
+            site = web.TCPSite(
+                runner,
+                str(service_addr.host),
+                service_addr.port,
+                backlog=1024,
+                reuse_port=True,
+                ssl_context=ssl_ctx,
             )
+            await site.start()
 
-        # Start aiomonitor.
-        # Port is set by config (default=50001).
-        m = aiomonitor.Monitor(
-            loop,
-            port=root_ctx.local_config['manager']['aiomonitor-port'],
-            console_enabled=False,
-        )
-        m.prompt = "monitor (manager) >>> "
-        m.start()
+            if os.geteuid() == 0:
+                uid = root_ctx.local_config['manager']['user']
+                gid = root_ctx.local_config['manager']['group']
+                os.setgroups([
+                    g.gr_gid for g in grp.getgrall()
+                    if pwd.getpwuid(uid).pw_name in g.gr_mem
+                ])
+                os.setgid(gid)
+                os.setuid(uid)
+                log.info('changed process uid and gid to {}:{}', uid, gid)
+            log.info('started handling API requests at {}', service_addr)
 
-        runner = web.AppRunner(root_app, keepalive_timeout=30.0)
-        await runner.setup()
-        service_addr = root_ctx.local_config['manager']['service-addr']
-        site = web.TCPSite(
-            runner,
-            str(service_addr.host),
-            service_addr.port,
-            backlog=1024,
-            reuse_port=True,
-            ssl_context=ssl_ctx,
-        )
-        await site.start()
-
-        if os.geteuid() == 0:
-            uid = root_ctx.local_config['manager']['user']
-            gid = root_ctx.local_config['manager']['group']
-            os.setgroups([
-                g.gr_gid for g in grp.getgrall()
-                if pwd.getpwuid(uid).pw_name in g.gr_mem
-            ])
-            os.setgid(gid)
-            os.setuid(uid)
-            log.info('changed process uid and gid to {}:{}', uid, gid)
-        log.info('started handling API requests at {}', service_addr)
-
-        try:
-            yield
-        finally:
-            m.close()
-            log.info('shutting down...')
-            await runner.cleanup()
+            try:
+                yield
+            finally:
+                log.info('shutting down...')
+                await runner.cleanup()
 
 
 @actxmgr

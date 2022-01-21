@@ -275,7 +275,7 @@ async def _query_userinfo(
     request: web.Request,
     params: Any,
     conn: SAConnection,
-) -> Tuple[uuid.UUID, uuid.UUID, str]:
+) -> Tuple[uuid.UUID, uuid.UUID, dict]:
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
     scopes_param = {

@@ -205,6 +205,7 @@ import os
 from pathlib import Path
 from pprint import pformat
 import secrets
+import socket
 import sys
 from typing import (
     Any,
@@ -282,6 +283,8 @@ manager_local_config_iv = t.Dict({
     }),
     t.Key('manager'): t.Dict({
         t.Key('num-proc', default=_max_cpu_count): t.Int[1:_max_cpu_count],
+        t.Key('id', default=f"i-{socket.gethostname()}"): t.String,
+        t.Key('user', default=None): tx.UserID(default_uid=_file_perm.st_uid),
         t.Key('user', default=None): tx.UserID(default_uid=_file_perm.st_uid),
         t.Key('group', default=None): tx.GroupID(default_gid=_file_perm.st_gid),
         t.Key('service-addr', default=('0.0.0.0', 8080)): tx.HostPortPair,

@@ -242,10 +242,12 @@ class GUID(TypeDecorator, Generic[UUID_SubType]):
 
 class SessionIDColumnType(GUID[SessionId]):
     uuid_subtype_func = SessionId
+    cache_ok = True
 
 
 class KernelIDColumnType(GUID[KernelId]):
     uuid_subtype_func = KernelId
+    cache_ok = True
 
 
 def IDColumn(name='id'):
