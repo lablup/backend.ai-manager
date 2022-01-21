@@ -106,14 +106,12 @@ class StorageSessionManager:
             proxy_name: str,
             proxy_info: StorageProxyInfo,
         ) -> Iterable[Tuple[str, VolumeInfo]]:
-            print("Debug. Proxy address: ", proxy_info.manager_api_url / 'volumes')
             async with proxy_info.session.request(
                 'GET', proxy_info.manager_api_url / 'volumes',
                 raise_for_status=True,
                 headers={AUTH_TOKEN_HDR: proxy_info.secret},
             ) as resp:
                 reply = await resp.json()
-                print("Debug. volume_Data: ", reply)
                 return ((proxy_name, volume_data) for volume_data in reply['volumes'])
 
         for proxy_name, proxy_info in self._proxies.items():
@@ -150,16 +148,12 @@ class StorageSessionManager:
             raise InvalidArgument('There is no such storage proxy', proxy_name)
         headers = kwargs.pop('headers', {})
         headers[AUTH_TOKEN_HDR] = proxy_info.secret
-        print("Debug. sp requests: ", method, proxy_info.manager_api_url, request_relpath,  headers)
-        print("client api: ", proxy_info.client_api_url)
-        print('args ', args, kwargs)
         async with proxy_info.session.request(
             method, proxy_info.manager_api_url / request_relpath,
             *args,
             headers=headers,
             **kwargs,
         ) as client_resp:
-            print("Debug. client response: ", proxy_info.client_api_url, client_resp)
             yield proxy_info.client_api_url, client_resp
 
 
