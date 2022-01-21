@@ -369,7 +369,7 @@ def configure() -> None:
     config_parser = configparser.ConfigParser()
     config_parser.read("config/halfstack.alembic.template.ini")
 
-    script_location = ask_string("Script location: ", )
+    script_location = ask_string("Script location: ", config_parser["alembic"]["script_location"])
     config_parser["alembic"]["script_location"] = script_location
 
     file_template = ask_string("File template: ", use_default=False)
