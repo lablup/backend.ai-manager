@@ -349,13 +349,6 @@ async def storage_manager_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     yield
     await root_ctx.storage_manager.aclose()
 
-@actxmgr
-async def filebrowser_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
-    raw_vol_config = await root_ctx.shared_config.etcd.get_prefix('volumes')
-    config = volume_config_iv.check(raw_vol_config)
-    root_ctx.browser_manager = BrowserSessionManager(config)
-    yield
-    await root_ctx.browser_manager.aclose()
 
 @actxmgr
 async def hook_plugin_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
@@ -587,7 +580,6 @@ async def server_main(
         '.domainconfig',
         '.groupconfig',
         '.logs',
-        '.filebrowser',
     ]
     root_app = build_root_app(pidx, _args[0], subapp_pkgs=subapp_pkgs)
     root_ctx: RootContext = root_app['_root.context']

@@ -91,7 +91,6 @@ class StorageSessionManager:
     @staticmethod
     def split_host(vfolder_host: str) -> Tuple[str, str]:
         proxy_name, _, volume_name = vfolder_host.partition(':')
-        print("Debug. Split host result: ", proxy_name, volume_name)
         return proxy_name, volume_name
 
     async def get_all_volumes(self) -> Iterable[Tuple[str, VolumeInfo]]:
