@@ -1322,42 +1322,50 @@ class AgentRegistry:
     ) -> None:
         # Wait until the kernel_started event.
         try:
-            created_info = await self._post_kernel_creation_infos[kernel_id]
-            start_event = self.kernel_creation_tracker[kernel_id]
-            await start_event
+            created_info, _ = await asyncio.gather(
+                self._post_kernel_creation_infos[kernel_id],
+                self.kernel_creation_tracker[kernel_id],
+            )
         except asyncio.CancelledError:
             log.warning("post_create_kernel(k:{}) cancelled", kernel_id)
             return
         except Exception:
             log.exception("post_create_kernel(k:{}) unexpected error", kernel_id)
             return
+        else:
 
-        async def _finialize_running() -> None:
-            # Record kernel access information
-            async with self.db.begin() as conn:
-                agent_host = URL(agent_alloc_ctx.agent_addr).host
-                kernel_host = created_info.get('kernel_host', agent_host)
-                service_ports = created_info.get('service_ports', [])
-                # NOTE: created_info contains resource_spec
-                query = (
-                    kernels.update()
-                    .values({
-                        'scaling_group': agent_alloc_ctx.scaling_group,
-                        'status': KernelStatus.RUNNING,
-                        'container_id': created_info['container_id'],
-                        'occupied_shares': {},
-                        'attached_devices': created_info.get('attached_devices', {}),
-                        'kernel_host': kernel_host,
-                        'repl_in_port': created_info['repl_in_port'],
-                        'repl_out_port': created_info['repl_out_port'],
-                        'stdin_port': created_info['stdin_port'],
-                        'stdout_port': created_info['stdout_port'],
-                        'service_ports': service_ports,
-                    })
-                    .where(kernels.c.id == created_info['id']))
-                await conn.execute(query)
+            async def _finialize_running() -> None:
+                # Record kernel access information
+                async with self.db.begin() as conn:
+                    agent_host = URL(agent_alloc_ctx.agent_addr).host
+                    kernel_host = created_info.get('kernel_host', agent_host)
+                    service_ports = created_info.get('service_ports', [])
+                    # NOTE: created_info contains resource_spec
+                    query = (
+                        kernels.update()
+                        .values({
+                            'scaling_group': agent_alloc_ctx.scaling_group,
+                            'status': KernelStatus.RUNNING,
+                            'container_id': created_info['container_id'],
+                            'occupied_shares': {},
+                            'attached_devices': created_info.get('attached_devices', {}),
+                            'kernel_host': kernel_host,
+                            'repl_in_port': created_info['repl_in_port'],
+                            'repl_out_port': created_info['repl_out_port'],
+                            'stdin_port': created_info['stdin_port'],
+                            'stdout_port': created_info['stdout_port'],
+                            'service_ports': service_ports,
+                        })
+                        .where(kernels.c.id == created_info['id']))
+                    await conn.execute(query)
 
-        await execute_with_retry(_finialize_running)
+            await execute_with_retry(_finialize_running)
+        finally:
+            try:
+                await asyncio.sleep(1)
+            finally:
+                del self._post_kernel_creation_infos[kernel_id]
+                del self.kernel_creation_tracker[kernel_id]
 
     async def _create_kernels_in_one_agent(
         self,
@@ -1468,11 +1476,6 @@ class AgentRegistry:
                     creation_info_future.set_exception(e)
                 await asyncio.sleep(0)
                 raise
-            finally:
-                # clean up for sure
-                for binding in items:
-                    del self.kernel_creation_tracker[binding.kernel.kernel_id]
-                    del self._post_kernel_creation_infos[binding.kernel.kernel_id]
 
     async def create_cluster_ssh_keypair(self) -> ClusterSSHKeyPair:
         key = rsa.generate_private_key(
