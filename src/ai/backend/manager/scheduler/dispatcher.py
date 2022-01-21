@@ -46,7 +46,6 @@ from ai.backend.common.types import (
     AgentId,
     ClusterMode,
     ResourceSlot,
-    SessionTypes,
 )
 
 from ..api.exceptions import InstanceNotAvailable
@@ -735,9 +734,9 @@ class SchedulerDispatcher(aobject):
                         sgroup_name = scheduled_session.scaling_group
                         async with self.db.begin() as conn:
                             query = (
-                            sa.select(scaling_groups.c.scheduler_opts)
-                            .select_from(scaling_groups)
-                            .where(scaling_groups.c.name == sgroup_name)
+                                sa.select(scaling_groups.c.scheduler_opts)
+                                .select_from(scaling_groups)
+                                .where(scaling_groups.c.name == sgroup_name)
                             )
                             result = await conn.execute(query)
                             row = result.first()
