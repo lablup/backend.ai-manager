@@ -35,7 +35,6 @@ import aiodocker
 import aiohttp
 import aioredis
 import aiotools
-from aioredis import Redis
 from async_timeout import timeout as _timeout
 from callosum.rpc import Peer, RPCUserError
 from callosum.lower.zeromq import ZeroMQAddress, ZeroMQRPCTransport
