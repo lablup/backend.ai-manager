@@ -1192,9 +1192,11 @@ async def handle_kernel_creation_lifecycle(
     root_ctx: RootContext = app['_root.context']
     # ck_id = (event.creation_id, event.kernel_id)
     ck_id = event.kernel_id
-    if ck_id not in root_ctx.registry.kernel_creation_tracker:
-        return
-    log.debug('handle_kernel_creation_lifecycle: ev:{} k:{}', event.name, event.kernel_id)
+    if ck_id in root_ctx.registry.kernel_creation_tracker:
+        log.debug(
+            "handle_kernel_creation_lifecycle: ev:{} k:{}",
+            event.name, event.kernel_id,
+        )
     if isinstance(event, KernelPreparingEvent):
         # State transition is done by the DoPrepareEvent handler inside the scheduler-distpacher object.
         pass
@@ -1220,7 +1222,7 @@ async def handle_kernel_termination_lifecycle(
     if isinstance(event, KernelTerminatingEvent):
         # The destroy_kernel() API handler will set the "TERMINATING" status.
         pass
-    if isinstance(event, KernelTerminatedEvent):
+    elif isinstance(event, KernelTerminatedEvent):
         await root_ctx.registry.mark_kernel_terminated(event.kernel_id, event.reason, event.exit_code)
         await root_ctx.registry.check_session_terminated(event.kernel_id, event.reason)
 
