@@ -35,7 +35,6 @@ import aiodocker
 import aiohttp
 import aioredis
 import aiotools
-from aioredis import Redis
 from async_timeout import timeout as _timeout
 from callosum.rpc import Peer, RPCUserError
 from callosum.lower.zeromq import ZeroMQAddress, ZeroMQRPCTransport
@@ -1322,42 +1321,50 @@ class AgentRegistry:
     ) -> None:
         # Wait until the kernel_started event.
         try:
-            created_info = await self._post_kernel_creation_infos[kernel_id]
-            start_event = self.kernel_creation_tracker[kernel_id]
-            await start_event
+            created_info, _ = await asyncio.gather(
+                self._post_kernel_creation_infos[kernel_id],
+                self.kernel_creation_tracker[kernel_id],
+            )
         except asyncio.CancelledError:
             log.warning("post_create_kernel(k:{}) cancelled", kernel_id)
             return
         except Exception:
             log.exception("post_create_kernel(k:{}) unexpected error", kernel_id)
             return
+        else:
 
-        async def _finialize_running() -> None:
-            # Record kernel access information
-            async with self.db.begin() as conn:
-                agent_host = URL(agent_alloc_ctx.agent_addr).host
-                kernel_host = created_info.get('kernel_host', agent_host)
-                service_ports = created_info.get('service_ports', [])
-                # NOTE: created_info contains resource_spec
-                query = (
-                    kernels.update()
-                    .values({
-                        'scaling_group': agent_alloc_ctx.scaling_group,
-                        'status': KernelStatus.RUNNING,
-                        'container_id': created_info['container_id'],
-                        'occupied_shares': {},
-                        'attached_devices': created_info.get('attached_devices', {}),
-                        'kernel_host': kernel_host,
-                        'repl_in_port': created_info['repl_in_port'],
-                        'repl_out_port': created_info['repl_out_port'],
-                        'stdin_port': created_info['stdin_port'],
-                        'stdout_port': created_info['stdout_port'],
-                        'service_ports': service_ports,
-                    })
-                    .where(kernels.c.id == created_info['id']))
-                await conn.execute(query)
+            async def _finialize_running() -> None:
+                # Record kernel access information
+                async with self.db.begin() as conn:
+                    agent_host = URL(agent_alloc_ctx.agent_addr).host
+                    kernel_host = created_info.get('kernel_host', agent_host)
+                    service_ports = created_info.get('service_ports', [])
+                    # NOTE: created_info contains resource_spec
+                    query = (
+                        kernels.update()
+                        .values({
+                            'scaling_group': agent_alloc_ctx.scaling_group,
+                            'status': KernelStatus.RUNNING,
+                            'container_id': created_info['container_id'],
+                            'occupied_shares': {},
+                            'attached_devices': created_info.get('attached_devices', {}),
+                            'kernel_host': kernel_host,
+                            'repl_in_port': created_info['repl_in_port'],
+                            'repl_out_port': created_info['repl_out_port'],
+                            'stdin_port': created_info['stdin_port'],
+                            'stdout_port': created_info['stdout_port'],
+                            'service_ports': service_ports,
+                        })
+                        .where(kernels.c.id == created_info['id']))
+                    await conn.execute(query)
 
-        await execute_with_retry(_finialize_running)
+            await execute_with_retry(_finialize_running)
+        finally:
+            try:
+                await asyncio.sleep(1)
+            finally:
+                del self._post_kernel_creation_infos[kernel_id]
+                del self.kernel_creation_tracker[kernel_id]
 
     async def _create_kernels_in_one_agent(
         self,
@@ -1468,11 +1475,6 @@ class AgentRegistry:
                     creation_info_future.set_exception(e)
                 await asyncio.sleep(0)
                 raise
-            finally:
-                # clean up for sure
-                for binding in items:
-                    del self.kernel_creation_tracker[binding.kernel.kernel_id]
-                    del self._post_kernel_creation_infos[binding.kernel.kernel_id]
 
     async def create_cluster_ssh_keypair(self) -> ClusterSSHKeyPair:
         key = rsa.generate_private_key(
@@ -2552,49 +2554,33 @@ class AgentRegistry:
         self, kernel_ids: Sequence[KernelId],
     ) -> None:
         per_kernel_updates = {}
-
+        log.debug('sync_kernel_stats(k:{!r})', kernel_ids)
         for kernel_id in kernel_ids:
             raw_kernel_id = str(kernel_id)
-            log.debug('sync_kernel_stats(k:{})', kernel_id)
-            updates = {}
-
-            async def _get_kstats_from_redis(r: Redis):
-                stat_type = await redis.execute(r, lambda r: r.type(raw_kernel_id), encoding='utf-8')
-                if stat_type == 'string':
-                    kern_stat = await r.get(raw_kernel_id)
-                    if kern_stat is not None:
-                        updates['last_stat'] = msgpack.unpackb(kern_stat)
-                else:
-                    kern_stat = await r.hgetall(raw_kernel_id)
-                    if kern_stat is not None and 'cpu_used' in kern_stat:
-                        updates.update({
-                            'cpu_used': int(float(kern_stat['cpu_used'])),
-                            'mem_max_bytes': int(kern_stat['mem_max_bytes']),
-                            'net_rx_bytes': int(kern_stat['net_rx_bytes']),
-                            'net_tx_bytes': int(kern_stat['net_tx_bytes']),
-                            'io_read_bytes': int(kern_stat['io_read_bytes']),
-                            'io_write_bytes': int(kern_stat['io_write_bytes']),
-                            'io_max_scratch_size': int(kern_stat['io_max_scratch_size']),
-                        })
-
-            await redis.execute(
+            kern_stat = await redis.execute(
                 self.redis_stat,
-                _get_kstats_from_redis,
+                lambda r: r.get(raw_kernel_id),
             )
-            if not updates:
+            if kern_stat is None:
                 log.warning('sync_kernel_stats(k:{}): no statistics updates', kernel_id)
                 continue
-            per_kernel_updates[kernel_id] = updates
+            else:
+                per_kernel_updates[kernel_id] = msgpack.unpackb(kern_stat)
 
         async def _update():
             async with self.db.begin() as conn:
+                update_query = (
+                    sa.update(kernels)
+                    .where(kernels.c.id == sa.bindparam('kernel_id'))
+                    .values({kernels.c.last_stat: sa.bindparam('last_stat')})
+                )
+                params = []
                 for kernel_id, updates in per_kernel_updates.items():
-                    update_query = (
-                        sa.update(kernels)
-                        .values(updates)
-                        .where(kernels.c.id == kernel_id)
-                    )
-                    await conn.execute(update_query)
+                    params.append({
+                        'kernel_id': kernel_id,
+                        'last_stat': updates,
+                    })
+                await conn.execute(update_query, params)
 
         await execute_with_retry(_update)
 
