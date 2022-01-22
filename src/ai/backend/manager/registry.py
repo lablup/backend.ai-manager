@@ -35,7 +35,6 @@ import aiodocker
 import aiohttp
 import aioredis
 import aiotools
-from aioredis import Redis
 from async_timeout import timeout as _timeout
 from callosum.rpc import Peer, RPCUserError
 from callosum.lower.zeromq import ZeroMQAddress, ZeroMQRPCTransport
@@ -237,6 +236,7 @@ class AgentRegistry:
 
     kernel_creation_tracker: Dict[KernelId, asyncio.Future]
     _post_kernel_creation_tasks: weakref.WeakValueDictionary[KernelId, asyncio.Task]
+    _post_kernel_creation_infos: dict[KernelId, asyncio.Future]
 
     def __init__(
         self,
@@ -262,6 +262,7 @@ class AgentRegistry:
         self.hook_plugin_ctx = hook_plugin_ctx
         self.kernel_creation_tracker = {}
         self._post_kernel_creation_tasks = weakref.WeakValueDictionary()
+        self._post_kernel_creation_infos = {}
         self.rpc_keepalive_timeout = \
             int(shared_config.get("config/network/rpc/keepalive-timeout", "60"))
 
@@ -1316,46 +1317,54 @@ class AgentRegistry:
     async def _post_create_kernel(
         self,
         agent_alloc_ctx: AgentAllocationContext,
-        created_info,
+        kernel_id: KernelId,
     ) -> None:
         # Wait until the kernel_started event.
-        kernel_id = KernelId(uuid.UUID(created_info['id']))
         try:
-            start_event = self.kernel_creation_tracker[kernel_id]
-            await start_event
+            created_info, _ = await asyncio.gather(
+                self._post_kernel_creation_infos[kernel_id],
+                self.kernel_creation_tracker[kernel_id],
+            )
         except asyncio.CancelledError:
             log.warning("post_create_kernel(k:{}) cancelled", kernel_id)
             return
         except Exception:
             log.exception("post_create_kernel(k:{}) unexpected error", kernel_id)
             return
+        else:
 
-        async def _finialize_running() -> None:
-            # Record kernel access information
-            async with self.db.begin() as conn:
-                agent_host = URL(agent_alloc_ctx.agent_addr).host
-                kernel_host = created_info.get('kernel_host', agent_host)
-                service_ports = created_info.get('service_ports', [])
-                # NOTE: created_info contains resource_spec
-                query = (
-                    kernels.update()
-                    .values({
-                        'scaling_group': agent_alloc_ctx.scaling_group,
-                        'status': KernelStatus.RUNNING,
-                        'container_id': created_info['container_id'],
-                        'occupied_shares': {},
-                        'attached_devices': created_info.get('attached_devices', {}),
-                        'kernel_host': kernel_host,
-                        'repl_in_port': created_info['repl_in_port'],
-                        'repl_out_port': created_info['repl_out_port'],
-                        'stdin_port': created_info['stdin_port'],
-                        'stdout_port': created_info['stdout_port'],
-                        'service_ports': service_ports,
-                    })
-                    .where(kernels.c.id == created_info['id']))
-                await conn.execute(query)
+            async def _finialize_running() -> None:
+                # Record kernel access information
+                async with self.db.begin() as conn:
+                    agent_host = URL(agent_alloc_ctx.agent_addr).host
+                    kernel_host = created_info.get('kernel_host', agent_host)
+                    service_ports = created_info.get('service_ports', [])
+                    # NOTE: created_info contains resource_spec
+                    query = (
+                        kernels.update()
+                        .values({
+                            'scaling_group': agent_alloc_ctx.scaling_group,
+                            'status': KernelStatus.RUNNING,
+                            'container_id': created_info['container_id'],
+                            'occupied_shares': {},
+                            'attached_devices': created_info.get('attached_devices', {}),
+                            'kernel_host': kernel_host,
+                            'repl_in_port': created_info['repl_in_port'],
+                            'repl_out_port': created_info['repl_out_port'],
+                            'stdin_port': created_info['stdin_port'],
+                            'stdout_port': created_info['stdout_port'],
+                            'service_ports': service_ports,
+                        })
+                        .where(kernels.c.id == created_info['id']))
+                    await conn.execute(query)
 
-        await execute_with_retry(_finialize_running)
+            await execute_with_retry(_finialize_running)
+        finally:
+            try:
+                await asyncio.sleep(1)
+            finally:
+                del self._post_kernel_creation_infos[kernel_id]
+                del self.kernel_creation_tracker[kernel_id]
 
     async def _create_kernels_in_one_agent(
         self,
@@ -1386,6 +1395,16 @@ class AgentRegistry:
                 self.kernel_creation_tracker[
                     binding.kernel.kernel_id
                 ] = loop.create_future()
+            # Spawn post-processing tasks
+            post_tasks = []
+            for binding in items:
+                self._post_kernel_creation_infos[binding.kernel.kernel_id] = loop.create_future()
+                post_task = asyncio.create_task(self._post_create_kernel(
+                    agent_alloc_ctx,
+                    binding.kernel.kernel_id,
+                ))
+                self._post_kernel_creation_tasks[binding.kernel.kernel_id] = post_task
+                post_tasks.append(post_task)
             try:
                 # Issue a batched RPC call to create kernels on this agent
                 created_infos = await rpc.call.create_kernels(
@@ -1441,31 +1460,21 @@ class AgentRegistry:
                     [binding.kernel.kernel_id for binding in items],
                     agent_alloc_ctx.agent_id,
                 )
-                # Post-process kernel creation
-                post_tasks = []
+                # Pass the return value of RPC calls to post-processing tasks
                 for created_info in created_infos:
-                    post_task = asyncio.create_task(self._post_create_kernel(
-                        agent_alloc_ctx,
-                        created_info,
-                    ))
-                    self._post_kernel_creation_tasks[created_info['id']] = post_task
-                    post_tasks.append(post_task)
+                    created_kernel_id = KernelId(uuid.UUID(created_info['id']))
+                    self._post_kernel_creation_infos[created_kernel_id].set_result(created_info)
                 await asyncio.gather(*post_tasks, return_exceptions=True)
-            except Exception:
+            except Exception as e:
                 # The agent has already cancelled or issued the destruction lifecycle event
                 # for this batch of kernels.
                 for binding in items:
-                    start_event = self.kernel_creation_tracker[
-                        binding.kernel.kernel_id
-                    ]
-                    start_event.cancel()
+                    start_future = self.kernel_creation_tracker[binding.kernel.kernel_id]
+                    start_future.cancel()
+                    creation_info_future = self._post_kernel_creation_infos[binding.kernel.kernel_id]
+                    creation_info_future.set_exception(e)
+                await asyncio.sleep(0)
                 raise
-            finally:
-                # clean up for sure
-                for binding in items:
-                    del self.kernel_creation_tracker[
-                        binding.kernel.kernel_id
-                    ]
 
     async def create_cluster_ssh_keypair(self) -> ClusterSSHKeyPair:
         key = rsa.generate_private_key(
@@ -1570,6 +1579,16 @@ class AgentRegistry:
                 return key_occupied
 
         return await execute_with_retry(_query)
+
+    async def update_scaling_group(self, id, scaling_group) -> None:
+        agent = await self.get_instance(id, agents.c.addr)
+        async with RPCContext(
+            agent['id'],
+            agent['addr'],
+            invoke_timeout=None,
+            keepalive_timeout=self.rpc_keepalive_timeout,
+        ) as rpc:
+            await rpc.call.update_scaling_group(scaling_group)
 
     async def recalc_resource_usage(self) -> None:
         concurrency_used_per_key: MutableMapping[str, int] = defaultdict(lambda: 0)
@@ -1908,7 +1927,7 @@ class AgentRegistry:
                     per_agent_tasks.append(_destroy_kernels_in_agent(session, destroyed_kernels))
 
             if per_agent_tasks:
-                await asyncio.gather(*per_agent_tasks)
+                await asyncio.gather(*per_agent_tasks, return_exceptions=True)
             await self.hook_plugin_ctx.notify(
                 'POST_DESTROY_SESSION',
                 (session['session_id'], session['session_name'], session['access_key']),
@@ -1923,7 +1942,7 @@ class AgentRegistry:
     ) -> None:
 
         async def _fetch() -> Row:
-            async with self.db.begin() as conn:
+            async with self.db.begin_readonly() as conn:
                 query = (
                     sa.select([
                         kernels.c.session_id,
@@ -2003,10 +2022,10 @@ class AgentRegistry:
             loop = asyncio.get_running_loop()
             try:
                 kernel_creation_id = secrets.token_urlsafe(16)
-                start_event = loop.create_future()
+                start_future = loop.create_future()
                 self.kernel_creation_tracker[
                     kernel['id']
-                ] = start_event
+                ] = start_future
                 try:
                     async with self.db.begin() as conn:
                         query = (
@@ -2033,7 +2052,7 @@ class AgentRegistry:
                             str(kernel['id']),
                             updated_config,
                         )
-                    await start_event
+                    await start_future
                     async with self.db.begin() as conn:
                         query = (
                             kernels.update()
@@ -2545,49 +2564,33 @@ class AgentRegistry:
         self, kernel_ids: Sequence[KernelId],
     ) -> None:
         per_kernel_updates = {}
-
+        log.debug('sync_kernel_stats(k:{!r})', kernel_ids)
         for kernel_id in kernel_ids:
             raw_kernel_id = str(kernel_id)
-            log.debug('sync_kernel_stats(k:{})', kernel_id)
-            updates = {}
-
-            async def _get_kstats_from_redis(r: Redis):
-                stat_type = await redis.execute(r, lambda r: r.type(raw_kernel_id), encoding='utf-8')
-                if stat_type == 'string':
-                    kern_stat = await r.get(raw_kernel_id)
-                    if kern_stat is not None:
-                        updates['last_stat'] = msgpack.unpackb(kern_stat)
-                else:
-                    kern_stat = await r.hgetall(raw_kernel_id)
-                    if kern_stat is not None and 'cpu_used' in kern_stat:
-                        updates.update({
-                            'cpu_used': int(float(kern_stat['cpu_used'])),
-                            'mem_max_bytes': int(kern_stat['mem_max_bytes']),
-                            'net_rx_bytes': int(kern_stat['net_rx_bytes']),
-                            'net_tx_bytes': int(kern_stat['net_tx_bytes']),
-                            'io_read_bytes': int(kern_stat['io_read_bytes']),
-                            'io_write_bytes': int(kern_stat['io_write_bytes']),
-                            'io_max_scratch_size': int(kern_stat['io_max_scratch_size']),
-                        })
-
-            await redis.execute(
+            kern_stat = await redis.execute(
                 self.redis_stat,
-                _get_kstats_from_redis,
+                lambda r: r.get(raw_kernel_id),
             )
-            if not updates:
+            if kern_stat is None:
                 log.warning('sync_kernel_stats(k:{}): no statistics updates', kernel_id)
                 continue
-            per_kernel_updates[kernel_id] = updates
+            else:
+                per_kernel_updates[kernel_id] = msgpack.unpackb(kern_stat)
 
         async def _update():
             async with self.db.begin() as conn:
+                update_query = (
+                    sa.update(kernels)
+                    .where(kernels.c.id == sa.bindparam('kernel_id'))
+                    .values({kernels.c.last_stat: sa.bindparam('last_stat')})
+                )
+                params = []
                 for kernel_id, updates in per_kernel_updates.items():
-                    update_query = (
-                        sa.update(kernels)
-                        .values(updates)
-                        .where(kernels.c.id == kernel_id)
-                    )
-                    await conn.execute(update_query)
+                    params.append({
+                        'kernel_id': kernel_id,
+                        'last_stat': updates,
+                    })
+                await conn.execute(update_query, params)
 
         await execute_with_retry(_update)
 
@@ -2604,7 +2607,10 @@ class AgentRegistry:
         post_task = self._post_kernel_creation_tasks.get(kernel_id, None)
         if post_task is not None and not post_task.done():
             post_task.cancel()
-            await post_task
+            try:
+                await post_task
+            except asyncio.CancelledError:
+                pass
 
         async def _update_kernel_status() -> Row | None:
             async with self.db.begin() as conn:
@@ -2707,7 +2713,7 @@ class AgentRegistry:
                     # if already marked "session-terminated", skip the rest process
                     return False, session_id
                 all_terminated = all(map(
-                    lambda row: row['status'] == KernelStatus.TERMINATED,
+                    lambda row: row['status'] in (KernelStatus.TERMINATED, KernelStatus.CANCELLED),
                     rows,
                 ))
                 if all_terminated:
