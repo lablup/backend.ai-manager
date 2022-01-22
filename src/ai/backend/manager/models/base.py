@@ -50,13 +50,11 @@ from sqlalchemy.types import (
 from sqlalchemy.dialects.postgresql import UUID, ENUM, JSONB
 
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common import validators as tx
 from ai.backend.common.types import (
     BinarySize,
     KernelId,
     ResourceSlot,
     SessionId,
-    SessionTypes,
 )
 
 from ai.backend.manager.models.utils import execute_with_retry
@@ -202,22 +200,20 @@ class StructuredJSONBColumn(TypeDecorator):
     impl = JSONB
     cache_ok = True
 
+    def __init__(self, schema: t.Trafaret) -> None:
+        super().__init__()
+        self._schema = schema
+
     def process_bind_param(self, value, dialect):
-        return value if value is not None else None
+        return self._schema.check(value)
 
     def process_result_value(self, raw_value, dialect):
-        # legacy handling
-        schedulerOption = t.Dict(
-            {
-                tx.AliasedKey(['allowed_session_type', 'session_type', 'sessionType'],
-                                default='interactive') >> 'allowed_session_type': tx.Enum(SessionTypes),
-            }).allow_extra('*')
-        allowed_session_type = {'allowed_session_type': raw_value.get('allowed_session_type').lower()}
-        schedulerOption.check(allowed_session_type)
-        return raw_value if raw_value is not None else None
+        if raw_value is None:
+            return self._schema.check({})
+        return self._schema.check(raw_value)
 
     def copy(self):
-        return StructuredJSONBColumn()
+        return StructuredJSONBColumn(self._schema)
 
 
 class CurrencyTypes(enum.Enum):

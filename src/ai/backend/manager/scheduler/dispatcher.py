@@ -740,8 +740,8 @@ class SchedulerDispatcher(aobject):
                             )
                             result = await conn.execute(query)
                             row = result.first()
-                            allowed_session_type = row['scheduler_opts']['allowed_session_type']
-                        if(scheduled_session.session_type.value == allowed_session_type.lower()):
+                            allowed_session_types = row['scheduler_opts']['allowed_session_types']
+                        if(scheduled_session.session_type.value == allowed_session_types.lower()):
                             await self.registry.event_producer.produce_event(
                                 SessionPreparingEvent(
                                     scheduled_session.session_id,

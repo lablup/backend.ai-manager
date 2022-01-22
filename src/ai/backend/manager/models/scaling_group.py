@@ -10,12 +10,16 @@ from typing import (
 )
 import uuid
 
+import graphene
+from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 from sqlalchemy.engine.row import Row
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
-import graphene
-from graphene.types.datetime import DateTime as GQLDateTime
+import trafaret as t
+
+from ai.backend.common import validators as tx
+from ai.backend.common.types import SessionTypes
 
 from .base import (
     metadata,
@@ -64,7 +68,12 @@ scaling_groups = sa.Table(
     sa.Column('driver', sa.String(length=64), nullable=False),
     sa.Column('driver_opts', pgsql.JSONB(), nullable=False, default={}),
     sa.Column('scheduler', sa.String(length=64), nullable=False),
-    sa.Column('scheduler_opts', StructuredJSONBColumn(), nullable=False, default={}),
+    sa.Column('scheduler_opts', StructuredJSONBColumn(
+        t.Dict({
+            t.Key('allowed_session_types', default=['interactive', 'batch']):
+                t.List(tx.Enum(SessionTypes)),
+        }).allow_extra('*'),
+    ), nullable=False, default={}),
 )
 
 
