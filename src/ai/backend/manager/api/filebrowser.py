@@ -56,7 +56,8 @@ async def get_volume(root_ctx: RootContext, vfid: str) -> str:
     ),
 )
 async def create_or_update_filebrowser(
-    request: web.Request, params: Any,
+    request: web.Request,
+    params: Any,
 ) -> web.Response:
 
     root_ctx: RootContext = request.app["_root.context"]
@@ -91,6 +92,42 @@ async def create_or_update_filebrowser(
         raise
 
 
+@auth_required
+@server_status_required(READ_ALLOWED)
+async def destroy_filebrowser(
+    request: web.Request,
+    params: Any,
+) -> web.Response:
+
+    root_ctx: RootContext = request.app["_root.context"]
+
+    vfolders = []
+    for vfolder_name in params["vfolders"]:
+        vfolders.append(
+            {"name": vfolder_name, "vfid": await get_vfid(root_ctx, vfolder_name)},
+        )
+
+    host = await get_volume(root_ctx, await get_vfid(root_ctx, vfolder_name))
+
+    proxy_name, _ = root_ctx.storage_manager.split_host(host)
+
+    try:
+        proxy_info = root_ctx.storage_manager._proxies[proxy_name]
+    except KeyError:
+        raise InvalidArgument("There is no such storage proxy", proxy_name)
+
+    headers = {}
+    headers["X-BackendAI-Storage-Auth-Token"] = proxy_info.secret
+
+    try:
+        async with proxy_info.session.request(
+            "POST", proxy_info.manager_api_url / "browser/destroy", headers=headers,
+        ) as client_resp:
+            return web.json_response(await client_resp.json())
+    except aiohttp.ClientResponseError:
+        raise
+
+
 async def init(app: web.Application) -> None:
     pass
 
@@ -114,4 +151,6 @@ def create_app(
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
 
     cors.add(app.router.add_route("POST", r"/create", create_or_update_filebrowser))
+    cors.add(app.router.add_route("POST", r"/destroy", destroy_filebrowser))
+
     return app, []
