@@ -49,8 +49,10 @@ async def query_wsproxy_version(
     scaling_group_name: str,
 ) -> str:
     async with params.db_ctx.begin_readonly() as conn:
-        query = (sa.select([scaling_groups])
-                   .where((scaling_groups.c.name == scaling_group_name)))
+        query = (
+            sa.select([scaling_groups])
+              .where(scaling_groups.c.name == scaling_group_name)
+        )
         result = await conn.execute(query)
         matched_sgroup = result.first()
 
