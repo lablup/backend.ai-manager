@@ -1,1 +1,1 @@
-Vfolder mounting to root path(none inside of /home/work directory) accept 
+Allow vfolder mounting to arbitrary path, excluding pre-existing folders of '/' like '/bin'.
