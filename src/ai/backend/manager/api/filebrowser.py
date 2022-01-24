@@ -96,20 +96,10 @@ async def create_or_update_filebrowser(
 @server_status_required(READ_ALLOWED)
 async def destroy_filebrowser(
     request: web.Request,
-    params: Any,
 ) -> web.Response:
-
     root_ctx: RootContext = request.app["_root.context"]
 
-    vfolders = []
-    for vfolder_name in params["vfolders"]:
-        vfolders.append(
-            {"name": vfolder_name, "vfid": await get_vfid(root_ctx, vfolder_name)},
-        )
-
-    host = await get_volume(root_ctx, await get_vfid(root_ctx, vfolder_name))
-
-    proxy_name, _ = root_ctx.storage_manager.split_host(host)
+    proxy_name, _ = root_ctx.storage_manager.split_host("local: volume1")
 
     try:
         proxy_info = root_ctx.storage_manager._proxies[proxy_name]
@@ -121,8 +111,11 @@ async def destroy_filebrowser(
 
     try:
         async with proxy_info.session.request(
-            "POST", proxy_info.manager_api_url / "browser/destroy", headers=headers,
+            "DELETE",
+            proxy_info.manager_api_url / "browser/destroy",
+            headers=headers,
         ) as client_resp:
+            print("real url ", client_resp.real_url())
             return web.json_response(await client_resp.json())
     except aiohttp.ClientResponseError:
         raise
@@ -149,8 +142,7 @@ def create_app(
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
-
     cors.add(app.router.add_route("POST", r"/create", create_or_update_filebrowser))
-    cors.add(app.router.add_route("POST", r"/destroy", destroy_filebrowser))
+    cors.add(app.router.add_route("DELETE", "/destroy", destroy_filebrowser))
 
     return app, []
