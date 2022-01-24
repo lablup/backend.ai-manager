@@ -54,6 +54,13 @@ def test_vfolder_name_validator():
     assert not verify_vfolder_name('.terminfo')
     assert verify_vfolder_name('bashrc')
     assert verify_vfolder_name('.config')
+    assert not verify_vfolder_name('bin')
+    assert not verify_vfolder_name('boot')
+    assert not verify_vfolder_name('run')
+    assert verify_vfolder_name('home/work/bin')
+    assert verify_vfolder_name('home/work/boot')
+    assert verify_vfolder_name('home/work/run')
+    assert not verify_vfolder_name('home/work')
 
 
 def test_dotfile_name_validator():
