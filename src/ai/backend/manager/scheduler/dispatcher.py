@@ -422,29 +422,41 @@ class SchedulerDispatcher(aobject):
 
                 await execute_with_retry(_update)
 
-            if sess_ctx.cluster_mode == ClusterMode.SINGLE_NODE:
-                await self._schedule_single_node_session(
-                    sched_ctx,
-                    scheduler,
-                    sgroup_name,
-                    candidate_agents,
-                    sess_ctx,
-                    check_results,
+            sgroup_name = sess_ctx.scaling_group
+            async with self.db.begin() as conn:
+                query = (
+                    sa.select(scaling_groups.c.scheduler_opts)
+                    .select_from(scaling_groups)
+                    .where(scaling_groups.c.name == sgroup_name)
                 )
-            elif sess_ctx.cluster_mode == ClusterMode.MULTI_NODE:
-                await self._schedule_multi_node_session(
-                    sched_ctx,
-                    scheduler,
-                    sgroup_name,
-                    candidate_agents,
-                    sess_ctx,
-                    check_results,
-                )
-            else:
-                raise RuntimeError(
-                    f"should not reach here; unknown cluster_mode: {sess_ctx.cluster_mode}",
-                )
-            num_scheduled += 1
+                result = await conn.execute(query)
+                row = result.first()
+                allowed_session_types = row['scheduler_opts']['allowed_session_types']
+            for allowed_session_type in allowed_session_types:
+                if(sess_ctx.session_type.value == allowed_session_type.lower()):
+                    if sess_ctx.cluster_mode == ClusterMode.SINGLE_NODE:
+                        await self._schedule_single_node_session(
+                            sched_ctx,
+                            scheduler,
+                            sgroup_name,
+                            candidate_agents,
+                            sess_ctx,
+                            check_results,
+                        )
+                    elif sess_ctx.cluster_mode == ClusterMode.MULTI_NODE:
+                        await self._schedule_multi_node_session(
+                            sched_ctx,
+                            scheduler,
+                            sgroup_name,
+                            candidate_agents,
+                            sess_ctx,
+                            check_results,
+                        )
+                    else:
+                        raise RuntimeError(
+                            f"should not reach here; unknown cluster_mode: {sess_ctx.cluster_mode}",
+                        )
+                    num_scheduled += 1
         if num_scheduled > 0:
             await self.event_producer.produce_event(DoPrepareEvent())
 
@@ -731,27 +743,16 @@ class SchedulerDispatcher(aobject):
                 log.debug("prepare(): preparing {} session(s)", len(scheduled_sessions))
                 async with aiotools.TaskGroup() as tg:
                     for scheduled_session in scheduled_sessions:
-                        sgroup_name = scheduled_session.scaling_group
-                        async with self.db.begin() as conn:
-                            query = (
-                                sa.select(scaling_groups.c.scheduler_opts)
-                                .select_from(scaling_groups)
-                                .where(scaling_groups.c.name == sgroup_name)
-                            )
-                            result = await conn.execute(query)
-                            row = result.first()
-                            allowed_session_types = row['scheduler_opts']['allowed_session_types']
-                        if(scheduled_session.session_type.value == allowed_session_types.lower()):
-                            await self.registry.event_producer.produce_event(
-                                SessionPreparingEvent(
-                                    scheduled_session.session_id,
-                                    scheduled_session.session_creation_id,
-                                ),
-                            )
-                            tg.create_task(self.start_session(
-                                sched_ctx,
-                                scheduled_session,
-                            ))
+                        await self.registry.event_producer.produce_event(
+                            SessionPreparingEvent(
+                                scheduled_session.session_id,
+                                scheduled_session.session_creation_id,
+                            ),
+                        )
+                        tg.create_task(self.start_session(
+                            sched_ctx,
+                            scheduled_session,
+                        ))
 
         except DBAPIError as e:
             if getattr(e.orig, 'pgcode', None) == '55P03':
