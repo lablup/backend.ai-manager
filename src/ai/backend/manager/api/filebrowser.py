@@ -122,16 +122,14 @@ async def destroy_filebrowser(
         headers = {}
         headers["X-BackendAI-Storage-Auth-Token"] = proxy_info.secret
         auth_token = proxy_info.secret
-        try:
-            async with proxy_info.session.request(
-                "DELETE",
-                proxy_info.manager_api_url / "browser/destroy",
-                headers=headers,
-                json={"container_id": container_id, "auth_token": auth_token},
-            ) as client_resp:
-                return web.json_response(await client_resp.json())
-        except aiohttp.ClientResponseError:
-            return web.json_response({"status": 'fail'})
+
+        async with proxy_info.session.request(
+            "DELETE",
+            proxy_info.manager_api_url / "browser/destroy",
+            headers=headers,
+            json={"container_id": container_id, "auth_token": auth_token},
+        ) as client_resp:
+            return web.json_response(await client_resp.json())
 
 
 async def init(app: web.Application) -> None:
