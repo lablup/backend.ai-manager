@@ -131,7 +131,7 @@ async def destroy_filebrowser(
             ) as client_resp:
                 return web.json_response(await client_resp.json())
         except aiohttp.ClientResponseError:
-            raise
+            return web.json_response({"status": 'fail'})
 
 
 async def init(app: web.Application) -> None:
