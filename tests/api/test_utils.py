@@ -50,10 +50,10 @@ async def test_call_non_bursty():
 
 
 def test_vfolder_name_validator():
-    assert not verify_vfolder_name('.bashrc')
-    assert not verify_vfolder_name('.terminfo')
-    assert verify_vfolder_name('bashrc')
-    assert verify_vfolder_name('.config')
+    assert not verify_vfolder_name('home/work/.bashrc')
+    assert not verify_vfolder_name('home/work/.terminfo')
+    assert verify_vfolder_name('home/work/bashrc')
+    assert verify_vfolder_name('home/work/.config')
     assert not verify_vfolder_name('bin')
     assert not verify_vfolder_name('boot')
     assert not verify_vfolder_name('run')
