@@ -63,13 +63,14 @@ async def create_or_update_filebrowser(
     root_ctx: RootContext = request.app["_root.context"]
 
     vfolders = []
+
+    # Search for vfid based on vfolder name. And then get relevant host address and volume.
     for vfolder_name in params["vfolders"]:
         vfolders.append(
             {"name": vfolder_name, "vfid": await get_vfid(root_ctx, vfolder_name)},
         )
 
     host = await get_volume(root_ctx, await get_vfid(root_ctx, vfolder_name))
-
     proxy_name, _ = root_ctx.storage_manager.split_host(host)
 
     try:
@@ -94,31 +95,43 @@ async def create_or_update_filebrowser(
 
 @auth_required
 @server_status_required(READ_ALLOWED)
+@check_api_params(
+    t.Dict(
+        {
+            t.Key("container_id"): t.String,
+        },
+    ),
+)
 async def destroy_filebrowser(
     request: web.Request,
+    params: Any,
 ) -> web.Response:
     root_ctx: RootContext = request.app["_root.context"]
+    container_id = params["container_id"]
 
-    proxy_name, _ = root_ctx.storage_manager.split_host("local: volume1")
+    volumes = await root_ctx.storage_manager.get_all_volumes()
 
-    try:
-        proxy_info = root_ctx.storage_manager._proxies[proxy_name]
-    except KeyError:
-        raise InvalidArgument("There is no such storage proxy", proxy_name)
+    # search for volume among available volumes which has file browser container id in order to destroy
+    for volume in volumes:
+        proxy_name = volume[0]
+        try:
+            proxy_info = root_ctx.storage_manager._proxies[proxy_name]
+        except KeyError:
+            raise InvalidArgument("There is no such storage proxy", proxy_name)
 
-    headers = {}
-    headers["X-BackendAI-Storage-Auth-Token"] = proxy_info.secret
-
-    try:
-        async with proxy_info.session.request(
-            "DELETE",
-            proxy_info.manager_api_url / "browser/destroy",
-            headers=headers,
-        ) as client_resp:
-            print("real url ", client_resp.real_url())
-            return web.json_response(await client_resp.json())
-    except aiohttp.ClientResponseError:
-        raise
+        headers = {}
+        headers["X-BackendAI-Storage-Auth-Token"] = proxy_info.secret
+        auth_token = proxy_info.secret
+        try:
+            async with proxy_info.session.request(
+                "DELETE",
+                proxy_info.manager_api_url / "browser/destroy",
+                headers=headers,
+                json={"container_id": container_id, "auth_token": auth_token},
+            ) as client_resp:
+                return web.json_response(await client_resp.json())
+        except aiohttp.ClientResponseError:
+            raise
 
 
 async def init(app: web.Application) -> None:
@@ -143,6 +156,6 @@ def create_app(
     app.on_shutdown.append(shutdown)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     cors.add(app.router.add_route("POST", r"/create", create_or_update_filebrowser))
-    cors.add(app.router.add_route("DELETE", "/destroy", destroy_filebrowser))
+    cors.add(app.router.add_route("DELETE", r"/destroy", destroy_filebrowser))
 
     return app, []
