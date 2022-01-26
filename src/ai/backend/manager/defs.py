@@ -21,8 +21,8 @@ DEFAULT_ROLE: Final = "main"
 _RESERVED_VFOLDER_PATTERNS = [r'^\.[a-z0-9]+rc$', r'^\.[a-z0-9]+_profile$']
 RESERVED_DOTFILES = ['.terminfo', '.jupyter', '.ssh', '.ssh/authorized_keys', '.local', '.config']
 RESERVED_VFOLDERS = ['.terminfo', '.jupyter', '.tmux.conf', '.ssh', '/bin', '/boot', '/dev', '/etc',
-                     '/lib', '/lib64', '/media', '/mnt', '/opt', '/proc', '/root', '/run', '/sbin', '/srv',
-                     '/sys', '/tmp', '/usr', '/var', '/home']
+                     '/lib', '/lib64', '/media', '/mnt', '/opt', '/proc', '/root', '/run', '/sbin',
+                     '/srv', '/sys', '/tmp', '/usr', '/var', '/home']
 RESERVED_VFOLDER_PATTERNS = [re.compile(x) for x in _RESERVED_VFOLDER_PATTERNS]
 
 # Redis database IDs depending on purposes
