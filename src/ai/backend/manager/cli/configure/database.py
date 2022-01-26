@@ -1,10 +1,9 @@
 import psycopg2
 from ai.backend.cli.interaction import ask_string_in_array, ask_host, ask_number, ask_string
-from mypy.types import Tuple
 from tomlkit.items import Table, InlineTable
 
 
-def config_database(config_toml: dict) -> Tuple[dict, str, str, str, str, int]:
+def config_database(config_toml: dict) -> tuple[dict, str, str, str, str, int]:
     # db section
     try:
         if config_toml.get("db") is None:

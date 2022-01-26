@@ -185,11 +185,11 @@ def configure() -> None:
     # toml section
     with open("config/template.toml", "r") as f:
         config_toml: dict = dict(tomlkit.loads(f.read()))
-    # Interactive user input
-    config_toml = config_etcd(config_toml)
-    config_toml, database_user, database_password, database_name, database_host, database_port = \
-        config_database(config_toml)
-    config_toml = config_manager(config_toml)
+        # Interactive user input
+        config_toml = config_etcd(config_toml)
+        config_toml, database_user, database_password, database_name, database_host, database_port = \
+            config_database(config_toml)
+        config_toml = config_manager(config_toml)
     with open("manager.toml", "w") as f:
         print("\nDump to manager.toml\n")
         tomlkit.dump(config_toml, f)
