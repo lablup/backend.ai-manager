@@ -72,6 +72,8 @@ scaling_groups = sa.Table(
         t.Dict({
             t.Key('allowed_session_types', default=['interactive', 'batch']):
                 t.List(tx.Enum(SessionTypes)),
+            t.Key('pending_timeout', default=0):
+                t.Int(gte=0),
         }).allow_extra('*'),
     ), nullable=False, default={}),
 )
