@@ -430,33 +430,33 @@ class SchedulerDispatcher(aobject):
                     .where(scaling_groups.c.name == sgroup_name)
                 )
                 result = await conn.execute(query)
-                row = result.first()
+            for row in result:
                 allowed_session_types = row['scheduler_opts']['allowed_session_types']
-            for allowed_session_type in allowed_session_types:
-                if(sess_ctx.session_type.value == allowed_session_type.lower()):
-                    if sess_ctx.cluster_mode == ClusterMode.SINGLE_NODE:
-                        await self._schedule_single_node_session(
-                            sched_ctx,
-                            scheduler,
-                            sgroup_name,
-                            candidate_agents,
-                            sess_ctx,
-                            check_results,
-                        )
-                    elif sess_ctx.cluster_mode == ClusterMode.MULTI_NODE:
-                        await self._schedule_multi_node_session(
-                            sched_ctx,
-                            scheduler,
-                            sgroup_name,
-                            candidate_agents,
-                            sess_ctx,
-                            check_results,
-                        )
-                    else:
-                        raise RuntimeError(
-                            f"should not reach here; unknown cluster_mode: {sess_ctx.cluster_mode}",
-                        )
-                    num_scheduled += 1
+                for allowed_session_type in allowed_session_types:
+                    if(sess_ctx.session_type.value == allowed_session_type.lower()):
+                        if sess_ctx.cluster_mode == ClusterMode.SINGLE_NODE:
+                            await self._schedule_single_node_session(
+                                sched_ctx,
+                                scheduler,
+                                sgroup_name,
+                                candidate_agents,
+                                sess_ctx,
+                                check_results,
+                            )
+                        elif sess_ctx.cluster_mode == ClusterMode.MULTI_NODE:
+                            await self._schedule_multi_node_session(
+                                sched_ctx,
+                                scheduler,
+                                sgroup_name,
+                                candidate_agents,
+                                sess_ctx,
+                                check_results,
+                            )
+                        else:
+                            raise RuntimeError(
+                                f"should not reach here; unknown cluster_mode: {sess_ctx.cluster_mode}",
+                            )
+                        num_scheduled += 1
         if num_scheduled > 0:
             await self.event_producer.produce_event(DoPrepareEvent())
 
