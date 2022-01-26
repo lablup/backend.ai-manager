@@ -429,8 +429,8 @@ class SchedulerDispatcher(aobject):
                     .select_from(scaling_groups)
                     .where(scaling_groups.c.name == sgroup_name)
                 )
-                result = await conn.execute(query)
-            for row in result:
+                scheduler_opts_result = await conn.execute(query)
+            for row in scheduler_opts_result:
                 allowed_session_types = row['scheduler_opts']['allowed_session_types']
                 for allowed_session_type in allowed_session_types:
                     if(sess_ctx.session_type.value == allowed_session_type.lower()):
