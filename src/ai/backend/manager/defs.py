@@ -19,12 +19,10 @@ INTRINSIC_SLOTS: Final = {
 DEFAULT_ROLE: Final = "main"
 
 _RESERVED_VFOLDER_PATTERNS = [r'^\.[a-z0-9]+rc$', r'^\.[a-z0-9]+_profile$']
-RESERVED_DOTFILES = ['home/work/.terminfo', 'home/work/.jupyter', 'home/work/.ssh', 
-                     'home/work/.ssh/authorized_keys', 'home/work/.local', 'home/work/.config']
-RESERVED_VFOLDERS = ['home/work/.terminfo', 'home/work/.jupyter', 'home/work/.tmux.conf', 
-                     'home/work/.ssh', 'bin', 'boot', 'dev', 'etc',
-                     'lib', 'lib64', 'media', 'mnt', 'opt', 'proc', 'root', 'run', 'sbin', 'srv',
-                     'sys', 'tmp', 'usr', 'var', 'home', 'home/work']
+RESERVED_DOTFILES = ['.terminfo', '.jupyter', '.ssh', '.ssh/authorized_keys', '.local', '.config']
+RESERVED_VFOLDERS = ['.terminfo', '.jupyter', '.tmux.conf', '.ssh', '/bin', '/boot', '/dev', '/etc',
+                     '/lib', '/lib64', '/media', '/mnt', '/opt', '/proc', '/root', '/run', '/sbin', '/srv',
+                     '/sys', '/tmp', '/usr', '/var', '/home']
 RESERVED_VFOLDER_PATTERNS = [re.compile(x) for x in _RESERVED_VFOLDER_PATTERNS]
 
 # Redis database IDs depending on purposes
