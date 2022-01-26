@@ -16,6 +16,18 @@ Changes
 
 .. towncrier release notes start
 
+## 21.09.6 (2022-01-26)
+
+### Fixes
+* Reduce possibility for sessions stuck at PREPARING by reordering spwaning of postprocessing tasks and RPC calls ([#518](https://github.com/lablup/backend.ai-manager/issues/518))
+* Prevent `AttributeError` in proxying app requests by declaring `down_task` in `TCPProxy` class explicitly. ([#519](https://github.com/lablup/backend.ai-manager/issues/519))
+* Reduce possibility of new sessions to get stuck in the PREPARING status by improving synchronization of session/kernel creation trackers ([#522](https://github.com/lablup/backend.ai-manager/issues/522))
+* Migrate aiodataloader to aiodataloader-ng, which is managed by us ([#525](https://github.com/lablup/backend.ai-manager/issues/525))
+
+### Miscellaneous
+* Change the default values of max concurrent sessions (30 -> 5) and idle timeout (600 -> 3600) in keypair resource policy fixture to conform to the preferable defaults. ([#512](https://github.com/lablup/backend.ai-manager/issues/512))
+
+
 ## 21.09.5 (2022-01-13)
 
 ### Fixes
