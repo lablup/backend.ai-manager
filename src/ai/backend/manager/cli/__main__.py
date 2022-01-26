@@ -1,30 +1,26 @@
 from __future__ import annotations
 
-import asyncio
 import configparser
 import json.decoder
 import logging
-import os
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-import aioredis
 import click
-import etcd3
 import psycopg2
 import tomlkit
 from ai.backend.common.cli import LazyGroup
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.validators import TimeDuration
-from ai.backend.cli.interaction import ask_host, ask_number
-from ai.backend.cli.interaction import ask_string, ask_string_in_array, ask_file_path
 from setproctitle import setproctitle
-from tomlkit.items import Table, InlineTable
 
+from ai.backend.manager.cli.configure.alembic import config_alembic
+from ai.backend.manager.cli.configure.database import config_database
+from ai.backend.manager.cli.configure.etcd import config_etcd
+from ai.backend.manager.cli.configure.manager import config_manager
+from ai.backend.manager.cli.configure.redis import config_redis
 from .context import CLIContext, init_logger
 from ..config import load as load_config
 from ..models.keypair import generate_keypair as _gen_keypair
@@ -190,177 +186,10 @@ def configure() -> None:
     with open("config/template.toml", "r") as f:
         config_toml: dict = dict(tomlkit.loads(f.read()))
     # Interactive user input
-    # etcd section
-    try:
-        if config_toml.get("etcd") is None:
-            raise KeyError
-        elif type(config_toml.get("etcd")) != Table:
-            raise TypeError
-        etcd_config: dict = dict(config_toml["etcd"])
-
-        etcd_namespace = ask_string("Etcd name space: ",
-                                    etcd_config["namespace"] if etcd_config.get("namespace") else "")
-        config_toml["etcd"]["namespace"] = etcd_namespace
-
-        while True:
-            try:
-                if etcd_config.get("addr") is None:
-                    raise KeyError
-                elif type(etcd_config.get("addr")) != InlineTable:
-                    raise TypeError
-                etcd_address: dict = dict(etcd_config["addr"])
-                etcd_host = ask_host("Etcd host: ", etcd_address["host"])
-                if type(etcd_address.get("port")) != str:
-                    etcd_port = ask_number("Etcd port: ", int(etcd_address["port"]), 1, 65535)
-                else:
-                    raise TypeError
-                if check_etcd_health(etcd_host, etcd_port):
-                    break
-                print("Cannot connect to etcd. Please input etcd information again.")
-            except ValueError:
-                print("Invalid etcd address sample.")
-
-        etcd_user = ask_string("Etcd user name", use_default=False)
-        etcd_password = ask_string("Etcd password", use_default=False)
-        config_toml["etcd"]["addr"] = {"host": etcd_host, "port": etcd_port}
-        config_toml["etcd"]["user"] = etcd_user
-        config_toml["etcd"]["password"] = etcd_password
-    except ValueError:
-        raise ValueError
-
-    # db section
-    try:
-        if config_toml.get("db") is None:
-            raise KeyError
-        elif type(config_toml.get("db")) != Table:
-            raise TypeError
-        database_config: dict = dict(config_toml["db"])
-
-        database_type = ask_string_in_array("Database type", "postgresql", ["postgresql"])
-        config_toml["db"]["type"] = database_type
-
-        while True:
-            try:
-                if database_config.get("addr") is None:
-                    raise KeyError
-                elif type(database_config.get("addr")) != InlineTable:
-                    raise TypeError
-                database_address: dict = dict(database_config["addr"])
-                database_host = ask_host("Database host: ", str(database_address.get("host")))
-                if type(database_address.get("port")) != str:
-                    database_port = ask_number("Database port: ",
-                                               int(database_address["port"]), 1, 65535)
-                else:
-                    raise TypeError
-                database_name = ask_string("Database name", str(database_config.get("name")))
-                database_user = ask_string("Database user", str(database_config.get("user")))
-                database_password = ask_string("Database password", use_default=False)
-                if check_database_health(
-                    database_host,
-                    database_port,
-                    database_name,
-                    database_user,
-                    database_password,
-                ):
-                    config_toml["db"]["addr"] = {"host": database_address, "port": database_port}
-                    config_toml["db"]["name"] = database_name
-                    config_toml["db"]["user"] = database_user
-                    config_toml["db"]["password"] = database_password
-                    break
-            except ValueError:
-                raise ValueError
-    except ValueError:
-        raise ValueError
-
-    # manager section
-    try:
-        if config_toml.get("manager") is None:
-            raise KeyError
-        elif type(config_toml.get("manager")) != Table:
-            raise TypeError
-        manager_config: dict = dict(config_toml["manager"])
-        cpu_count: Optional[int] = os.cpu_count()
-        if cpu_count:
-            no_of_processors: int = ask_number("How many processors that manager uses: ", 1, 1,
-                                               cpu_count)
-            config_toml["manager"]["num-proc"] = no_of_processors
-
-        secret_token: str = ask_string("Secret token", use_default=False)
-        if secret_token:
-            config_toml["manager"]["secret"] = secret_token
-        else:
-            config_toml["manager"].pop("secret")
-
-        daemon_user: str = ask_string("User name used for the manager daemon", use_default=False)
-        daemon_group: str = ask_string("Group name used for the manager daemon", use_default=False)
-        if daemon_user:
-            config_toml["manager"]["user"] = daemon_user
-        else:
-            config_toml["manager"].pop("user")
-        if daemon_group:
-            config_toml["manager"]["group"] = daemon_group
-        else:
-            config_toml["manager"].pop("group")
-
-        try:
-            if manager_config.get("service-addr") is None:
-                raise KeyError
-            elif type(manager_config.get("service-addr")) != InlineTable:
-                raise TypeError
-            manager_address: dict = dict(manager_config["service-addr"])
-            manager_host = ask_host("Manager host: ", manager_address["host"])
-            if type(manager_address.get("port")) != str:
-                manager_port = ask_number("Manager port: ", int(manager_address["port"]), 1, 65535)
-            else:
-                raise TypeError
-            config_toml["manager"]["service-addr"] = {"host": manager_host, "port": manager_port}
-        except ValueError:
-            raise ValueError
-
-        ssl_enabled = ask_string_in_array("Enable SSL", choices=["true", "false"])
-        config_toml["manager"]["ssl-enabled"] = ssl_enabled == "true"
-
-        if ssl_enabled == "true":
-            ssl_cert = ask_file_path("SSL cert path")
-            ssl_private_key = ask_file_path("SSL private key path")
-            config_toml["manager"]["ssl-cert"] = ssl_cert
-            config_toml["manager"]["ssl-privkey"] = ssl_private_key
-        else:
-            config_toml["manager"].pop("ssl-cert")
-            config_toml["manager"].pop("ssl-privkey")
-        while True:
-            try:
-                heartbeat_timeout = float(input("Heartbeat timeout: "))
-                config_toml["manager"]["heartbeat-timeout"] = heartbeat_timeout
-                break
-            except ValueError:
-                print("Please input correct heartbeat timeout value as float.")
-
-        node_name = ask_string("Manager node name", use_default=False)
-        if node_name:
-            config_toml["manager"]["id"] = node_name
-        else:
-            config_toml["manager"].pop("id")
-
-        pid_path = ask_string("PID file path", use_default=False)
-        if pid_path == "":
-            config_toml["manager"].pop("pid-file")
-        elif pid_path and os.path.exists(pid_path):
-            config_toml["manager"]["pid-file"] = pid_path
-
-        hide_agent = ask_string_in_array("Hide agent and container ID", choices=["true", "false"])
-        config_toml["manager"]["hide-agents"] = hide_agent == "true"
-
-        event_loop = ask_string_in_array("Event loop", choices=["asyncio", "uvloop", ""])
-        if event_loop:
-            config_toml["manager"]["event-loop"] = event_loop
-        else:
-            config_toml["manager"].pop("event-loop")
-        config_toml["manager"].pop("importer-image")
-
-    except ValueError:
-        raise ValueError
-
+    config_toml = config_etcd(config_toml)
+    config_toml, database_user, database_password, database_name, database_host, database_port = \
+        config_database(config_toml)
+    config_toml = config_manager(config_toml)
     with open("manager.toml", "w") as f:
         print("\nDump to manager.toml\n")
         tomlkit.dump(config_toml, f)
@@ -368,98 +197,9 @@ def configure() -> None:
     # Dump alembic.ini
     config_parser = configparser.ConfigParser()
     config_parser.read("config/halfstack.alembic.template.ini")
-
-    script_location = ask_string("Script location: ", config_parser["alembic"]["script_location"])
-    config_parser["alembic"]["script_location"] = script_location
-
-    file_template = ask_string("File template: ", use_default=False)
-    if file_template:
-        config_parser["alembic"]["file_template"] = file_template
-    else:
-        config_parser["alembic"].pop("file_template")
-
-    timezone = ask_string("Timezone: ", use_default=False)
-    if file_template:
-        config_parser["alembic"]["timezone"] = timezone
-    else:
-        config_parser["alembic"].pop("timezone")
-
-    truncate_slug_length: int = ask_number("Max length of slug field(If you don\'t want to use, "
-                                           "just leave default value): ", 0, 0, 40)
-    if truncate_slug_length > 0:
-        config_parser["alembic"]["truncate_slug_length"] = str(truncate_slug_length)
-    else:
-        config_parser["alembic"].pop("truncate_slug_length")
-
-    revision_environment = ask_string_in_array("Revision Environment", choices=["true", "false", ""])
-    if revision_environment.strip():
-        config_parser["alembic"]["revision_environment"] = revision_environment
-    else:
-        config_parser["alembic"].pop("revision_environment")
-
-    sourceless = ask_string_in_array("Sourceless(set to 'true' to allow .pyc and .pyo files "
-                                     "without a source .py)", choices=["true", "false", ""])
-    if sourceless.strip():
-        config_parser["alembic"]["sourceless"] = sourceless
-    else:
-        config_parser["alembic"].pop("sourceless")
-
-    # modify database scheme
-    if all([x is not None for x in
-            [database_user, database_password, database_name, database_host, database_port]]):
-        config_parser["alembic"]["sqlalchemy.url"] = \
-            f"postgresql://{database_user}:{database_password}" \
-            f"@{database_host}:{database_port}/{database_name}"
-
-    logger_keys = ask_string("Logger keys: ", default=config_parser["loggers"]["keys"])
-    config_parser["loggers"]["keys"] = logger_keys
-    handlers_keys = ask_string("Handlers keys: ", default=config_parser["handlers"]["keys"])
-    config_parser["handlers"]["keys"] = handlers_keys
-    formatters_keys = ask_string("Formatters keys: ", default=config_parser["formatters"]["keys"])
-    config_parser["formatters"]["keys"] = formatters_keys
-
-    logger_root_level = ask_string("Logger root level", default=config_parser["logger_root"]["level"])
-    logger_root_handlers = ask_string("Logger root handlers",
-                                      default=config_parser["logger_root"]["handlers"])
-    logger_root_qualname = ask_string("Logger root qualname",
-                                      default=config_parser["logger_root"]["qualname"])
-    config_parser["logger_root"]["level"] = logger_root_level
-    config_parser["logger_root"]["handlers"] = logger_root_handlers
-    config_parser["logger_root"]["qualname"] = logger_root_qualname
-
-    logger_sqlalchemy_level = ask_string("Logger sqlalchemy level",
-                                         default=config_parser["logger_sqlalchemy"]["level"])
-    logger_sqlalchemy_handlers = ask_string("Logger sqlalchemy handlers",
-                                            default=config_parser["logger_sqlalchemy"]["handlers"])
-    logger_sqlalchemy_qualname = ask_string("Logger sqlalchemy qualname",
-                                            default=config_parser["logger_sqlalchemy"]["qualname"])
-    config_parser["logger_sqlalchemy"]["level"] = logger_sqlalchemy_level
-    config_parser["logger_sqlalchemy"]["handlers"] = logger_sqlalchemy_handlers
-    config_parser["logger_sqlalchemy"]["qualname"] = logger_sqlalchemy_qualname
-
-    logger_alembic_level = ask_string("Logger alembic level",
-                                      default=config_parser["logger_alembic"]["level"])
-    logger_alembic_handlers = ask_string("Logger alembic handlers",
-                                         default=config_parser["logger_alembic"]["handlers"])
-    logger_alembic_qualname = ask_string("Logger alembic qualname",
-                                         default=config_parser["logger_alembic"]["qualname"])
-    config_parser["logger_alembic"]["level"] = logger_alembic_level
-    config_parser["logger_alembic"]["handlers"] = logger_alembic_handlers
-    config_parser["logger_alembic"]["qualname"] = logger_alembic_qualname
-
-    handler_console_class = ask_string("Handler console class",
-                                       default=config_parser["handler_console"]["class"])
-    handler_console_args = ask_string("Handler console args",
-                                      default=config_parser["handler_console"]["args"])
-    handler_console_level = ask_string("Handler console level",
-                                       default=config_parser["handler_console"]["level"])
-    handler_console_formatter = ask_string("Handler console formatter",
-                                           default=config_parser["handler_console"]["formatter"])
-    config_parser["handler_console"]["class"] = handler_console_class
-    config_parser["handler_console"]["args"] = handler_console_args
-    config_parser["handler_console"]["level"] = handler_console_level
-    config_parser["handler_console"]["formatter"] = handler_console_formatter
-
+    config_parser = config_alembic(config_parser,
+                                   database_user, database_password, database_name,
+                                   database_host, database_port)
     with open("alembic.ini", 'w') as f:
         print("\nDump to alembic.ini\n")
         config_parser.write(f)
@@ -467,51 +207,7 @@ def configure() -> None:
     # Dump etcd config json
     with open("config/sample.etcd.config.json") as f:
         config_json: dict = json.load(f)
-
-    try:
-        if config_json.get("redis") is None:
-            raise KeyError
-        elif type(config_json.get("redis")) != dict:
-            raise TypeError
-        redis_config: dict = dict(config_json["redis"])
-        while True:
-            redis_host_str, redis_port_str = str(redis_config.get("addr")).split(":")
-            redis_host = ask_host("Redis host: ", str(redis_host_str))
-            if type(redis_port_str) != str:
-                raise TypeError
-            redis_port = ask_number("Redis port: ", int(redis_port_str), 1, 65535)
-            redis_password = ask_string("Redis password", use_default=False)
-            if redis_password:
-                redis_client = aioredis.Redis(
-                    host=redis_host,
-                    port=redis_port,
-                    password=redis_password)
-            else:
-                redis_client = aioredis.Redis(host=redis_host, port=redis_port)
-
-            try:
-                loop = asyncio.get_event_loop()
-                coroutine = redis_client.get("")
-                loop.run_until_complete(coroutine)
-                coroutine = redis_client.close()
-                loop.run_until_complete(coroutine)
-                config_json["redis"]["addr"] = f"{redis_host}:{redis_port}"
-                config_json["redis"]["password"] = redis_password
-                break
-            except (aioredis.exceptions.ConnectionError, aioredis.exceptions.BusyLoadingError):
-                print("Cannot connect to etcd. Please input etcd information again.")
-
-        while True:
-            timezone = input("System timezone: ")
-            try:
-                _ = ZoneInfo(timezone)
-                config_json["system"]["timezone"] = timezone
-                break
-            except (ValueError, ZoneInfoNotFoundError):
-                print('Please input correct timezone.')
-    except ValueError:
-        raise ValueError
-
+    config_json = config_redis(config_json)
     with open("dev.etcd.config.json", "w") as f:
         print("\nDump to dev.etcd.config.json\n")
         json.dump(config_json, f, indent=4)
@@ -521,31 +217,6 @@ def configure() -> None:
     print("manager.toml : etcd, database, manager configuration, logging options and so on.")
     print("alembic.ini : option about alembic")
     print("dev.etcd.config.json : etcd options like timezone, host, port and so on.")
-
-
-def check_etcd_health(host: str, port: int):
-    try:
-        etcd_client = etcd3.Etcd3Client(host=host, port=port)
-        etcd_client.close()
-    except (etcd3.exceptions.ConnectionFailedError, etcd3.exceptions.ConnectionTimeoutError):
-        return False
-    return True
-
-
-def check_database_health(host: str, port: int, database_name: str, user: str, password: str):
-    try:
-        database_client = psycopg2.connect(
-            host=host,
-            port=port,
-            user=user,
-            password=password,
-            dbname=database_name,
-        )
-        database_client.close()
-        return True
-    except Exception as e:
-        print(e)
-        return False
 
 
 @main.group(cls=LazyGroup, import_name='ai.backend.manager.cli.dbschema:cli')
