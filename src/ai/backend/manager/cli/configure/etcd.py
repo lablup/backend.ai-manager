@@ -12,10 +12,6 @@ def config_etcd(config_toml: dict) -> dict:
             raise TypeError
         etcd_config: dict = dict(config_toml["etcd"])
 
-        etcd_namespace = ask_string("Etcd name space: ",
-                                    etcd_config["namespace"] if etcd_config.get("namespace") else "")
-        config_toml["etcd"]["namespace"] = etcd_namespace
-
         while True:
             try:
                 if etcd_config.get("addr") is None:

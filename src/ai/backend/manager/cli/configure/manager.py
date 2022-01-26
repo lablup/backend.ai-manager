@@ -51,7 +51,7 @@ def config_manager(config_toml: dict) -> dict:
         except ValueError:
             raise ValueError
 
-        ssl_enabled = ask_string_in_array("Enable SSL", choices=["true", "false"])
+        ssl_enabled = ask_string_in_array("Enable SSL", ["true", "false"], "false")
         config_toml["manager"]["ssl-enabled"] = ssl_enabled == "true"
 
         if ssl_enabled == "true":
@@ -82,10 +82,11 @@ def config_manager(config_toml: dict) -> dict:
         elif pid_path and os.path.exists(pid_path):
             config_toml["manager"]["pid-file"] = pid_path
 
-        hide_agent = ask_string_in_array("Hide agent and container ID", choices=["true", "false"])
+        hide_agent = ask_string_in_array("Hide agent and container ID", ["true", "false"],
+                                         config_toml["manager"]["hide-agents"])
         config_toml["manager"]["hide-agents"] = hide_agent == "true"
 
-        event_loop = ask_string_in_array("Event loop", choices=["asyncio", "uvloop", ""])
+        event_loop = ask_string_in_array("Event loop", ["asyncio", "uvloop", ""], "")
         if event_loop:
             config_toml["manager"]["event-loop"] = event_loop
         else:

@@ -31,15 +31,16 @@ def config_alembic(config_parser: ConfigParser,
     else:
         config_parser["alembic"].pop("truncate_slug_length")
 
-    revision_environment = ask_string_in_array("Revision Environment", choices=["true", "false", ""])
-    if revision_environment.strip():
+    revision_environment = ask_string_in_array("Revision Environment", ["true", "false", ""],
+                                               config_parser["alembic"]["revision_environment"])
+    if revision_environment:
         config_parser["alembic"]["revision_environment"] = revision_environment
     else:
         config_parser["alembic"].pop("revision_environment")
 
     sourceless = ask_string_in_array("Sourceless(set to 'true' to allow .pyc and .pyo files "
-                                     "without a source .py)", choices=["true", "false", ""])
-    if sourceless.strip():
+                                     "without a source .py)", ["true", "false", ""], "true")
+    if sourceless:
         config_parser["alembic"]["sourceless"] = sourceless
     else:
         config_parser["alembic"].pop("sourceless")

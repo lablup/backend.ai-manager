@@ -12,7 +12,7 @@ def config_database(config_toml: dict) -> tuple[dict, str, str, str, str, int]:
             raise TypeError
         database_config: dict = dict(config_toml["db"])
 
-        database_type = ask_string_in_array("Database type", "postgresql", ["postgresql"])
+        database_type = ask_string_in_array("Database type", ["postgresql"], "postgresql")
         config_toml["db"]["type"] = database_type
 
         while True:
