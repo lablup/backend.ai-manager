@@ -294,7 +294,7 @@ def example_pending_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
-                    created_at = datetime.now(tzutc()),
+                    created_at=datetime.now(tzutc()),
                 ),
             ],
             access_key=AccessKey('user01'),
@@ -316,7 +316,7 @@ def example_pending_sessions():
             }),
             target_sgroup_names=[],
             **_common_dummy_for_pending_session,
-            created_at = datetime.now(tzutc()),
+            created_at=datetime.now(tzutc()),
         ),
         PendingSession(  # cuda
             kernels=[
@@ -339,7 +339,7 @@ def example_pending_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
-                    created_at = datetime.now(tzutc()),
+                    created_at=datetime.now(tzutc()),
                 ),
             ],
             access_key=AccessKey('user02'),
@@ -361,7 +361,7 @@ def example_pending_sessions():
             }),
             target_sgroup_names=[],
             **_common_dummy_for_pending_session,
-            created_at = datetime.now(tzutc()),
+            created_at=datetime.now(tzutc()),
         ),
         PendingSession(  # cpu-only
             kernels=[
@@ -384,7 +384,7 @@ def example_pending_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
-                    created_at = datetime.now(tzutc()),
+                    created_at=datetime.now(tzutc()),
                 ),
                 KernelInfo(
                     kernel_id=pending_session_kernel_ids[2].kernel_ids[1],
@@ -405,7 +405,7 @@ def example_pending_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
-                    created_at = datetime.now(tzutc()),
+                    created_at=datetime.now(tzutc()),
                 ),
                 KernelInfo(
                     kernel_id=pending_session_kernel_ids[2].kernel_ids[2],
@@ -426,7 +426,7 @@ def example_pending_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
-                    created_at = datetime.now(tzutc()),
+                    created_at=datetime.now(tzutc()),
                 ),
             ],
             access_key=AccessKey('user03'),
@@ -448,7 +448,7 @@ def example_pending_sessions():
             }),
             target_sgroup_names=[],
             **_common_dummy_for_pending_session,
-            created_at = datetime.now(tzutc()),
+            created_at=datetime.now(tzutc()),
         ),
     ]
 
@@ -477,6 +477,7 @@ def example_existing_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
+                    created_at=datetime.now(tzutc()),
                 ),
                 KernelInfo(
                     kernel_id=existing_session_kernel_ids[0].kernel_ids[1],
@@ -497,6 +498,7 @@ def example_existing_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
+                    created_at=datetime.now(tzutc()),
                 ),
             ],
             access_key=AccessKey('user01'),
@@ -535,6 +537,7 @@ def example_existing_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
+                    created_at=datetime.now(tzutc()),
                 ),
             ],
             access_key=AccessKey('user02'),
@@ -573,6 +576,7 @@ def example_existing_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
+                    created_at=datetime.now(tzutc()),
                 ),
             ],
             access_key=AccessKey('user03'),
@@ -673,7 +677,7 @@ def gen_pending_for_holb_tests(session_id: str, status_data: Mapping[str, Any]) 
         requested_slots=ResourceSlot({'cpu': Decimal(1), 'mem': Decimal(1024)}),
         target_sgroup_names=[],
         **_common_dummy_for_pending_session,
-        created_at = datetime.now(tzutc()),
+        created_at=datetime.now(tzutc()),
     )
 
 
