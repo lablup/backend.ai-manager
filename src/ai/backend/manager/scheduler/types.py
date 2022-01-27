@@ -362,7 +362,7 @@ class KernelInfo:
             requested_slots=row['occupied_slots'],
             bootstrap_script=row['bootstrap_script'],
             startup_command=row['startup_command'],
-            created_at=row['created_at']
+            created_at=row['created_at'],
         )
 
 
