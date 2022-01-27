@@ -422,7 +422,6 @@ class SchedulerDispatcher(aobject):
 
                 await execute_with_retry(_update)
 
-            sgroup_name = sess_ctx.scaling_group
             async with self.db.begin() as conn:
                 query = (
                     sa.select(scaling_groups.c.scheduler_opts)
@@ -430,7 +429,7 @@ class SchedulerDispatcher(aobject):
                     .where(scaling_groups.c.name == sgroup_name)
                 )
                 scheduler_opts_result = await conn.execute(query)
-            for row in scheduler_opts_result:
+                row = scheduler_opts_result.first()
                 allowed_session_types = row['scheduler_opts']['allowed_session_types']
                 for allowed_session_type in allowed_session_types:
                     if(sess_ctx.session_type.value == allowed_session_type.lower()):
