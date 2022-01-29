@@ -515,7 +515,6 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             user_role=request['user']['role'],
             cluster_mode=params['cluster_mode'],
             cluster_size=params['cluster_size'],
-            startup_command=params['startup_command'],
             session_tag=params['tag'],
             starts_at=starts_at,
             agent_list=params['config']['agent_list'],
