@@ -10,12 +10,15 @@ from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
-    ResourceSlot, SessionTypes,
+    ResourceSlot,
+    SessionResult,
+    SessionTypes,
 )
 
 from ..models import (
     domains, groups, kernels, keypairs,
     keypair_resource_policies,
+    session_dependencies,
     query_allowed_sgroups,
     DefaultForUnspecified,
 )
@@ -103,8 +106,30 @@ async def check_dependencies(
     sched_ctx: SchedulingContext,
     sess_ctx: PendingSession,
 ) -> PredicateResult:
-    # TODO: implement
-    return PredicateResult(True, 'bypassing because it is not implemented')
+    j = (
+        session_dependencies,
+        kernels,
+        session_dependencies.c.depends_on == kernels.c.session_id,
+    )
+    query = (
+        sa.select([
+            kernels.c.session_id,
+            kernels.c.result,
+        ])
+        .select_from(j)
+        .where(session_dependencies.c.session_id == sess_ctx.session_id)
+    )
+    result = await db_conn.execute(query)
+    rows = result.fetchall()
+    all_success = all(row['result'] == SessionResult.SUCCESS for row in rows)
+    if all_success:
+        return PredicateResult(True)
+    return PredicateResult(
+        False,
+        "Waiting dependency sessions to finish as success. ({})".format(
+            ", ".join(row['session_id'] for row in rows),
+        ),
+    )
 
 
 async def check_keypair_resource_limit(

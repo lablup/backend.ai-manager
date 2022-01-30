@@ -1040,7 +1040,8 @@ class AgentRegistry:
             # Check if: requested >= image-minimum
             if image_min_slots > requested_slots:
                 raise InvalidAPIParameters(
-                    'Your resource request is smaller than ' 'the minimum required by the image. ({})'.format(' '.join(
+                    'Your resource request is smaller than '
+                    'the minimum required by the image. ({})'.format(' '.join(
                         f'{k}={v}' for k, v in
                         image_min_slots.to_humanized(known_slot_types).items()
                     )))
