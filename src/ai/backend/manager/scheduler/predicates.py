@@ -106,14 +106,13 @@ async def check_dependencies(
     sched_ctx: SchedulingContext,
     sess_ctx: PendingSession,
 ) -> PredicateResult:
-    j = (
+    j = sa.join(
         session_dependencies,
         kernels,
         session_dependencies.c.depends_on == kernels.c.session_id,
     )
     query = (
         sa.select([
-            kernels.c.session_id,
             kernels.c.result,
         ])
         .select_from(j)
