@@ -62,10 +62,10 @@ async def get_access_key_scopes(request: web.Request, params: Any = None) -> Tup
         async with root_ctx.db.begin() as conn:
             query = (
                 sa.select([users.c.domain_name, users.c.role])
-                    .select_from(
+                .select_from(
                     sa.join(keypairs, users,
                             keypairs.c.user == users.c.uuid))
-                    .where(
+                .where(
                     (keypairs.c.access_key == owner_access_key)
                     & (keypairs.c.is_active == true()),
                 )
@@ -75,10 +75,10 @@ async def get_access_key_scopes(request: web.Request, params: Any = None) -> Tup
             if row is None:
                 requester_query = (
                     sa.select([users.c.domain_name, users.c.role]).select_from(
-                        sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
+                        sa.join(keypairs, users, keypairs.c.user == users.c.uuid,)
                     ).where(
                         (keypairs.c.access_key == requester_access_key) &
-                        (keypairs.c.is_active == true())
+                        (keypairs.c.is_active == true()),
                     )
                 )
                 requester_result = await conn.execute(requester_query)
