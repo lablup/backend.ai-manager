@@ -427,10 +427,12 @@ async def _create(request: web.Request, params: Any) -> web.Response:
     try:
         requested_image_ref = \
             await ImageRef.resolve_alias(params['image'], root_ctx.shared_config.etcd)
-        async with root_ctx.db.begin() as conn:
-            query = (sa.select([domains.c.allowed_docker_registries])
-                       .select_from(domains)
-                       .where(domains.c.name == params['domain']))
+        async with root_ctx.db.begin_readonly() as conn:
+            query = (
+                sa.select([domains.c.allowed_docker_registries])
+                .select_from(domains)
+                .where(domains.c.name == params['domain'])
+            )
             allowed_registries = await conn.scalar(query)
             if requested_image_ref.registry not in allowed_registries:
                 raise AliasResolutionFailed
