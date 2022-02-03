@@ -46,6 +46,7 @@ _rx_sitepkg_path = re.compile(r'^.+/site-packages/')
 def method_placeholder(orig_method):
     async def _handler(request):
         raise web.HTTPMethodNotAllowed(request.method, [orig_method])
+
     return _handler
 
 
@@ -61,10 +62,10 @@ async def get_access_key_scopes(request: web.Request, params: Any = None) -> Tup
         async with root_ctx.db.begin() as conn:
             query = (
                 sa.select([users.c.domain_name, users.c.role])
-                .select_from(
+                    .select_from(
                     sa.join(keypairs, users,
                             keypairs.c.user == users.c.uuid))
-                .where(
+                    .where(
                     (keypairs.c.access_key == owner_access_key)
                     & (keypairs.c.is_active == true()),
                 )
@@ -72,9 +73,23 @@ async def get_access_key_scopes(request: web.Request, params: Any = None) -> Tup
             result = await conn.execute(query)
             row = result.first()
             if row is None:
-                raise InvalidAPIParameters('Unknown or inactive owner access key')
-            owner_domain = row['domain_name']
-            owner_role = row['role']
+                requester_query = (
+                    sa.select([users.c.domain_name, users.c.role]).select_from(
+                        sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
+                    ).where(
+                        (keypairs.c.access_key == requester_access_key) &
+                        (keypairs.c.is_active == true())
+                    )
+                )
+                requester_result = await conn.execute(requester_query)
+                requester_row = requester_result.first()
+                if requester_row is None:
+                    raise InvalidAPIParameters("Unknown or inactive owner access key")
+                owner_domain = requester_row["domain_name"]
+                owner_role = requester_row["role"]
+            else:
+                owner_domain = row["domain_name"]
+                owner_role = row["role"]
         if request['is_superadmin']:
             pass
         elif request['is_admin']:
@@ -198,7 +213,6 @@ def prettify_traceback(exc):
 
 
 def catch_unexpected(log, reraise_cancellation: bool = True, raven=None):
-
     def _wrap(func):
 
         @functools.wraps(func)
