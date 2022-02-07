@@ -643,7 +643,7 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
             .select_from(session_templates)
             .where(
                 (session_templates.c.id == params['template_id']) &
-                session_templates.c.is_active
+                session_templates.c.is_active,
             )
         )
         result = await conn.execute(query)
@@ -658,7 +658,7 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
                 .select_from(groups)
                 .where(
                     (groups.c.domain_name == template_info['domain_name']) &
-                    (groups.c.id == template_info['group_id'])
+                    (groups.c.id == template_info['group_id']),
                 )
             )
             group_name = await conn.scalar(query)
