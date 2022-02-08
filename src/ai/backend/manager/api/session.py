@@ -922,10 +922,6 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
         elif template['spec']['sess_type'] == 'batch':
             kernel_config['sess_type'] = SessionTypes.BATCH
 
-        # TODO: Remove `type: ignore` when mypy supports type inference for walrus operator
-        # Check https://github.com/python/mypy/issues/7316
-        # TODO: remove `NOQA` when flake8 supports Python 3.8 and walrus operator
-        # Check https://gitlab.com/pycqa/flake8/issues/599
         if tag := template['metadata'].get('tag', None):
             kernel_config['tag'] = tag
         if runtime_opt := template['spec']['kernel']['run']:
@@ -937,23 +933,23 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
         if resources := template['spec'].get('resources'):
             kernel_config['creation_config']['resources'] = resources
 
-        if git := template['spec']['kernel']['git']:  # noqa
-            if _dest := git.get('dest_dir'):  # noqa
+        if git := template['spec']['kernel']['git']:
+            if _dest := git.get('dest_dir'):
                 target = _dest
             else:
                 target = git['repository'].split('/')[-1]
 
             cmd_builder = 'git clone '
-            if credential := git.get('credential'):  # noqa
+            if credential := git.get('credential'):
                 proto, url = git['repository'].split('://')
                 cmd_builder += f'{proto}://{credential["username"]}:{credential["password"]}@{url}'
             else:
                 cmd_builder += git['repository']
-            if branch := git.get('branch'):  # noqa
+            if branch := git.get('branch'):
                 cmd_builder += f' -b {branch}'
             cmd_builder += f' {target}\n'
 
-            if commit := git.get('commit'):  # noqa
+            if commit := git.get('commit'):
                 cmd_builder = 'CWD=$(pwd)\n' + cmd_builder
                 cmd_builder += f'cd {target}\n'
                 cmd_builder += f'git checkout {commit}\n'
