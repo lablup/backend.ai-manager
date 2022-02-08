@@ -433,9 +433,9 @@ class SchedulerDispatcher(aobject):
             row = scheduler_opts_result.first()
             allowed_session_types = row['scheduler_opts']['allowed_session_types']
             pending_timeout = row['scheduler_opts']['pending_timeout']
-            if(pending_timeout > 0):
+            if pending_timeout > 0:
                 pending_time = (datetime.now(tzutc()) - sess_ctx.kernels[0].created_at).seconds
-                if(pending_time > pending_timeout):
+                if pending_time > pending_timeout:
                     async def _update() -> None:
                         async with self.db.begin() as db_conn:
                             now = datetime.now(tzutc())
@@ -449,7 +449,7 @@ class SchedulerDispatcher(aobject):
 
                     await execute_with_retry(_update)
 
-            if(sess_ctx.session_type.value.lower() in allowed_session_types):
+            if sess_ctx.session_type.value.lower() in allowed_session_types:
                 if sess_ctx.cluster_mode == ClusterMode.SINGLE_NODE:
                     await self._schedule_single_node_session(
                         sched_ctx,
