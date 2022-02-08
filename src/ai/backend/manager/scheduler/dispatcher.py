@@ -431,7 +431,7 @@ class SchedulerDispatcher(aobject):
                 scheduler_opts_result = await conn.execute(query)
             row = scheduler_opts_result.first()
             allowed_session_types = row['scheduler_opts']['allowed_session_types']
-            if(sess_ctx.session_type.value.lower() in allowed_session_types):
+            if sess_ctx.session_type.value.lower() in allowed_session_types:
                 if sess_ctx.cluster_mode == ClusterMode.SINGLE_NODE:
                     await self._schedule_single_node_session(
                         sched_ctx,
