@@ -94,10 +94,10 @@ def check_task_template(raw_data: Mapping[str, Any]) -> Mapping[str, Any]:
     data = task_template_v1.check(raw_data)
     if mounts := data['spec'].get('mounts'):
         for p in mounts.values():
-            if p.startswith("/home/work/"):
-                p = p.replace("/home/work/", "")
             if p is None:
                 continue
+            if p.startswith("/home/work/"):
+                p = p.replace("/home/work/", "")
             if not verify_vfolder_name(p):
                 raise InvalidArgument(f'Path {p} is reserved for internal operations.')
     return data
