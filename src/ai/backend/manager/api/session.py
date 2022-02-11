@@ -407,18 +407,16 @@ async def _create(request: web.Request, params: Any) -> web.Response:
         if len(alias_folders) != len(set(alias_folders)):
             raise InvalidAPIParameters('Duplicate alias folder name exists.')
 
-        p: str
-        for p in alias_folders:
-            if p is None:
+        alias_name: str
+        for alias_name in alias_folders:
+            if alias_name is None:
                 continue
-            if not p.startswith('/home/work/'):
-                raise InvalidAPIParameters(f'Path {p} should start with /home/work/')
-
-            alias_name = p.replace('/home/work/', '')
+            if alias_name.startswith("/home/work/"):
+                alias_name = alias_name.replace('/home/work/', '')
             if alias_name == '':
                 raise InvalidAPIParameters('Alias name cannot be empty.')
             if not verify_vfolder_name(alias_name):
-                raise InvalidAPIParameters(f'Path {str(p)} is reserved for internal operations.')
+                raise InvalidAPIParameters(str(alias_name) + ' is reserved for internal path.')
             if alias_name in original_folders:
                 raise InvalidAPIParameters('Alias name cannot be set to an existing folder name: '
                                             + str(alias_name))
