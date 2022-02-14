@@ -1,0 +1,1 @@
+Rely on redis stat database instead of `kernels.last_stat` column to prevent unwanted overhead when syncing kernel stat.
