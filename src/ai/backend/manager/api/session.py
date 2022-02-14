@@ -1275,7 +1275,8 @@ async def handle_kernel_stat_sync(
     event: DoSyncKernelStatsEvent,
 ) -> None:
     root_ctx: RootContext = app['_root.context']
-    await root_ctx.registry.sync_kernel_stats(event.kernel_ids)
+    if root_ctx.local_config['debug']['save-stats-to-db']:
+        await root_ctx.registry.sync_kernel_stats(event.kernel_ids)
 
 
 async def handle_batch_result(
