@@ -16,6 +16,14 @@ Changes
 
 .. towncrier release notes start
 
+21.03.30 (2022-02-14)
+---------------------
+
+### Fixes
+* Apply "read-only" attribute to a broader range of database transactions to improve overall performance ([#529](https://github.com/lablup/backend.ai-manager/issues/529))
+* Force resource usage recalculation when session creation is failed to prevent failed session's resource slot not returning. ([#531](https://github.com/lablup/backend.ai-manager/issues/531))
+
+
 21.03.29 (2022-01-26)
 ---------------------
 
