@@ -239,7 +239,7 @@ async def check_scaling_group(
             sa.select(scaling_groups.c.scheduler_opts)
             .select_from(scaling_groups)
             .where(scaling_groups.c.name == preferred_sgroup_name)
-        )
+    )
     scheduler_opts_result = await db_conn.execute(query)
     row = scheduler_opts_result.first()
     allowed_session_types = row['scheduler_opts']['allowed_session_types']
