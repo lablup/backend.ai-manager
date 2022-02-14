@@ -603,7 +603,7 @@ class ComputeContainer(graphene.ObjectType):
 
     # last_stat also fetches data from Redis, meaning that
     # both live_stat and last_stat will reference same data from same source
-    # we can leave last_stat value for legacy support, as an alias to last_stat  
+    # we can leave last_stat value for legacy support, as an alias to last_stat
     async def resolve_live_stat(self, info: graphene.ResolveInfo) -> Optional[Mapping[str, Any]]:
         graph_ctx: GraphQueryContext = info.context
         loader = graph_ctx.dataloader_manager.get_loader(graph_ctx, 'KernelStatistics.by_session')
@@ -1186,7 +1186,7 @@ class LegacyComputeSession(graphene.ObjectType):
 
     # last_stat also fetches data from Redis, meaning that
     # both live_stat and last_stat will reference same data from same source
-    # we can leave last_stat value for legacy support, as an alias to last_stat  
+    # we can leave last_stat value for legacy support, as an alias to last_stat
     async def resolve_live_stat(self, info: graphene.ResolveInfo) -> Optional[Mapping[str, Any]]:
         graph_ctx: GraphQueryContext = info.context
         loader = graph_ctx.dataloader_manager.get_loader(graph_ctx, 'KernelStatistics.by_session')
