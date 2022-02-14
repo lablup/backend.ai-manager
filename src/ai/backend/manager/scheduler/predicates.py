@@ -15,7 +15,7 @@ from ai.backend.common.types import (
 
 from ..models import (
     domains, groups, kernels, keypairs,
-    keypair_resource_policies,
+    keypair_resource_policies, scaling_groups,
     query_allowed_sgroups,
     DefaultForUnspecified,
 )
@@ -234,6 +234,19 @@ async def check_scaling_group(
         return PredicateResult(
             False,
             "No available resource in scaling groups.",
+        )
+    query = (
+            sa.select(scaling_groups.c.scheduler_opts)
+            .select_from(scaling_groups)
+            .where(scaling_groups.c.name == preferred_sgroup_name)
+        )
+    scheduler_opts_result = await db_conn.execute(query)
+    row = scheduler_opts_result.first()
+    allowed_session_types = row['scheduler_opts']['allowed_session_types']
+    if sess_ctx.session_type.value.lower() not in allowed_session_types:
+        return PredicateResult(
+            False,
+            "Not allowed session type in scaling groups.",
         )
     sess_ctx.target_sgroup_names.extend(target_sgroup_names)
     return PredicateResult(True)
