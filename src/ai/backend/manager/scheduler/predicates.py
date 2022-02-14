@@ -15,7 +15,7 @@ from ai.backend.common.types import (
 
 from ..models import (
     domains, groups, kernels, keypairs,
-    keypair_resource_policies, scaling_groups,
+    keypair_resource_policies,
     query_allowed_sgroups,
     DefaultForUnspecified,
 )
@@ -225,7 +225,7 @@ async def check_scaling_group(
                 permanent=True,
             )
         # Consider agents only in the preferred scaling group.
-        target_sgroup_names = [preferred_sgroup_name]
+        target_sgroup_names = [preferred_sgroup_name]fix: Remove additional query because it's not necessary
     else:
         # Consider all agents in all allowed scaling groups.
         target_sgroup_names = [sgroup['name'] for sgroup in sgroups]
