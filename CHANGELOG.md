@@ -16,6 +16,17 @@ Changes
 
 .. towncrier release notes start
 
+## 21.09.7 (2022-02-14)
+
+### Features
+* Allow vfolder mounting to arbitrary path, excluding pre-existing folders of '/' like '/bin'. ([#516](https://github.com/lablup/backend.ai-manager/issues/516))
+
+### Fixes
+* Prevent redis pool depletion in proxying streaming app requests by executing the entire connection tracker script in a non-bursty manner. ([#526](https://github.com/lablup/backend.ai-manager/issues/526))
+* Apply "read-only" attribute to a broader range of database transactions to improve overall performance ([#529](https://github.com/lablup/backend.ai-manager/issues/529))
+* Force resource usage recalculation when session creation is failed to prevent failed session's resource slot not returning. ([#531](https://github.com/lablup/backend.ai-manager/issues/531))
+
+
 ## 21.09.6 (2022-01-26)
 
 ### Fixes
