@@ -58,7 +58,7 @@ async def get_access_key_scopes(request: web.Request, params: Any = None) -> Tup
     if owner_access_key is None and params is not None:
         owner_access_key = params.get('owner_access_key', None)
     if owner_access_key is not None and owner_access_key != requester_access_key:
-        async with root_ctx.db.begin() as conn:
+        async with root_ctx.db.begin_readonly() as conn:
             query = (
                 sa.select([users.c.domain_name, users.c.role])
                 .select_from(
