@@ -152,3 +152,4 @@ ssl-verify = true
 
 [debug]
 enabled = false
+save-stats-to-db = false  # store container stat data on kernel table's last_stat column, just for debugging.
