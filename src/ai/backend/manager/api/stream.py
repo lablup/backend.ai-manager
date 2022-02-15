@@ -14,6 +14,7 @@ from datetime import timedelta
 import json
 import logging
 import secrets
+import textwrap
 from typing import (
     Any,
     AsyncIterator,
@@ -460,21 +461,7 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
         conn_tracker_key = f"session.{kernel['id']}.active_app_connections"
         conn_tracker_val = f"{kernel['id']}:{service}:{stream_id}"
 
-        async def refresh_cb(kernel_id: str, data: bytes) -> None:
-            now = await redis.execute(redis_live, lambda r: r.time())
-            now = now[0] + (now[1] / (10**6))
-            if stream_ptask_group is not None:
                 await asyncio.shield(stream_ptask_group.create_task(
-                    call_non_bursty(
-                        conn_tracker_key,
-                        apartial(
-                            redis.execute,
-                            redis_live,
-                            lambda r: r.zadd(conn_tracker_key, {conn_tracker_val: now}),
-                        ),
-                        max_bursts=64, max_idle=2000,
-                    ),
-                ))
 
         down_cb = apartial(refresh_cb, kernel['id'])
         up_cb = apartial(refresh_cb, kernel['id'])
