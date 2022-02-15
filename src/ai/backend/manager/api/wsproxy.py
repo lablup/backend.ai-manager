@@ -16,6 +16,7 @@ from typing import (
 )
 
 import aiohttp
+import aiotools
 from aiohttp import WSCloseCode
 from aiohttp import web
 
@@ -202,22 +203,23 @@ class WebSocketProxy:
 
     async def downstream(self) -> None:
         try:
-            self.upstream_buffer_task = asyncio.create_task(
-                self.consume_upstream_buffer(),
-            )
-            async for msg in self.up_conn:
-                if msg.type == aiohttp.WSMsgType.TEXT:
-                    await self.down_conn.send_str(msg.data)
-                    if self.downstream_cb is not None:
-                        await asyncio.shield(self.downstream_cb(msg.data))
-                if msg.type == aiohttp.WSMsgType.BINARY:
-                    await self.down_conn.send_bytes(msg.data)
-                    if self.downstream_cb is not None:
-                        await asyncio.shield(self.downstream_cb(msg.data))
-                elif msg.type == aiohttp.WSMsgType.CLOSED:
-                    break
-                elif msg.type == aiohttp.WSMsgType.ERROR:
-                    break
+            with aiotools.PersistentTaskGroup() as tg:
+                self.upstream_buffer_task = tg.create_task(
+                    self.consume_upstream_buffer(),
+                )
+                async for msg in self.up_conn:
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        await self.down_conn.send_str(msg.data)
+                        if self.downstream_cb is not None:
+                            await asyncio.shield(tg.create_task(self.downstream_cb(msg.data)))
+                    if msg.type == aiohttp.WSMsgType.BINARY:
+                        await self.down_conn.send_bytes(msg.data)
+                        if self.downstream_cb is not None:
+                            await asyncio.shield(tg.create_task(self.downstream_cb(msg.data)))
+                    elif msg.type == aiohttp.WSMsgType.CLOSED:
+                        break
+                    elif msg.type == aiohttp.WSMsgType.ERROR:
+                        break
             # here, server gracefully disconnected
         except asyncio.CancelledError:
             raise

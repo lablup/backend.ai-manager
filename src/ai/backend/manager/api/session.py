@@ -132,6 +132,7 @@ if TYPE_CHECKING:
 log = BraceStyleAdapter(logging.getLogger(__name__))
 
 _json_loads = functools.partial(json.loads, parse_float=Decimal)
+session_ptask_group: aiotools.PersistentTaskGroup | None = None
 
 
 class UndefChecker(t.Trafaret):
@@ -494,37 +495,40 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             params['bootstrap_script'] = script
 
     try:
-        kernel_id = await asyncio.shield(root_ctx.registry.enqueue_session(
-            session_creation_id,
-            params['session_name'], owner_access_key,
-            [{
-                'image_ref': requested_image_ref,
-                'cluster_role': DEFAULT_ROLE,
-                'cluster_idx': 1,
-                'cluster_hostname': f"{DEFAULT_ROLE}1",
-                'creation_config': params['config'],
-                'bootstrap_script': params['bootstrap_script'],
-                'startup_command': params['startup_command'],
-            }],
-            params['config']['scaling_group'],
-            params['session_type'],
-            resource_policy,
-            domain_name=params['domain'],  # type: ignore  # params always have it
-            group_id=group_id,
-            user_uuid=owner_uuid,
-            user_role=request['user']['role'],
-            cluster_mode=params['cluster_mode'],
-            cluster_size=params['cluster_size'],
-            startup_command=params['startup_command'],
-            session_tag=params['tag'],
-            starts_at=starts_at,
-            agent_list=params['config']['agent_list'],
-        ))
-        resp['sessionId'] = str(kernel_id)  # changed since API v5
-        resp['sessionName'] = str(params['session_name'])
-        resp['status'] = 'PENDING'
-        resp['servicePorts'] = []
-        resp['created'] = True
+        if session_ptask_group is not None:
+            kernel_id = await asyncio.shield(session_ptask_group.create_task(
+                root_ctx.registry.enqueue_session(
+                    session_creation_id,
+                    params['session_name'], owner_access_key,
+                    [{
+                        'image_ref': requested_image_ref,
+                        'cluster_role': DEFAULT_ROLE,
+                        'cluster_idx': 1,
+                        'cluster_hostname': f"{DEFAULT_ROLE}1",
+                        'creation_config': params['config'],
+                        'bootstrap_script': params['bootstrap_script'],
+                        'startup_command': params['startup_command'],
+                    }],
+                    params['config']['scaling_group'],
+                    params['session_type'],
+                    resource_policy,
+                    domain_name=params['domain'],  # type: ignore  # params always have it
+                    group_id=group_id,
+                    user_uuid=owner_uuid,
+                    user_role=request['user']['role'],
+                    cluster_mode=params['cluster_mode'],
+                    cluster_size=params['cluster_size'],
+                    startup_command=params['startup_command'],
+                    session_tag=params['tag'],
+                    starts_at=starts_at,
+                    agent_list=params['config']['agent_list'],
+                )),
+            )
+            resp['sessionId'] = str(kernel_id)  # changed since API v5
+            resp['sessionName'] = str(params['session_name'])
+            resp['status'] = 'PENDING'
+            resp['servicePorts'] = []
+            resp['created'] = True
 
         if not params['enqueue_only']:
             app_ctx.pending_waits.add(current_task)
@@ -1003,25 +1007,28 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
         async with root_ctx.db.begin() as conn:
             owner_uuid, group_id, resource_policy = await _query_userinfo(request, params, conn)
 
-        session_id = await asyncio.shield(root_ctx.registry.enqueue_session(
-            session_creation_id,
-            params['session_name'],
-            owner_access_key,
-            kernel_configs,
-            params['scaling_group'],
-            params['sess_type'],
-            resource_policy,
-            domain_name=params['domain'],  # type: ignore
-            group_id=group_id,
-            user_uuid=owner_uuid,
-            user_role=request['user']['role'],
-            session_tag=params['tag'],
-        ))
-        kernel_id = cast(KernelId, session_id)  # the main kernel's ID is the session ID.
-        resp['kernelId'] = str(kernel_id)
-        resp['status'] = 'PENDING'
-        resp['servicePorts'] = []
-        resp['created'] = True
+        if session_ptask_group is not None:
+            session_id = await asyncio.shield(session_ptask_group.create_task(
+                root_ctx.registry.enqueue_session(
+                    session_creation_id,
+                    params['session_name'],
+                    owner_access_key,
+                    kernel_configs,
+                    params['scaling_group'],
+                    params['sess_type'],
+                    resource_policy,
+                    domain_name=params['domain'],  # type: ignore
+                    group_id=group_id,
+                    user_uuid=owner_uuid,
+                    user_role=request['user']['role'],
+                    session_tag=params['tag'],
+                ),
+            ))
+            kernel_id = cast(KernelId, session_id)  # the main kernel's ID is the session ID.
+            resp['kernelId'] = str(kernel_id)
+            resp['status'] = 'PENDING'
+            resp['servicePorts'] = []
+            resp['created'] = True
 
         if not params['enqueue_only']:
             app_ctx.pending_waits.add(current_task)
@@ -1106,72 +1113,81 @@ async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.
     service: str = params['app']
     myself = asyncio.current_task()
     assert myself is not None
-    try:
-        kernel = await asyncio.shield(root_ctx.registry.get_session(session_name, access_key))
-    except (SessionNotFound, TooManySessionsMatched):
-        raise
+    if session_ptask_group is not None:
+        try:
+            kernel = await asyncio.shield(session_ptask_group.create_task(
+                root_ctx.registry.get_session(session_name, access_key),
+            ))
+        except (SessionNotFound, TooManySessionsMatched):
+            raise
 
-    query = (sa.select([scaling_groups.c.wsproxy_addr])
-               .select_from(scaling_groups)
-               .where((scaling_groups.c.name == kernel['scaling_group'])))
+        query = (sa.select([scaling_groups.c.wsproxy_addr])
+                   .select_from(scaling_groups)
+                   .where((scaling_groups.c.name == kernel['scaling_group'])))
 
-    async with root_ctx.db.begin_readonly() as conn:
-        result = await conn.execute(query)
-        sgroup = result.first()
-    wsproxy_addr = sgroup['wsproxy_addr']
-    if not wsproxy_addr:
-        raise ServiceUnavailable('No coordinator configured for this resource group')
+        async with root_ctx.db.begin_readonly() as conn:
+            result = await conn.execute(query)
+            sgroup = result.first()
+        wsproxy_addr = sgroup['wsproxy_addr']
+        if not wsproxy_addr:
+            raise ServiceUnavailable('No coordinator configured for this resource group')
 
-    if kernel['kernel_host'] is None:
-        kernel_host = urlparse(kernel['agent_addr']).hostname
-    else:
-        kernel_host = kernel['kernel_host']
-    for sport in kernel['service_ports']:
-        if sport['name'] == service:
-            if params['port']:
-                # using one of the primary/secondary ports of the app
-                try:
-                    hport_idx = sport['container_ports'].index(params['port'])
-                except ValueError:
-                    raise InvalidAPIParameters(
-                        f"Service {service} does not open the port number {params['port']}.")
-                host_port = sport['host_ports'][hport_idx]
-            else:
-                # using the default (primary) port of the app
-                if 'host_ports' not in sport:
-                    host_port = sport['host_port']  # legacy kernels
+        if kernel['kernel_host'] is None:
+            kernel_host = urlparse(kernel['agent_addr']).hostname
+        else:
+            kernel_host = kernel['kernel_host']
+        for sport in kernel['service_ports']:
+            if sport['name'] == service:
+                if params['port']:
+                    # using one of the primary/secondary ports of the app
+                    try:
+                        hport_idx = sport['container_ports'].index(params['port'])
+                    except ValueError:
+                        raise InvalidAPIParameters(
+                            f"Service {service} does not open the port number {params['port']}.")
+                    host_port = sport['host_ports'][hport_idx]
                 else:
-                    host_port = sport['host_ports'][0]
-            break
+                    # using the default (primary) port of the app
+                    if 'host_ports' not in sport:
+                        host_port = sport['host_port']  # legacy kernels
+                    else:
+                        host_port = sport['host_ports'][0]
+                break
+        else:
+            raise AppNotFound(f'{session_name}:{service}')
+
+        await asyncio.shield(session_ptask_group.create_task(
+            root_ctx.registry.increment_session_usage(session_name, access_key),
+        ))
+
+        opts: MutableMapping[str, Union[None, str, List[str]]] = {}
+        if params['arguments'] is not None:
+            opts['arguments'] = json.loads(params['arguments'])
+        if params['envs'] is not None:
+            opts['envs'] = json.loads(params['envs'])
+
+        result = await asyncio.shield(
+            session_ptask_group.create_task(
+                root_ctx.registry.start_service(session_name, access_key, service, opts),
+            ),
+        )
+        if result['status'] == 'failed':
+            raise InternalServerError(
+                "Failed to launch the app service",
+                extra_data=result['error'])
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f'{wsproxy_addr}/v2/conf', json={
+                'kernel_host': kernel_host,
+                'kernel_port': host_port,
+            }) as resp:
+                token_json = await resp.json()
+                return web.json_response({
+                    'token': token_json['token'],
+                    'wsproxy_addr': wsproxy_addr,
+                })
     else:
-        raise AppNotFound(f'{session_name}:{service}')
-
-    await asyncio.shield(root_ctx.registry.increment_session_usage(session_name, access_key))
-
-    opts: MutableMapping[str, Union[None, str, List[str]]] = {}
-    if params['arguments'] is not None:
-        opts['arguments'] = json.loads(params['arguments'])
-    if params['envs'] is not None:
-        opts['envs'] = json.loads(params['envs'])
-
-    result = await asyncio.shield(
-        root_ctx.registry.start_service(session_name, access_key, service, opts),
-    )
-    if result['status'] == 'failed':
-        raise InternalServerError(
-            "Failed to launch the app service",
-            extra_data=result['error'])
-
-    async with aiohttp.ClientSession() as session:
-        async with session.post(f'{wsproxy_addr}/v2/conf', json={
-            'kernel_host': kernel_host,
-            'kernel_port': host_port,
-        }) as resp:
-            token_json = await resp.json()
-            return web.json_response({
-                'token': token_json['token'],
-                'wsproxy_addr': wsproxy_addr,
-            })
+        raise InternalServerError("Failed to initialize the ptask group")
 
 
 async def handle_kernel_creation_lifecycle(
@@ -1414,7 +1430,7 @@ async def handle_kernel_log(
         await redis_conn.close()
 
 
-async def report_stats(root_ctx: RootContext) -> None:
+async def report_stats(root_ctx: RootContext, interval: float) -> None:
     stats_monitor = root_ctx.stats_monitor
     await stats_monitor.report_metric(
         GAUGE, 'ai.backend.manager.coroutines', len(asyncio.all_tasks()))
@@ -1458,7 +1474,9 @@ async def report_stats(root_ctx: RootContext) -> None:
 async def stats_report_timer(root_ctx: RootContext):
     while True:
         try:
-            await asyncio.shield(report_stats(root_ctx))
+            aiotools.create_timer(
+                functools.partial(report_stats, root_ctx), 1.0,
+            )
         except asyncio.CancelledError:
             break
         except Exception:
@@ -2065,6 +2083,8 @@ class PrivateContext:
 async def init(app: web.Application) -> None:
     root_ctx: RootContext = app['_root.context']
     app_ctx: PrivateContext = app['session.context']
+    global session_ptask_group
+    session_ptask_group = aiotools.PersistentTaskGroup()
 
     app_ctx.session_creation_tracker = {}
 
@@ -2111,6 +2131,9 @@ async def init(app: web.Application) -> None:
 
 async def shutdown(app: web.Application) -> None:
     app_ctx: PrivateContext = app['session.context']
+    global session_ptask_group
+    if session_ptask_group is not None:
+        await session_ptask_group.shutdown()
 
     app_ctx.agent_lost_checker.cancel()
     await app_ctx.agent_lost_checker
