@@ -429,8 +429,7 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
                         raise InvalidAPIParameters(
                             f"Service {service} does not open the port number {params['port']}.")
                     host_port = sport['host_ports'][hport_idx]
-                else:
-                    # using the default (primary) port of the app
+                else:                    # using the default (primary) port of the app
                     if 'host_ports' not in sport:
                         host_port = sport['host_port']  # legacy kernels
                     else:
@@ -461,7 +460,28 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
         conn_tracker_key = f"session.{kernel['id']}.active_app_connections"
         conn_tracker_val = f"{kernel['id']}:{service}:{stream_id}"
 
+        _conn_tracker_script = textwrap.dedent('''
+            local now = redis.call('TIME')
+            now = now[1] + (now[2] / (10^6))
+            redis.call('ZADD', KEYS[1], now, ARGV[1])
+        ''')
+
+        async def refresh_cb(kernel_id: str, data: bytes) -> None:
+            now = await redis.execute(redis_live, lambda r: r.time())
+            now = now[0] + (now[1] / (10**6))
+            if stream_ptask_group is not None:
                 await asyncio.shield(stream_ptask_group.create_task(
+                    call_non_bursty(
+                        conn_tracker_key,
+                        apartial(
+                            redis.execute_script,
+                            redis_live, 'update_conn_tracker', _conn_tracker_script,
+                            [conn_tracker_key],
+                            [conn_tracker_val],
+                        ),
+                        max_bursts=128, max_idle=5000,
+                    ),
+                ))
 
         down_cb = apartial(refresh_cb, kernel['id'])
         up_cb = apartial(refresh_cb, kernel['id'])
