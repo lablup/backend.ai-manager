@@ -1,1 +1,1 @@
-Add a column StructuredJSONBColumn to check Limit session types per scaling group and invalid session stay PENDING status.
+Check the allowed session types per scaling group as part of scheduler predicate checks and structurize the `scheduler_opts` column by introducing `StructuredJSONBColumn` which applies trafarets on raw/Python value conversion
