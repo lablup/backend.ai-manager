@@ -8,6 +8,7 @@ import copy
 from datetime import datetime
 from decimal import Decimal
 import itertools
+import json
 import logging
 import secrets
 import time
@@ -88,6 +89,8 @@ from ai.backend.common.types import (
     check_typed_dict,
 )
 from ai.backend.common.utils import nmget
+
+from ai.backend.manager.models.image import get_image_slot_ranges, images
 
 from .api.exceptions import (
     BackendError, InvalidAPIParameters,
@@ -918,9 +921,16 @@ class AgentRegistry:
 
             creation_config['mounts'] = mounts
             # TODO: merge into a single call
-            image_info = await self.shared_config.inspect_image(image_ref)
-            image_min_slots, image_max_slots = \
-                await self.shared_config.get_image_slot_ranges(image_ref)
+            async with self.db.begin_readonly() as conn:
+                image_info = await conn.scalar(
+                    sa.select([images])
+                    .select_from(images)
+                    .where(images.c.name == image_ref.canonical),
+                )
+            image_min_slots, image_max_slots = await get_image_slot_ranges(
+                image_info,
+                self.shared_config,
+            )
             known_slot_types = await self.shared_config.get_resource_slots()
 
             # Parse service ports to check for port errors
@@ -1182,12 +1192,17 @@ class AgentRegistry:
         # Aggregate image registry information
         keyfunc = lambda item: item.kernel.image_ref
         image_infos = {}
-        for image_ref, _ in itertools.groupby(
-            sorted(kernel_agent_bindings, key=keyfunc), key=keyfunc,
-        ):
-            image_infos[image_ref] = await self.shared_config.inspect_image(image_ref)
-            registry_url, registry_creds = \
-                await get_registry_info(self.shared_config.etcd, image_ref.registry)
+        async with self.db.begin_readonly() as conn:
+            for image_ref, _ in itertools.groupby(
+                sorted(kernel_agent_bindings, key=keyfunc), key=keyfunc,
+            ):
+                image_infos[image_ref] = conn.scalar(
+                    sa.select([images])
+                    .select_from(images)
+                    .where(images.c.name == image_ref.canonical),
+                )
+                registry_url, registry_creds = \
+                    await get_registry_info(self.shared_config.etcd, image_ref.registry)
         image_info = {
             'image_infos': image_infos,
             'registry_url': registry_url,
@@ -1419,10 +1434,10 @@ class AgentRegistry:
                                     'url': str(registry_url),
                                     **registry_creds,   # type: ignore
                                 },
-                                'digest': image_infos[binding.kernel.image_ref]['digest'],
+                                'digest': image_infos[binding.kernel.image_ref]['config_digest'],
                                 'repo_digest': None,
                                 'canonical': binding.kernel.image_ref.canonical,
-                                'labels': image_infos[binding.kernel.image_ref]['labels'],
+                                'labels': json.loads(image_infos[binding.kernel.image_ref]['labels']),
                             },
                             'session_type': scheduled_session.session_type.value,
                             'cluster_role': binding.kernel.cluster_role,
@@ -2335,6 +2350,7 @@ class AgentRegistry:
                             agents.c.available_slots,
                             agents.c.version,
                             agents.c.compute_plugins,
+                            agents.c.architecture,
                         ])
                         .select_from(agents)
                         .where(agents.c.id == agent_id)
@@ -2359,6 +2375,7 @@ class AgentRegistry:
                             'lost_at': sa.null(),
                             'version': agent_info['version'],
                             'compute_plugins': agent_info['compute_plugins'],
+                            'architecture': agent_info['architecture'],
                         })
                         result = await conn.execute(insert_query)
                         assert result.rowcount == 1
@@ -2374,6 +2391,8 @@ class AgentRegistry:
                             updates['version'] = agent_info['version']
                         if row['compute_plugins'] != agent_info['compute_plugins']:
                             updates['compute_plugins'] = agent_info['compute_plugins']
+                        if row['architecture'] != agent_info['architecture']:
+                            updates['architecture'] = agent_info['architecture']
                         # occupied_slots are updated when kernels starts/terminates
                         if updates:
                             await self.shared_config.update_resource_slots(slot_key_and_units)
@@ -2397,6 +2416,7 @@ class AgentRegistry:
                                 'available_slots': available_slots,
                                 'version': agent_info['version'],
                                 'compute_plugins': agent_info['compute_plugins'],
+                                'architecture': agent_info['architecture'],
                             })
                             .where(agents.c.id == agent_id)
                         )

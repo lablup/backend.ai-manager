@@ -78,6 +78,7 @@ agents = sa.Table(
     sa.Column('lost_at', sa.DateTime(timezone=True), nullable=True),
 
     sa.Column('version', sa.String(length=64), nullable=False),
+    sa.Column('architecture', sa.CHAR(length=32), nullable=False),
     sa.Column('compute_plugins', pgsql.JSONB(), nullable=False, default={}),
 )
 

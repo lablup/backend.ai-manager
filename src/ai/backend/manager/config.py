@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ai.backend.manager.models.utils import ExtendedAsyncSAEngine
+
 """
 Configuration Schema on etcd
 ----------------------------
@@ -196,7 +198,6 @@ Alias keys are also URL-quoted in the same way.
 """
 
 from abc import abstractmethod
-import asyncio
 from collections import UserDict, defaultdict
 from contextvars import ContextVar
 from decimal import Decimal
@@ -236,7 +237,6 @@ from ai.backend.common.etcd import AsyncEtcd
 from ai.backend.common.identity import get_instance_id
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
-    BinarySize, ResourceSlot,
     SlotName, SlotTypes,
     HostPortPair,
     current_resource_slots,
@@ -250,9 +250,6 @@ from ai.backend.common.etcd import (
 
 from .api.exceptions import ServerMisconfiguredError
 from .api.manager import ManagerStatus
-if TYPE_CHECKING:
-    from ..manager.background import ProgressReporter
-from ..manager.container_registry import get_container_registry
 from ..manager.defs import INTRINSIC_SLOTS
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
@@ -623,31 +620,6 @@ class SharedConfig(AbstractConfig):
             ref = reference
         await self.etcd.delete_prefix(ref.tag_path)
 
-    async def list_images(self) -> Sequence[Mapping[str, Any]]:
-        known_registries = await get_known_registries(self.etcd)
-        reverse_aliases = await self._scan_reverse_aliases()
-        data = await self.etcd.get_prefix('images')
-        coros = []
-        for registry, images in data.items():
-            if registry == '_aliases':
-                continue
-            for image, tags in images.items():
-                if image == '':
-                    continue
-                if tags == '1':
-                    continue
-                for tag, image_info in tags.items():
-                    if tag == '':
-                        continue
-                    raw_ref = f'{etcd_unquote(registry)}/{etcd_unquote(image)}:{tag}'
-                    try:
-                        ref = ImageRef(raw_ref, known_registries)
-                        coros.append(self._parse_image(ref, image_info, reverse_aliases))
-                    except ValueError:
-                        log.warn('skipping image {} as it contains malformed metadata', raw_ref)
-        result = await asyncio.gather(*coros)
-        return result
-
     async def set_image_resource_limit(self, reference: str, slot_type: str,
                                        value_range: Tuple[Optional[Decimal], Optional[Decimal]]):
         ref = await self._check_image(reference)
@@ -655,40 +627,6 @@ class SharedConfig(AbstractConfig):
             await self.etcd.put(f'{ref.tag_path}/resource/{slot_type}/min', str(value_range[0]))
         if value_range[1] is not None:
             await self.etcd.put(f'{ref.tag_path}/resource/{slot_type}/max', str(value_range[1]))
-
-    async def rescan_images(
-        self,
-        registry: str = None,
-        *,
-        reporter: ProgressReporter = None,
-    ) -> None:
-        registry_config_iv = t.Mapping(t.String, container_registry_iv)
-        latest_registry_config = registry_config_iv.check(
-            await self.etcd.get_prefix('config/docker/registry'),
-        )
-        self['docker']['registry'] = latest_registry_config
-        # TODO: delete images from registries removed from the previous config?
-        if registry is None:
-            # scan all configured registries
-            registries = self['docker']['registry']
-        else:
-            try:
-                registries = {registry: self['docker']['registry'][registry]}
-            except KeyError:
-                raise RuntimeError("It is an unknown registry.", registry)
-        async with aiotools.TaskGroup() as tg:
-            for registry_name, registry_info in registries.items():
-                log.info('Scanning kernel images from the registry "{0}"', registry_name)
-                scanner_cls = get_container_registry(registry_info)
-                scanner = scanner_cls(self.etcd, registry_name, registry_info)
-                tg.create_task(scanner.rescan_single_registry(reporter))
-        # TODO: delete images removed from registry?
-
-    async def alias(self, alias: str, target: str) -> None:
-        await self.etcd.put(f'images/_aliases/{etcd_quote(alias)}', target)
-
-    async def dealias(self, alias: str) -> None:
-        await self.etcd.delete(f'images/_aliases/{etcd_quote(alias)}')
 
     async def update_resource_slots(
         self,
@@ -765,52 +703,6 @@ class SharedConfig(AbstractConfig):
     @aiotools.lru_cache(maxsize=1, expire_after=2.0)
     async def get_allowed_origins(self):
         return await self.etcd.get('config/api/allow-origins')
-
-    # TODO: refactor using contextvars in Python 3.7 so that the result is cached
-    #       in a per-request basis.
-    @aiotools.lru_cache(expire_after=60.0)
-    async def get_image_slot_ranges(self, image_ref: ImageRef):
-        """
-        Returns the minimum and maximum ResourceSlot values.
-        All slot values are converted and normalized to Decimal.
-        """
-        data = await self.etcd.get_prefix_dict(image_ref.tag_path)
-        slot_units = await self.get_resource_slots()
-        min_slot = ResourceSlot()
-        max_slot = ResourceSlot()
-
-        for slot_key, slot_range in data['resource'].items():
-            slot_unit = slot_units.get(slot_key)
-            if slot_unit is None:
-                # ignore unknown slots
-                continue
-            min_value = slot_range.get('min')
-            if min_value is None:
-                min_value = Decimal(0)
-            max_value = slot_range.get('max')
-            if max_value is None:
-                max_value = Decimal('Infinity')
-            if slot_unit == 'bytes':
-                if not isinstance(min_value, Decimal):
-                    min_value = BinarySize.from_str(min_value)
-                if not isinstance(max_value, Decimal):
-                    max_value = BinarySize.from_str(max_value)
-            else:
-                if not isinstance(min_value, Decimal):
-                    min_value = Decimal(min_value)
-                if not isinstance(max_value, Decimal):
-                    max_value = Decimal(max_value)
-            min_slot[slot_key] = min_value
-            max_slot[slot_key] = max_value
-
-        # fill missing
-        for slot_key in slot_units.keys():
-            if slot_key not in min_slot:
-                min_slot[slot_key] = Decimal(0)
-            if slot_key not in max_slot:
-                max_slot[slot_key] = Decimal('Infinity')
-
-        return min_slot, max_slot
 
     def get_redis_url(self, db: int = 0) -> yarl.URL:
         """
