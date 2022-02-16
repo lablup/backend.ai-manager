@@ -25,6 +25,7 @@ import aiohttp
 from aiohttp import web
 import aiohttp_cors
 import sqlalchemy as sa
+from ..background import ProgressReporter
 import trafaret as t
 
 from ai.backend.common import validators as tx
@@ -1737,6 +1738,31 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
     if not verify_vfolder_name(params['target_name']):
         raise InvalidAPIParameters(f'{params["target_name"]} is reserved for internal operations.')
 
+    async def _clone_bgtask(reporter: ProgressReporter) -> None:
+        source_proxy_name, source_volume_name = root_ctx.storage_manager.split_host(source_folder_host)
+        target_proxy_name, target_volume_name = root_ctx.storage_manager.split_host(target_folder_host)
+        if source_proxy_name != target_proxy_name:
+            raise InvalidAPIParameters('proxy name of source and target vfolders must be equal.')
+
+        # TODO: accept quota as input parameter and pass as argument options
+        try:
+            folder_id = uuid.uuid4()
+            async with root_ctx.storage_manager.request(
+                source_folder_host, 'POST', 'folder/clone',
+                json={
+                    'src_volume': source_volume_name,
+                    'src_vfid': str(row['id']),
+                    'dst_volume': target_volume_name,
+                    'dst_vfid': str(folder_id),
+                },
+                raise_for_status=True,
+            ):
+                pass
+        except aiohttp.ClientResponseError:
+            raise VFolderOperationFailed
+
+    task_id = await root_ctx.background_task_manager.start(_clone_bgtask)
+
     async with root_ctx.db.begin() as conn:
         allowed_hosts = await get_allowed_vfolder_hosts_by_user(conn, resource_policy,
                                                                 domain_name, user_uuid)
@@ -1774,33 +1800,11 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
         if 'user' not in allowed_vfolder_types:
             raise InvalidAPIParameters('user vfolder cannot be created in this host')
 
-        source_proxy_name, source_volume_name = root_ctx.storage_manager.split_host(source_folder_host)
-        target_proxy_name, target_volume_name = root_ctx.storage_manager.split_host(target_folder_host)
-        if source_proxy_name != target_proxy_name:
-            raise InvalidAPIParameters('proxy name of source and target vfolders must be equal.')
-
-        # TODO: accept quota as input parameter and pass as argument options
-        try:
-            folder_id = uuid.uuid4()
-            async with root_ctx.storage_manager.request(
-                source_folder_host, 'POST', 'folder/clone',
-                json={
-                    'src_volume': source_volume_name,
-                    'src_vfid': str(row['id']),
-                    'dst_volume': target_volume_name,
-                    'dst_vfid': str(folder_id),
-                },
-                raise_for_status=True,
-            ):
-                pass
-        except aiohttp.ClientResponseError:
-            raise VFolderOperationFailed
-
         user_uuid = str(user_uuid)
         group_uuid = None
         ownership_type = 'user'
         insert_values = {
-            'id': folder_id.hex,
+            'id': uuid.uuid4().hex,
             'name': params['target_name'],
             'usage_mode': params['usage_mode'],
             'permission': params['permission'],
@@ -1814,7 +1818,7 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
             'cloneable': params['cloneable'],
         }
         resp = {
-            'id': folder_id.hex,
+            'id': uuid.uuid4().hex,
             'name': params['target_name'],
             'host': target_folder_host,
             'usage_mode': params['usage_mode'].value,
