@@ -19,6 +19,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 
 from ai.backend.manager.api.exceptions import GenericNotFound
 
+from ai.backend.manager.models.scaling_group import sgroups_for_domains
 from ai.backend.manager.models.utils import ExtendedAsyncSAEngine
 
 from ..models import (
@@ -47,14 +48,25 @@ class WSProxyVersionQueryParams:
 async def query_wsproxy_version(
     params: WSProxyVersionQueryParams,
     scaling_group_name: str,
+    domain_name: str,
 ) -> str:
     async with params.db_ctx.begin_readonly() as conn:
         query = (
-            sa.select([scaling_groups])
-            .where(scaling_groups.c.name == scaling_group_name)
+            sa.select([sgroups_for_domains.c.scaling_group])
+            .where((
+                sgroups_for_domains.c.domain == domain_name &
+                sgroups_for_domains.c.scaling_group == scaling_group_name
+            ))
         )
-        result = await conn.execute(query)
-        matched_sgroup = result.first()
+        matched_sgroup_name = await conn.scalar(query)
+        if matched_sgroup_name is None:
+            raise GenericNotFound
+        result = await conn.execute(
+            sa.select([scaling_groups])
+            .select_from(scaling_groups)
+            .where(scaling_groups.c.name == matched_sgroup_name),
+        )
+        matched_sgroup = result.fetchone()
 
     if matched_sgroup is None:
         raise GenericNotFound
@@ -98,11 +110,12 @@ async def list_available_sgroups(request: web.Request, params: Any) -> web.Respo
 async def get_wsproxy_version(request: web.Request) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     scaling_group_name = request.match_info['scaling_group']
+    domain_name = request['user']['domain_name']
 
     params = WSProxyVersionQueryParams(
         db_ctx=root_ctx.db,
     )
-    wsproxy_version = await query_wsproxy_version(params, scaling_group_name)
+    wsproxy_version = await query_wsproxy_version(params, scaling_group_name, domain_name)
     return web.json_response({'version': wsproxy_version})
 
 
