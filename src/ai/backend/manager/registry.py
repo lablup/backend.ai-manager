@@ -1616,28 +1616,29 @@ class AgentRegistry:
 
                 if len(concurrency_used_per_key) > 0:
                     # Update concurrency_used for keypairs with running containers.
-                    for ak, used in concurrency_used_per_key.items():
-                        query = (
-                            sa.update(keypairs)
-                            .values(concurrency_used=used)
-                            .where(keypairs.c.access_key == ak)
-                        )
-                        await conn.execute(query)
-                    # Update all other keypairs to have concurrency_used = 0.
-                    query = (
-                        sa.update(keypairs)
-                        .values(concurrency_used=0)
-                        .where(keypairs.c.concurrency_used != 0)
-                        .where(sa.not_(keypairs.c.access_key.in_(concurrency_used_per_key.keys())))
+                    def _pipe_builder(r: aioredis.Redis):
+                        pipe = r.pipeline()
+                        ks = pipe.scan_iter(match='conc_kp*')
+                        for k in ks:
+                            ak = k[len('conc_kp:'):-len(':num_conc')]
+                            if k in concurrency_used_per_key:
+                                pipe.set(k, concurrency_used_per_key[ak])
+                            else:
+                                pipe.set(k, 0)
+                    await redis.execute(
+                        self.redis_stat,
+                        _pipe_builder,
                     )
-                    await conn.execute(query)
                 else:
-                    query = (
-                        sa.update(keypairs)
-                        .values(concurrency_used=0)
-                        .where(keypairs.c.concurrency_used != 0)
+                    def _pipe_builder(r: aioredis.Redis):
+                        pipe = r.pipeline()
+                        ks = pipe.scan_iter(match='conc_kp*')
+                        for k in ks:
+                            pipe.set(k, 0)
+                    await redis.execute(
+                        self.redis_stat,
+                        _pipe_builder,
                     )
-                    await conn.execute(query)
 
                 if len(occupied_slots_per_agent) > 0:
                     # Update occupied_slots for agents with running containers.
@@ -1819,12 +1820,9 @@ class AgentRegistry:
                                 if kernel['cluster_role'] == DEFAULT_ROLE:
                                     # The main session is terminated;
                                     # decrement the user's concurrency counter
-                                    await conn.execute(
-                                        sa.update(keypairs)
-                                        .values({
-                                            'concurrency_used': keypairs.c.concurrency_used - 1,
-                                        })
-                                        .where(keypairs.c.access_key == kernel['access_key']),
+                                    await redis.execute(
+                                        self.redis_stat,
+                                        lambda r: r.decr(f"conc_kp:{kernel['access_key']}:num_conc")
                                     )
                                 await conn.execute(
                                     sa.update(kernels)
@@ -1848,12 +1846,9 @@ class AgentRegistry:
                                 if kernel['cluster_role'] == DEFAULT_ROLE:
                                     # The main session is terminated;
                                     # decrement the user's concurrency counter
-                                    await conn.execute(
-                                        sa.update(keypairs)
-                                        .values({
-                                            'concurrency_used': keypairs.c.concurrency_used - 1,
-                                        })
-                                        .where(keypairs.c.access_key == kernel['access_key']),
+                                    await redis.execute(
+                                        self.redis_stat,
+                                        lambda r: r.decr(f"conc_kp:{kernel['access_key']}:num_conc")
                                     )
                                 await conn.execute(
                                     sa.update(kernels)

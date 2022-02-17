@@ -7,7 +7,9 @@ from typing import (
 from dateutil.tz import tzutc
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
+import aioredis
 
+from ai.backend.common import redis
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
     ResourceSlot, SessionTypes,
@@ -67,13 +69,18 @@ async def check_concurrency(
             )
             result = await db_conn.execute(select_query)
             resource_policy = result.first()
-            select_query = (
-                sa.select([keypairs.c.concurrency_used])
-                .select_from(keypairs)
-                .where(keypairs.c.access_key == sess_ctx.access_key)
-                .with_for_update()
+
+            def _pipe_builder(r: aioredis.Redis):
+                pipe = r.pipeline()
+                key = f'conc_kp:{sess_ctx.access_key}:num_conc'
+                if conc := pipe.get(key):
+                    return conc
+                pipe.set(key, 0)
+                return 0
+            concurrency_used = await redis.execute(
+                sched_ctx.registry.redis_stat,
+                _pipe_builder
             )
-            concurrency_used = (await db_conn.execute(select_query)).scalar()
             log.debug(
                 'access_key: {0} ({1} / {2})',
                 sess_ctx.access_key, concurrency_used,
