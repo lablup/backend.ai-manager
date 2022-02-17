@@ -1,0 +1,1 @@
+Check resource by root folder name of subdirectory and apply mount info of root to its mounted subdirectories.
