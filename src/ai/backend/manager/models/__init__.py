@@ -6,6 +6,7 @@ from . import group as _group
 from . import image as _image
 from . import kernel as _kernel
 from . import keypair as _keypair
+from . import keypair_concurrency as _keypairconcurrency
 from . import user as _user
 from . import vfolder as _vfolder
 from . import resource_policy as _rpolicy
@@ -23,6 +24,7 @@ __all__ = (
     *_image.__all__,
     *_kernel.__all__,
     *_keypair.__all__,
+    *_keypairconcurrency.__all__,
     *_user.__all__,
     *_vfolder.__all__,
     *_rpolicy.__all__,
@@ -39,6 +41,7 @@ from .group import *  # noqa
 from .image import *  # noqa
 from .kernel import *  # noqa
 from .keypair import *  # noqa
+from .keypair_concurrency import *  # noqa
 from .user import *  # noqa
 from .vfolder import *  # noqa
 from .resource_policy import *  # noqa
