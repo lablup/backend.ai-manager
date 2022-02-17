@@ -852,13 +852,13 @@ class AgentRegistry:
                     # the server may respond with error if the directory already exists
                     pass
                 matched_mounts.add(item['name'])
-                determined_mounts.append((
+                determined_mounts.append([
                     item['name'],
                     item['host'],
                     f"{mount_path}/{user_uuid.hex}",
                     item['permission'].value,
                     '',
-                ))
+                ])
             else:
                 matched_mounts.add(item['name'])
                 determined_mounts.append([
