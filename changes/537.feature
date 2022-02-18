@@ -1,1 +1,1 @@
-Check resource by root folder name of subdirectory and apply mount info of root to its mounted subdirectories.
+Add path parse feature for subdirectory mount by slash(/) and save detailed mount information for each subdirectory after existence verification.

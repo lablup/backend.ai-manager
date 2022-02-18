@@ -777,10 +777,7 @@ class AgentRegistry:
 
         mounts = kernel_enqueue_configs[0]['creation_config'].get('mounts') or []
         mount_map = kernel_enqueue_configs[0]['creation_config'].get('mount_map') or {}
-        root_mounts = list(set(map(lambda x: x.split("/")[0], mounts)))
-        root_mount_map = dict()
-        for item in root_mounts:
-            root_mount_map[item] = list(filter(lambda x: x.find(item) >= 0, mounts))
+        vfolder_names = list({ x.split("/")[0] for x in mounts })
         session_id = SessionId(uuid.uuid4())
 
         # Check keypair resource limit
@@ -818,9 +815,9 @@ class AgentRegistry:
         determined_mounts = []
         matched_mounts = set()
         async with self.db.begin_readonly() as conn:
-            if root_mounts:
+            if vfolder_names:
                 extra_vf_conds = (
-                    vfolders.c.name.in_(root_mounts) |
+                    vfolders.c.name.in_(vfolder_names) |
                     vfolders.c.name.startswith('.')
                 )
             else:
@@ -868,17 +865,20 @@ class AgentRegistry:
                     item['permission'].value,
                     item['unmanaged_path'] if item['unmanaged_path'] else '',
                 ])
-        if root_mounts and set(root_mounts) > matched_mounts:
-            raise VFolderNotFound(extra_data=[*(set(root_mounts) - matched_mounts)])
-        tmp_mounts = list()
+        if vfolder_names and set(vfolder_names) > matched_mounts:
+            raise VFolderNotFound(extra_data=[*(set(vfolder_names) - matched_mounts)])
+        tmp_mounts = []
         while determined_mounts:
             mount_obj = determined_mounts.pop()
-            for key in root_mount_map.keys():
-                if mount_obj[0] == key:
-                    for item in root_mount_map[key]:
-                        tmp_obj = copy.deepcopy(mount_obj)
-                        tmp_obj[0] = item
-                        tmp_mounts.append(tmp_obj)
+            for folder_path in mounts:
+                if mount_obj[0] == folder_path.partition("/")[0]:
+                    tmp_mounts.append((
+                        folder_path,
+                        mount_obj[1],
+                        mount_obj[2],
+                        mount_obj[3],
+                        mount_obj[4]
+                    ))
         mounts = tmp_mounts
 
         ids = []
