@@ -877,7 +877,7 @@ class AgentRegistry:
                         mount_obj[1],
                         mount_obj[2],
                         mount_obj[3],
-                        mount_obj[4]
+                        mount_obj[4],
                     ))
         mounts = tmp_mounts
 
