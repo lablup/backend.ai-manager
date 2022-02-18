@@ -11,7 +11,6 @@ import aiohttp
 import aiohttp_cors
 import aiotools
 from dataclasses import dataclass, field
-import sqlalchemy as sa
 import trafaret as t
 
 from ai.backend.common import validators as tx
@@ -19,12 +18,10 @@ from ai.backend.common.logging import BraceStyleAdapter
 
 from ai.backend.manager.api.exceptions import GenericNotFound
 
-from ai.backend.manager.models.scaling_group import sgroups_for_domains
 from ai.backend.manager.models.utils import ExtendedAsyncSAEngine
 
 from ..models import (
     query_allowed_sgroups,
-    scaling_groups,
 )
 from .auth import auth_required
 from .manager import (
@@ -46,39 +43,12 @@ class WSProxyVersionQueryParams:
 
 @aiotools.lru_cache(expire_after=30)  # expire after 30 seconds
 async def query_wsproxy_version(
-    params: WSProxyVersionQueryParams,
-    scaling_group_name: str,
-    domain_name: str,
+    wsproxy_addr: str,
 ) -> str:
-    async with params.db_ctx.begin_readonly() as conn:
-        query = (
-            sa.select([sgroups_for_domains.c.scaling_group])
-            .where((
-                (sgroups_for_domains.c.domain == domain_name) &
-                (sgroups_for_domains.c.scaling_group == scaling_group_name)
-            ))
-        )
-        matched_sgroup_name = await conn.scalar(query)
-        if matched_sgroup_name is None:
-            raise GenericNotFound
-        result = await conn.execute(
-            sa.select([scaling_groups])
-            .select_from(scaling_groups)
-            .where(scaling_groups.c.name == matched_sgroup_name),
-        )
-        matched_sgroup = result.fetchone()
-
-    if matched_sgroup is None:
-        raise GenericNotFound
-
-    wsproxy_addr = matched_sgroup['wsproxy_addr']
-    if not wsproxy_addr:
-        return 'v1'
-    else:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(wsproxy_addr + '/status') as resp:
-                version_json = await resp.json()
-                return version_json['api_version']
+    async with aiohttp.ClientSession() as session:
+        async with session.get(wsproxy_addr + '/status') as resp:
+            version_json = await resp.json()
+            return version_json['api_version']
 
 
 @auth_required
@@ -107,16 +77,31 @@ async def list_available_sgroups(request: web.Request, params: Any) -> web.Respo
 
 @auth_required
 @server_status_required(READ_ALLOWED)
-async def get_wsproxy_version(request: web.Request) -> web.Response:
+@check_api_params(t.Dict({
+        tx.AliasedKey(['group', 'group_id', 'group_name'], default=None): t.Null | tx.UUID | t.String,
+}))
+async def get_wsproxy_version(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     scaling_group_name = request.match_info['scaling_group']
+    access_key = request['keypair']['access_key']
     domain_name = request['user']['domain_name']
-
-    params = WSProxyVersionQueryParams(
-        db_ctx=root_ctx.db,
-    )
-    wsproxy_version = await query_wsproxy_version(params, scaling_group_name, domain_name)
-    return web.json_response({'version': wsproxy_version})
+    group_id_or_name = params['group']
+    log.info('SGROUPS.LIST(ak:{}, g:{}, d:{})', access_key, group_id_or_name, domain_name)
+    async with root_ctx.db.begin_readonly() as conn:
+        sgroups = await query_allowed_sgroups(
+            conn, domain_name, group_id_or_name or '', access_key)
+        for sgroup in sgroups:
+            if sgroup['name'] == scaling_group_name:
+                wsproxy_addr = sgroup['wsproxy_addr']
+                if not wsproxy_addr:
+                    wsproxy_version = 'v1'
+                else:
+                    wsproxy_version = await query_wsproxy_version(wsproxy_addr)
+                return web.json_response({
+                    'wsproxy_version': wsproxy_version,
+                })
+        else:
+            raise GenericNotFound
 
 
 async def init(app: web.Application) -> None:
