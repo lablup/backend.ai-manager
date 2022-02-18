@@ -1099,7 +1099,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
 async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     database_ptask_group: aiotools.PersistentTaskGroup = request.app['database_ptask_group']
-    rpc_ptask_group: aiotools.PersistentTaskGroup = request.app['rpc_ptask_group']    
+    rpc_ptask_group: aiotools.PersistentTaskGroup = request.app['rpc_ptask_group']  
     session_name: str = request.match_info['session_name']
     access_key: AccessKey = request['keypair']['access_key']
     service: str = params['app']
@@ -2141,8 +2141,8 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     app.on_shutdown.append(shutdown)
     app['api_versions'] = (1, 2, 3, 4)
     app['session.context'] = PrivateContext()
-    app["database_ptask_group"]: aiotools.PersistentTaskGroup = aiotools.PersistentTaskGroup()
-    app["rpc_ptask_group"]: aiotools.PersistentTaskGroup = aiotools.PersistentTaskGroup()
+    app["database_ptask_group"] = aiotools.PersistentTaskGroup()
+    app["rpc_ptask_group"] = aiotools.PersistentTaskGroup()
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     cors.add(app.router.add_route('POST', '', create_from_params))
     cors.add(app.router.add_route('POST', '/_/create', create_from_params))

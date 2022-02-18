@@ -734,8 +734,8 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     app['prefix'] = 'stream'
     app['api_versions'] = (2, 3, 4)
     app['stream.context'] = PrivateContext()
-    app["database_ptask_group"]: aiotools.PersistentTaskGroup = aiotools.PersistentTaskGroup()
-    app["rpc_ptask_group"]: aiotools.PersistentTaskGroup = aiotools.PersistentTaskGroup()
+    app["database_ptask_group"] = aiotools.PersistentTaskGroup()
+    app["rpc_ptask_group"] = aiotools.PersistentTaskGroup()
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     add_route = app.router.add_route
     cors.add(add_route('GET', r'/session/{session_name}/pty', stream_pty))
