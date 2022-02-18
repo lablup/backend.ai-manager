@@ -1,0 +1,1 @@
+Split the destination vfolder creation and actual clone operationsrun the clone operation as a background task and just return the bgtask ID in the vfolder clone API, so that clients could keep track of the progress and result
