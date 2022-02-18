@@ -1,1 +1,1 @@
-Fix `get_wsproxy_version()` returning 404 when target scaling group is allowed to invididual keypair/user group rather than user's associated domain
+Fix `get_wsproxy_version()` returning 404 when target scaling group is allowed to individual keypair/user group rather than user's associated domain
