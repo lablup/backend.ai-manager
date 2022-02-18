@@ -1099,7 +1099,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
 async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     database_ptask_group: aiotools.PersistentTaskGroup = request.app['database_ptask_group']
-    rpc_ptask_group: aiotools.PersistentTaskGroup = request.app['rpc_ptask_group']  
+    rpc_ptask_group: aiotools.PersistentTaskGroup = request.app['rpc_ptask_group']
     session_name: str = request.match_info['session_name']
     access_key: AccessKey = request['keypair']['access_key']
     service: str = params['app']
