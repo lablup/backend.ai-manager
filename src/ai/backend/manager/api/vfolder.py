@@ -1828,6 +1828,7 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
             'user': user_uuid,
             'group': group_uuid,
             'cloneable': params['cloneable'],
+            'bgtask_id': task_id.hex,
         }
         query = (sa.insert(vfolders, insert_values))
         try:
