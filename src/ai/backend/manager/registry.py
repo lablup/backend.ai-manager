@@ -777,7 +777,7 @@ class AgentRegistry:
 
         mounts = kernel_enqueue_configs[0]['creation_config'].get('mounts') or []
         mount_map = kernel_enqueue_configs[0]['creation_config'].get('mount_map') or {}
-        vfolder_names = list({ x.split("/")[0] for x in mounts })
+        vfolder_names = list({x.split("/")[0] for x in mounts})
         session_id = SessionId(uuid.uuid4())
 
         # Check keypair resource limit
