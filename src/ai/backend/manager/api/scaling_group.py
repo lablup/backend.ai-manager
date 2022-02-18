@@ -87,7 +87,7 @@ async def get_wsproxy_version(request: web.Request, params: Any) -> web.Response
     domain_name = request['user']['domain_name']
     group_id_or_name = params['group']
     log.info('SGROUPS.LIST(ak:{}, g:{}, d:{})', access_key, group_id_or_name, domain_name)
-    async with root_ctx.db.begin() as conn:
+    async with root_ctx.db.begin_readonly() as conn:
         sgroups = await query_allowed_sgroups(
             conn, domain_name, group_id_or_name or '', access_key)
         for sgroup in sgroups:
