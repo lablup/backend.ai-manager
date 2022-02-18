@@ -868,8 +868,8 @@ class AgentRegistry:
                     item['permission'].value,
                     item['unmanaged_path'] if item['unmanaged_path'] else '',
                 ])
-        if mounts and set(mounts) > matched_mounts:
-            raise VFolderNotFound(extra_data=[*(set(mounts) - matched_mounts)])
+        if root_mounts and set(root_mounts) > matched_mounts:
+            raise VFolderNotFound(extra_data=[*(set(root_mounts) - matched_mounts)])
         tmp_mounts = list()
         while determined_mounts:
             mount_obj = determined_mounts.pop()
