@@ -54,8 +54,8 @@ async def query_wsproxy_version(
         query = (
             sa.select([sgroups_for_domains.c.scaling_group])
             .where((
-                sgroups_for_domains.c.domain == domain_name &
-                sgroups_for_domains.c.scaling_group == scaling_group_name
+                (sgroups_for_domains.c.domain == domain_name) &
+                (sgroups_for_domains.c.scaling_group == scaling_group_name)
             ))
         )
         matched_sgroup_name = await conn.scalar(query)
