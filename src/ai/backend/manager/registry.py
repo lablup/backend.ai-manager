@@ -2375,7 +2375,7 @@ class AgentRegistry:
                             'lost_at': sa.null(),
                             'version': agent_info['version'],
                             'compute_plugins': agent_info['compute_plugins'],
-                            'architecture': agent_info['architecture'],
+                            'architecture': agent_info.get('architecture', 'x86_64'),
                         })
                         result = await conn.execute(insert_query)
                         assert result.rowcount == 1
