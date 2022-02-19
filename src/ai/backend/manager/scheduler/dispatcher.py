@@ -438,9 +438,10 @@ class SchedulerDispatcher(aobject):
                         'Cannot assign multiple kernels with different architecture'
                         'on single node session',
                     )
+                requested_architecture = requested_architectures.pop()
                 candidate_agents = list(
                     filter(
-                        lambda x: x.architecture == requested_architectures[0],
+                        lambda x: x.architecture == requested_architecture,
                         candidate_agents,
                     ),
                 )
