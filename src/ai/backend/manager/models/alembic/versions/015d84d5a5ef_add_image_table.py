@@ -31,11 +31,11 @@ def upgrade():
             server_default=sa.func.now(), index=True),
         sa.Column('tag', sa.String, nullable=False, index=True),
         sa.Column('registry', sa.String, nullable=False, index=True),
-        sa.Column('architecture', sa.String, nullable=False, default='x86_64', index=True),
+        sa.Column('architecture', sa.String, nullable=False, server_default='x86_64', index=True),
         sa.Column('config_digest', sa.CHAR(length=72), nullable=False),
-        sa.Column('size_bytes', sa.Integer, nullable=False),
-        sa.Column('accelerators', postgresql.JSONB(), nullable=False),
-        sa.Column('labels', sa.String, nullable=False),
+        sa.Column('size_bytes', sa.BigInteger, nullable=False),
+        sa.Column('accelerators', sa.String),
+        sa.Column('labels', postgresql.JSONB(), nullable=False),
         sa.Column('resources', postgresql.JSONB(), nullable=False),
     )
 

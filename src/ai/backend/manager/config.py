@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from ai.backend.manager.models.utils import ExtendedAsyncSAEngine
-
 """
 Configuration Schema on etcd
 ----------------------------
@@ -140,34 +138,6 @@ Alias keys are also URL-quoted in the same way.
          - secret: "xxxxxx..."       # for manager API
          - ssl_verify: true | false  # for manager API
        ...
-   + images
-     + _aliases
-       - {alias}: "{registry}/{image}:{tag}"   # {alias} is url-quoted
-       ...
-     + {registry}   # url-quoted
-       + {image}    # url-quoted
-         + {tag}: {digest-of-config-layer}
-           - size_bytes: {image-size-in-bytes}
-           - accelerators: "{accel-name-1},{accel-name-2},..."
-           + labels
-             - {key}: {value}
-             ...
-           + resource
-             + cpu
-               - min
-               - max   # may not be defined
-             + mem
-               - min
-               - max   # may not be defined
-             + {"cuda.smp"}
-               - min
-               - max   # treated as 0 if not defined
-             + {"cuda.mem"}
-               - min
-               - max   # treated as 0 if not defined
-             ...
-         ...
-       ...
      ...
    ...
  + nodes
@@ -198,9 +168,8 @@ Alias keys are also URL-quoted in the same way.
 """
 
 from abc import abstractmethod
-from collections import UserDict, defaultdict
+from collections import UserDict
 from contextvars import ContextVar
-from decimal import Decimal
 import logging
 import os
 from pathlib import Path
@@ -212,27 +181,19 @@ from typing import (
     Any,
     Awaitable,
     Callable,
-    DefaultDict,
     Final,
     List,
     Mapping,
     Optional,
     Sequence,
-    Tuple,
-    Union,
-    TYPE_CHECKING,
 )
 
 import aiotools
 import click
 import trafaret as t
-import yaml
 import yarl
 
 from ai.backend.common import config, validators as tx
-from ai.backend.common.docker import (
-    ImageRef, get_known_registries,
-)
 from ai.backend.common.etcd import AsyncEtcd
 from ai.backend.common.identity import get_instance_id
 from ai.backend.common.logging import BraceStyleAdapter
@@ -241,12 +202,7 @@ from ai.backend.common.types import (
     HostPortPair,
     current_resource_slots,
 )
-from ai.backend.common.exception import UnknownImageReference
-from ai.backend.common.etcd import (
-    quote as etcd_quote,
-    unquote as etcd_unquote,
-    ConfigScopes,
-)
+from ai.backend.common.etcd import ConfigScopes
 
 from .api.exceptions import ServerMisconfiguredError
 from .api.manager import ManagerStatus
@@ -537,96 +493,6 @@ class SharedConfig(AbstractConfig):
     async def deregister_myself(self) -> None:
         instance_id = await get_instance_id()
         await self.etcd.delete_prefix(f'nodes/manager/{instance_id}')
-
-    async def update_aliases_from_file(self, file: Path) -> None:
-        log.info('Updating image aliases from "{0}"', file)
-        try:
-            data = yaml.safe_load(open(file, 'r', encoding='utf-8'))
-        except IOError:
-            log.error('Cannot open "{0}".', file)
-            return
-        for item in data['aliases']:
-            alias = item[0]
-            target = item[1]
-            await self.etcd.put(f'images/_aliases/{etcd_quote(alias)}', target)
-            print(f'{alias} -> {target}')
-        log.info('Done.')
-
-    async def _scan_reverse_aliases(self) -> Mapping[str, List[str]]:
-        aliases = await self.etcd.get_prefix('images/_aliases')
-        result: DefaultDict[str, List[str]] = defaultdict(list)
-        for key, value in aliases.items():
-            result[value].append(etcd_unquote(key))
-        return dict(result)
-
-    async def _parse_image(self, image_ref: ImageRef, item, reverse_aliases):
-        res_limits = []
-        for slot_key, slot_range in item['resource'].items():
-            min_value = slot_range.get('min')
-            if min_value is None:
-                min_value = Decimal(0)
-            max_value = slot_range.get('max')
-            if max_value is None:
-                max_value = Decimal('Infinity')
-            res_limits.append({
-                'key': slot_key,
-                'min': min_value,
-                'max': max_value,
-            })
-
-        accels = item.get('accelerators')
-        if accels is None:
-            accels = []
-        else:
-            accels = accels.split(',')
-
-        return {
-            'canonical_ref': image_ref.canonical,
-            'name': image_ref.name,
-            'humanized_name': image_ref.name,  # TODO: implement
-            'tag': image_ref.tag,
-            'registry': image_ref.registry,
-            'digest': item[''],
-            'labels': item.get('labels', {}),
-            'aliases': reverse_aliases.get(image_ref.canonical, []),
-            'size_bytes': item.get('size_bytes', 0),
-            'resource_limits': res_limits,
-            'supported_accelerators': accels,
-        }
-
-    async def _check_image(self, reference: str) -> ImageRef:
-        known_registries = await get_known_registries(self.etcd)
-        ref = ImageRef(reference, known_registries)
-        digest = await self.etcd.get(ref.tag_path)
-        if digest is None:
-            raise UnknownImageReference(reference)
-        return ref
-
-    async def inspect_image(self, reference: Union[str, ImageRef]) -> Mapping[str, Any]:
-        if isinstance(reference, str):
-            ref = await ImageRef.resolve_alias(reference, self.etcd)
-        else:
-            ref = reference
-        reverse_aliases = await self._scan_reverse_aliases()
-        image_info = await self.etcd.get_prefix(ref.tag_path)
-        if not image_info:
-            raise UnknownImageReference(reference)
-        return await self._parse_image(ref, image_info, reverse_aliases)
-
-    async def forget_image(self, reference: Union[str, ImageRef]) -> None:
-        if isinstance(reference, str):
-            ref = await ImageRef.resolve_alias(reference, self.etcd)
-        else:
-            ref = reference
-        await self.etcd.delete_prefix(ref.tag_path)
-
-    async def set_image_resource_limit(self, reference: str, slot_type: str,
-                                       value_range: Tuple[Optional[Decimal], Optional[Decimal]]):
-        ref = await self._check_image(reference)
-        if value_range[0] is not None:
-            await self.etcd.put(f'{ref.tag_path}/resource/{slot_type}/min', str(value_range[0]))
-        if value_range[1] is not None:
-            await self.etcd.put(f'{ref.tag_path}/resource/{slot_type}/max', str(value_range[1]))
 
     async def update_resource_slots(
         self,

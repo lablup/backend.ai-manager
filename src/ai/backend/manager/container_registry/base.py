@@ -9,19 +9,25 @@ from typing import Any, AsyncIterator, Dict, Mapping, Optional, TYPE_CHECKING, c
 import aiohttp
 import aiotools
 import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import sessionmaker
 import yarl
 
 from abc import ABCMeta, abstractmethod
 
 from ai.backend.common.docker import (
     ImageRef,
-    login as registry_login,
     MIN_KERNELSPEC, MAX_KERNELSPEC,
+    arch_name_aliases,
+    login as registry_login,
 )
 from ai.backend.common.logging import BraceStyleAdapter
 
-from ai.backend.manager.models import images
+from ai.backend.manager.models.image import ImageRow
 from ai.backend.manager.models.utils import ExtendedAsyncSAEngine
+
+from ai.backend.manager.defs import DEFAULT_IMAGE_ARCH
+
 if TYPE_CHECKING:
     from ..background import ProgressReporter
 
@@ -31,6 +37,7 @@ log = BraceStyleAdapter(logging.getLogger(__name__))
 class BaseContainerRegistry(metaclass=ABCMeta):
 
     db: ExtendedAsyncSAEngine
+    create_db_session: sessionmaker
     registry_name: str
     registry_info: Mapping[str, Any]
     registry_url: yarl.URL
@@ -53,6 +60,7 @@ class BaseContainerRegistry(metaclass=ABCMeta):
         ssl_verify: bool = True,
     ) -> None:
         self.db = db
+        self.create_db_session = sessionmaker(db, class_=AsyncSession)
         self.registry_name = registry_name
         self.registry_info = registry_info
         self.registry_url = registry_info['']
@@ -98,60 +106,44 @@ class BaseContainerRegistry(metaclass=ABCMeta):
         if not all_updates:
             log.info('No images found in registry {0}', self.registry_url)
         else:
-            image_names = [
-                k.canonical for k in all_updates.keys()
+            image_identifiers = [
+                (k.canonical, k.architecture) for k in all_updates.keys()
             ]
-            async with self.db.begin() as conn:
-                result = await conn.execute(
-                    sa.select([images])
-                    .select_from(images)
-                    .where(sa.c.name.in_(image_names)),
+            async with self.create_db_session.begin() as session:
+                existing_images = await session.scalars(
+                    sa.select(ImageRow)
+                    .where(
+                        sa.func.ROW(ImageRow.name, ImageRow.architecture)
+                        .in_(image_identifiers),
+                    ),
                 )
-                existing_images = result.fetchall()
 
-                update_params = []
                 for image_row in existing_images:
-                    image = image_row['image']
-                    tag = image_row['tag']
-                    key = ImageRef(f'{self.registry_name}/{image}:{tag}', image_row['architecture'])
+                    key = image_row.image_ref
                     values = all_updates.get(key)
                     if values is None:
                         continue
-                    update_params.append({
-                        'image_id': image_row['id'],
-                        'config_digest': values['config_digest'],
-                        'site_bytes': values['site_bytes'],
-                        'accelerators': values['accels'],
-                        'labels': values['labels'],
-                        'resources': values['resources'],
-                    })
                     all_updates.pop(key)
+                    image_row.config_digest = values['config_digest']
+                    image_row.size_bytes = values['size_bytes']
+                    image_row.accelerators = values.get('accels')
+                    image_row.labels = values['labels']
+                    image_row.resources = values['resources']
 
-                insert_query = sa.insert(images).values([{
-                    'name': k.canonical,
-                    'registry': k.registry,
-                    'image': k.name,
-                    'tag': k.tag,
-                    'architecture': k.architecture,
-                    'config_digest': v['config_digest'],
-                    'site_bytes': v['site_bytes'],
-                    'accelerators': v['accels'],
-                    'labels': v['labels'],
-                    'resources': v['resources'],
-                } for k, v in all_updates.items()])
-                update_query = (
-                    sa.update(images)
-                    .where(images.c.id == sa.bindparam('image_id'))
-                    .values({
-                        'config_digest': sa.bindparam('config_digest'),
-                        'site_bytes': sa.bindparam('site_bytes'),
-                        'accelerators': sa.bindparam('accelerators'),
-                        'labels': sa.bindparam('labels'),
-                        'resources': sa.bindparam('resources'),
-                    })
-                )
-                await conn.execute(insert_query)
-                await conn.execute(update_query, update_params)
+                session.add_all([
+                    ImageRow(
+                        name=k.canonical,
+                        registry=k.registry,
+                        image=k.name,
+                        tag=k.tag,
+                        architecture=k.architecture,
+                        config_digest=v['config_digest'],
+                        size_bytes=v['size_bytes'],
+                        accelerators=v.get('accels'),
+                        labels=v['labels'],
+                        resources=v['resources'],
+                    ) for k, v in all_updates.items()
+                ])
 
     async def _scan_image(
         self,
@@ -200,7 +192,7 @@ class BaseContainerRegistry(metaclass=ABCMeta):
     ) -> None:
         skip_reason = None
 
-        async def _load_manifest(_tag: str, architecture='x86_64'):
+        async def _load_manifest(_tag: str, architecture=DEFAULT_IMAGE_ARCH):
             async with sess.get(self.registry_url / f'v2/{image}/manifests/{_tag}',
                                 **rqst_args) as resp:
                 if resp.status == 404:
@@ -218,9 +210,11 @@ class BaseContainerRegistry(metaclass=ABCMeta):
                         ret.update(
                             await _load_manifest(
                                 m['digest'],
-                                architecture=arch,
+                                architecture=arch_name_aliases.get(arch, arch),
                             ),
                         )
+                    if (reporter := self.reporter.get()) is not None:
+                        reporter.total_progress += len(ret) - 1
                     return ret
 
                 config_digest = data['config']['digest']
@@ -232,13 +226,17 @@ class BaseContainerRegistry(metaclass=ABCMeta):
                     data = json.loads(await resp.read())
                     labels = {}
                     if 'container_config' in data:
-                        raw_labels = data['container_config']['Labels']
+                        raw_labels = data['container_config'].get('Labels')
                         if raw_labels:
                             labels.update(raw_labels)
+                        else:
+                            log.warn('label not found on image {}:{}/{}', image, _tag, architecture)
                     else:
-                        raw_labels = data['config']['Labels']
+                        raw_labels = data['config'].get('Labels')
                         if raw_labels:
                             labels.update(raw_labels)
+                        else:
+                            log.warn('label not found on image {}:{}/{}', image, _tag, architecture)
                     return {
                         architecture: {
                             'size': size_bytes,
@@ -270,11 +268,14 @@ class BaseContainerRegistry(metaclass=ABCMeta):
                     skip_reason = architecture + ": unsupported kernelspec"
                     continue
 
-                update_key = ImageRef(f'{self.registry_name}/{image}:{tag}', architecture=architecture)
+                update_key = ImageRef(
+                    f'{self.registry_name}/{image}:{tag}', architecture,
+                    [self.registry_name],
+                )
                 updates = {
                     'config_digest': config_digest,
                     'size_bytes': size_bytes,
-                    'labels': json.dumps(labels),
+                    'labels': labels,
                 }
                 accels = labels.get('ai.backend.accelerators')
                 if accels:
@@ -286,7 +287,7 @@ class BaseContainerRegistry(metaclass=ABCMeta):
                                     labels.items()):
                     res_key = k[len(res_prefix):]
                     resources[res_key] = {'min': v}
-                updates['resources'] = json.dumps(resources)
+                updates['resources'] = resources
                 self.all_updates.get().update({
                     update_key: updates,
                 })
@@ -295,10 +296,10 @@ class BaseContainerRegistry(metaclass=ABCMeta):
                     log.warning('Skipped image - {}:{}/{} ({})', image, tag, architecture, skip_reason)
                     progress_msg = f"Skipped {image}:{tag}/{architecture} ({skip_reason})"
                 else:
-                    log.info('Updated image - {0}:{1}/{}', image, tag, architecture)
+                    log.info('Updated image - {0}:{1}/{2}', image, tag, architecture)
                     progress_msg = f"Updated {image}:{tag}/{architecture}"
                 if (reporter := self.reporter.get()) is not None:
-                    await reporter.update((idx + 1) / len(manifest), message=progress_msg)
+                    await reporter.update(1, message=progress_msg)
 
     @abstractmethod
     async def fetch_repositories(

@@ -19,10 +19,16 @@ depends_on = None
 def upgrade():
     op.add_column(
         'agents',
-        sa.Column('architecture', sa.CHAR(length=32), default='x86_64'))
+        sa.Column('architecture', sa.String, default='x86_64'))
     op.execute('UPDATE agents SET architecture=\'x86_64\'')
     op.alter_column('agents', 'architecture', nullable=False)
+    op.add_column(
+        'kernels',
+        sa.Column('architecture', sa.String, default='x86_64'))
+    op.execute('UPDATE kernels SET architecture=\'x86_64\'')
+    op.alter_column('kernels', 'architecture', nullable=False)
 
 
 def downgrade():
+    op.drop_column('kernels', 'architecture')
     op.drop_column('agents', 'architecture')

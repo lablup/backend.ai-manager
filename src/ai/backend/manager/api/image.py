@@ -22,7 +22,7 @@ from ai.backend.common.types import (
     SessionTypes,
 )
 
-from ..defs import DEFAULT_ROLE
+from ..defs import DEFAULT_IMAGE_ARCH, DEFAULT_ROLE
 from ..models import (
     domains, groups, query_allowed_sgroups,
     association_groups_users as agus,
@@ -275,6 +275,7 @@ async def get_import_image_form(request: web.Request) -> web.Response:
     t.Dict({
         t.Key('src'): t.String,
         t.Key('target'): t.String,
+        t.Key('architecture', default=DEFAULT_IMAGE_ARCH): t.String,
         t.Key('launchOptions', default={}): t.Dict({
             t.Key('scalingGroup', default='default'): t.String,
             t.Key('group', default='default'): t.String,
@@ -328,8 +329,9 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
         result = await conn.execute(query)
         allowed_docker_registries = result.scalar()
 
-    source_image = ImageRef(params['src'], allowed_docker_registries)
-    target_image = ImageRef(params['target'], allowed_docker_registries)
+    # TODO: select agent to run image builder based on image architecture
+    source_image = ImageRef(params['src'], params['architecture'], allowed_docker_registries)
+    target_image = ImageRef(params['target'], params['architecture'], allowed_docker_registries)
 
     # TODO: validate and convert arguments to template variables
     dockerfile_content = tpl.render({
@@ -388,6 +390,7 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
 
     importer_image = ImageRef(
         root_ctx.local_config['manager']['importer-image'],
+        params['architecture'],
         allowed_docker_registries,
     )
 

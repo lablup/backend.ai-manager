@@ -43,6 +43,8 @@ from ..types import Sentinel
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 
+# TODO: Implement begin(), begin_readonly() for AsyncSession also
+
 
 class ExtendedAsyncSAEngine(SAEngine):
     """

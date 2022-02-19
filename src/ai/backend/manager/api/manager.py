@@ -27,8 +27,6 @@ from ai.backend.common import validators as tx
 from ai.backend.common.events import DoScheduleEvent
 from ai.backend.common.logging import BraceStyleAdapter
 
-from ai.backend.manager.models.gql import GraphQueryContext
-
 from .. import __version__
 from ..defs import DEFAULT_ROLE
 from ..models import agents, kernels, AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES
@@ -46,6 +44,7 @@ from .utils import check_api_params
 
 if TYPE_CHECKING:
     from .context import RootContext
+    from ai.backend.manager.models.gql import GraphQueryContext
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 

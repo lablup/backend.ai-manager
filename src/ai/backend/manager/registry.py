@@ -8,7 +8,6 @@ import copy
 from datetime import datetime
 from decimal import Decimal
 import itertools
-import json
 import logging
 import secrets
 import time
@@ -46,6 +45,8 @@ from dateutil.tz import tzutc
 import snappy
 import sqlalchemy as sa
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql.expression import true
 from yarl import URL
 import zmq
@@ -90,8 +91,6 @@ from ai.backend.common.types import (
 )
 from ai.backend.common.utils import nmget
 
-from ai.backend.manager.models.image import get_image_slot_ranges, images
-
 from .api.exceptions import (
     BackendError, InvalidAPIParameters,
     RejectedByHook,
@@ -114,6 +113,7 @@ from .models import (
     query_group_dotfiles, query_domain_dotfiles,
     keypair_resource_policies,
     AgentStatus, KernelStatus,
+    ImageRow,
     query_accessible_vfolders, query_allowed_sgroups,
     recalc_agent_resource_occupancy,
     recalc_concurrency_used,
@@ -122,7 +122,11 @@ from .models import (
     DEAD_KERNEL_STATUSES,
 )
 from .models.kernel import match_session_ids, get_all_kernels, get_main_kernels
-from .models.utils import ExtendedAsyncSAEngine, reenter_txn, execute_with_retry, sql_json_merge
+from .models.utils import (
+    ExtendedAsyncSAEngine,
+    execute_with_retry,
+    reenter_txn, sql_json_merge,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import (
@@ -240,6 +244,7 @@ class AgentRegistry:
     kernel_creation_tracker: Dict[KernelId, asyncio.Future]
     _post_kernel_creation_tasks: weakref.WeakValueDictionary[KernelId, asyncio.Task]
     _post_kernel_creation_infos: dict[KernelId, asyncio.Future]
+    create_db_session: sessionmaker
 
     def __init__(
         self,
@@ -250,12 +255,13 @@ class AgentRegistry:
         redis_image: RedisConnectionInfo,
         event_dispatcher: EventDispatcher,
         event_producer: EventProducer,
-        storage_manager:  StorageSessionManager,
+        storage_manager: StorageSessionManager,
         hook_plugin_ctx: HookPluginContext,
     ) -> None:
         self.shared_config = shared_config
         self.docker = aiodocker.Docker()
         self.db = db
+        self.create_db_session = sessionmaker(db, class_=AsyncSession)
         self.redis_stat = redis_stat
         self.redis_live = redis_live
         self.redis_image = redis_image
@@ -921,20 +927,15 @@ class AgentRegistry:
 
             creation_config['mounts'] = mounts
             # TODO: merge into a single call
-            async with self.db.begin_readonly() as conn:
-                image_info = await conn.scalar(
-                    sa.select([images])
-                    .select_from(images)
-                    .where(images.c.name == image_ref.canonical),
-                )
-            image_min_slots, image_max_slots = await get_image_slot_ranges(
-                image_info,
-                self.shared_config,
-            )
+            async with self.create_db_session() as session:
+                log.debug('enqueue_session(): image ref => {} ({})', image_ref, image_ref.architecture)
+                image_row = await ImageRow.resolve(session, [image_ref])
+            image_min_slots, image_max_slots = await image_row.get_slot_ranges(self.shared_config)
             known_slot_types = await self.shared_config.get_resource_slots()
 
+            labels = image_row.labels
             # Parse service ports to check for port errors
-            parse_service_ports(image_info['labels'].get('ai.backend.service-ports', ''), BackendError)
+            parse_service_ports(labels.get('ai.backend.service-ports', ''), BackendError)
 
             # Shared memory.
             # We need to subtract the amount of shared memory from the memory limit of
@@ -942,7 +943,7 @@ class AgentRegistry:
             # and cgroup's memory limit does not apply.
             shmem = resource_opts.get('shmem', None)
             if shmem is None:
-                shmem = image_info['labels'].get('ai.backend.resource.preferred.shmem', '64m')
+                shmem = labels.get('ai.backend.resource.preferred.shmem', '64m')
             shmem = BinarySize.from_str(shmem)
             resource_opts['shmem'] = shmem
             image_min_slots = copy.deepcopy(image_min_slots)
@@ -1111,6 +1112,7 @@ class AgentRegistry:
                             'user_uuid': user_uuid,
                             'access_key': access_key,
                             'image': image_ref.canonical,
+                            'architecture': image_ref.architecture,
                             'registry': image_ref.registry,
                             'tag': session_tag,
                             'starts_at': starts_at,
@@ -1192,15 +1194,12 @@ class AgentRegistry:
         # Aggregate image registry information
         keyfunc = lambda item: item.kernel.image_ref
         image_infos = {}
-        async with self.db.begin_readonly() as conn:
+        async with self.create_db_session() as session:
             for image_ref, _ in itertools.groupby(
                 sorted(kernel_agent_bindings, key=keyfunc), key=keyfunc,
             ):
-                image_infos[image_ref] = conn.scalar(
-                    sa.select([images])
-                    .select_from(images)
-                    .where(images.c.name == image_ref.canonical),
-                )
+                log.debug('start_session(): image ref => {} ({})', image_ref, image_ref.architecture)
+                image_infos[image_ref] = await ImageRow.resolve(session, [image_ref])
                 registry_url, registry_creds = \
                     await get_registry_info(self.shared_config.etcd, image_ref.registry)
         image_info = {
@@ -1434,10 +1433,11 @@ class AgentRegistry:
                                     'url': str(registry_url),
                                     **registry_creds,   # type: ignore
                                 },
-                                'digest': image_infos[binding.kernel.image_ref]['config_digest'],
+                                'digest': image_infos[binding.kernel.image_ref].config_digest,
                                 'repo_digest': None,
                                 'canonical': binding.kernel.image_ref.canonical,
-                                'labels': json.loads(image_infos[binding.kernel.image_ref]['labels']),
+                                'architecture': binding.kernel.image_ref.architecture,
+                                'labels': image_infos[binding.kernel.image_ref].labels,
                             },
                             'session_type': scheduled_session.session_type.value,
                             'cluster_role': binding.kernel.cluster_role,
@@ -2437,12 +2437,12 @@ class AgentRegistry:
 
             # Update the mapping of kernel images to agents.
             known_registries = await get_known_registries(self.shared_config.etcd)
-            images = msgpack.unpackb(snappy.decompress(agent_info['images']))
+            loaded_images = msgpack.unpackb(snappy.decompress(agent_info['images']))
 
             def _pipe_builder(r: aioredis.Redis):
                 pipe = r.pipeline()
-                for image in images:
-                    image_ref = ImageRef(image[0], known_registries)
+                for image in loaded_images:
+                    image_ref = ImageRef(image[0], agent_info['architecture'], known_registries)
                     pipe.sadd(image_ref.canonical, agent_id)
                 return pipe
             await redis.execute(self.redis_image, _pipe_builder)

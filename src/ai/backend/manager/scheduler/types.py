@@ -70,6 +70,7 @@ class AgentAllocationContext:
 class AgentContext:
     agent_id: AgentId
     agent_addr: str
+    architecture: str
     scaling_group: str
     available_slots: ResourceSlot
     occupied_slots: ResourceSlot
@@ -333,6 +334,7 @@ class KernelInfo:
             kernels.c.cluster_idx,
             kernels.c.cluster_hostname,
             kernels.c.image,
+            kernels.c.architecture,
             kernels.c.registry,
             kernels.c.resource_opts,
             kernels.c.occupied_slots,
@@ -342,6 +344,7 @@ class KernelInfo:
 
     @classmethod
     def from_row(cls, row: Row) -> KernelInfo:
+        log.debug('architecture: ({})', row['architecture'])
         return cls(
             kernel_id=row['id'],
             session_id=row['session_id'],
@@ -351,7 +354,7 @@ class KernelInfo:
             cluster_role=row['cluster_role'],
             cluster_idx=row['cluster_idx'],
             cluster_hostname=row['cluster_hostname'],
-            image_ref=ImageRef(row['image'], [row['registry']]),
+            image_ref=ImageRef(row['image'], row['architecture'], [row['registry']]),
             resource_opts=row['resource_opts'],
             requested_slots=row['occupied_slots'],
             bootstrap_script=row['bootstrap_script'],
