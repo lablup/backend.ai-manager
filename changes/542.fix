@@ -1,0 +1,1 @@
+Fix 'allowed_session_types' as not empty using trafaret and Prevent stopping without checking all sgroups during the 'allowed_session_types' check process
