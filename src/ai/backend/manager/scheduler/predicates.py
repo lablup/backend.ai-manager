@@ -216,6 +216,14 @@ async def check_scaling_group(
     if preferred_sgroup_name is not None:
         for sgroup in sgroups:
             if preferred_sgroup_name == sgroup['name']:
+                allowed_session_types = sgroup['scheduler_opts']['allowed_session_types']
+                if sess_ctx.session_type.value.lower() not in allowed_session_types:
+                    return PredicateResult(
+                        False,
+                        f"The given preferred scaling group is not allowed to use. "
+                        f"({preferred_sgroup_name})",
+                        permanent=True,
+                    )
                 break
         else:
             return PredicateResult(
@@ -228,6 +236,15 @@ async def check_scaling_group(
         target_sgroup_names = [preferred_sgroup_name]
     else:
         # Consider all agents in all allowed scaling groups.
+        for sgroup in sgroups:
+            allowed_session_types = sgroup['scheduler_opts']['allowed_session_types']
+            if sess_ctx.session_type.value.lower() in allowed_session_types:
+                break
+        else:
+            return PredicateResult(
+                False,
+                "Not allowed session type in scaling groups.",
+            )
         target_sgroup_names = [sgroup['name'] for sgroup in sgroups]
     log.debug('considered scaling groups: {}', target_sgroup_names)
     if not target_sgroup_names:
@@ -235,12 +252,5 @@ async def check_scaling_group(
             False,
             "No available resource in scaling groups.",
         )
-    for sgroup in sgroups:
-        allowed_session_types = sgroup['scheduler_opts']['allowed_session_types']
-        if sess_ctx.session_type.value.lower() not in allowed_session_types:
-            return PredicateResult(
-                False,
-                "Not allowed session type in scaling groups.",
-            )
     sess_ctx.target_sgroup_names.extend(target_sgroup_names)
     return PredicateResult(True)
