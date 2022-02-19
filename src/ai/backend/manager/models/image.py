@@ -526,9 +526,10 @@ class Image(graphene.ObjectType):
             .options(selectinload(ImageRow.aliases))
         )
         async with graph_ctx.create_db_session.begin() as session:
+            result = await session.execute(query)
             return [
-                Image.from_row(graph_ctx, row)
-                for row in (await session.scalars(query))
+                await Image.from_row(graph_ctx, row)
+                for row in result.scalars.all()
             ]
 
     @classmethod
@@ -551,7 +552,7 @@ class Image(graphene.ObjectType):
             async with ctx.create_db_session() as session:
                 row = await ImageRow.resolve(session, [
                     ImageRef(reference, architecture, ['*']),
-                    reference,
+                    ImageAlias(reference),
                 ], load_aliases=True)
         except UnknownImageReference:
             raise ImageNotFound
@@ -715,7 +716,7 @@ class ForgetImage(graphene.Mutation):
         async with ctx.create_db_session() as session:
             image_row = await ImageRow.resolve(session, [
                 ImageRef(reference, architecture, ['*']),
-                reference,
+                ImageAlias(reference),
             ])
             async with session.begin():
                 await session.delete(image_row)
