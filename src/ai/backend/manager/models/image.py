@@ -149,7 +149,7 @@ async def update_aliases_from_file(session: AsyncSession, file: Path) -> None:
             architecture = DEFAULT_IMAGE_ARCH
         try:
             image_row = await ImageRow.from_image_ref(
-                session, ImageRef(target, architecture, ['*'])
+                session, ImageRef(target, architecture, ['*']),
             )
             image_alias = ImageAliasRow(
                 alias=alias,
