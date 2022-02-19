@@ -192,13 +192,13 @@ class BaseContainerRegistry(metaclass=ABCMeta):
     ) -> None:
         skip_reason = None
 
-        async def _load_manifest(_tag: str, architecture=DEFAULT_IMAGE_ARCH):
+        async def _load_manifest(_tag: str):
             async with sess.get(self.registry_url / f'v2/{image}/manifests/{_tag}',
                                 **rqst_args) as resp:
                 if resp.status == 404:
                     # ignore missing tags
                     # (may occur after deleting an image from the docker hub)
-                    return {architecture: None}
+                    return {DEFAULT_IMAGE_ARCH: None}
                 resp.raise_for_status()
                 data = await resp.json()
 
@@ -206,11 +206,9 @@ class BaseContainerRegistry(metaclass=ABCMeta):
                     # recursively call _load_manifests with detected arch and corresponding image digest
                     ret = {}
                     for m in data['manifests']:
-                        arch = m['platform']['architecture']
                         ret.update(
                             await _load_manifest(
                                 m['digest'],
-                                architecture=arch_name_aliases.get(arch, arch),
                             ),
                         )
                     if (reporter := self.reporter.get()) is not None:
@@ -224,6 +222,7 @@ class BaseContainerRegistry(metaclass=ABCMeta):
                                     **rqst_args) as resp:
                     resp.raise_for_status()
                     data = json.loads(await resp.read())
+                    architecture = arch_name_aliases.get(data['architecture'], data['architecture'])
                     labels = {}
                     if 'container_config' in data:
                         raw_labels = data['container_config'].get('Labels')
