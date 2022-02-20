@@ -848,7 +848,7 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
 async def create_cluster(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     app_ctx: PrivateContext = request.app['session.context']
-    database_ptask_group: aiotools.PersistentTaskGroup = request.app['database_ptask_group']
+    database_ptask_group: aiotools.PersistentTaskGroup = request.app["database_ptask_group"]
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
     scopes_param = {
@@ -1098,9 +1098,9 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
     }))
 async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
-    database_ptask_group: aiotools.PersistentTaskGroup = request.app['database_ptask_group']
-    rpc_ptask_group: aiotools.PersistentTaskGroup = request.app['rpc_ptask_group']
     session_name: str = request.match_info['session_name']
+    database_ptask_group: aiotools.PersistentTaskGroup = request.app["database_ptask_group"]
+    rpc_ptask_group: aiotools.PersistentTaskGroup = request.app["rpc_ptask_group"]
     access_key: AccessKey = request['keypair']['access_key']
     service: str = params['app']
     myself = asyncio.current_task()
@@ -1113,8 +1113,8 @@ async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.
         raise
 
     query = (sa.select([scaling_groups.c.wsproxy_addr])
-                .select_from(scaling_groups)
-                .where((scaling_groups.c.name == kernel['scaling_group'])))
+               .select_from(scaling_groups)
+               .where((scaling_groups.c.name == kernel['scaling_group'])))
 
     async with root_ctx.db.begin_readonly() as conn:
         result = await conn.execute(query)
@@ -2076,7 +2076,6 @@ class PrivateContext:
 async def init(app: web.Application) -> None:
     root_ctx: RootContext = app['_root.context']
     app_ctx: PrivateContext = app['session.context']
-
     app_ctx.session_creation_tracker = {}
 
     # passive events
@@ -2122,15 +2121,15 @@ async def init(app: web.Application) -> None:
 
 async def shutdown(app: web.Application) -> None:
     app_ctx: PrivateContext = app['session.context']
-    database_ptask_group: aiotools.PersistentTaskGroup = app['database_ptask_group']
-    rpc_ptask_group: aiotools.PersistentTaskGroup = app['rpc_ptask_group']
-    await database_ptask_group.shutdown()
-    await rpc_ptask_group.shutdown()
-
     app_ctx.agent_lost_checker.cancel()
     await app_ctx.agent_lost_checker
     app_ctx.stats_task.cancel()
     await app_ctx.stats_task
+
+    database_ptask_group: aiotools.PersistentTaskGroup = app["database_ptask_group"]
+    rpc_ptask_group: aiotools.PersistentTaskGroup = app["rpc_ptask_group"]
+    await database_ptask_group.shutdown()
+    await rpc_ptask_group.shutdown()
 
     await cancel_tasks(app_ctx.pending_waits)
 
