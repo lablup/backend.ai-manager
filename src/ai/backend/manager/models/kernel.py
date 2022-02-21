@@ -35,7 +35,6 @@ from ai.backend.common.types import (
     BinarySize,
     ClusterMode,
     KernelId,
-    SchedulingContext,
     SessionId,
     SessionTypes,
     SessionResult,
@@ -62,7 +61,6 @@ from .group import groups
 from .minilang.queryfilter import QueryFilterParser
 from .minilang.ordering import QueryOrderParser
 from .user import users
-from .keypair import keypairs
 if TYPE_CHECKING:
     from .gql import GraphQueryContext
 
@@ -1491,7 +1489,7 @@ class LegacyComputeSessionList(graphene.ObjectType):
 
 async def recalc_concurrency_used(
     db_conn: SAConnection,
-    sched_ctx: SchedulingContext,
+    sched_ctx: Any,
     access_key: AccessKey,
 ) -> None:
     async with db_conn.begin_nested():
@@ -1504,10 +1502,10 @@ async def recalc_concurrency_used(
             )
         )
         concurrency_used = await db_conn.execute(query)
-    
+
     await redis.execute(
         sched_ctx.registry.redis_stat,
-        lambda r: r.set(
-            f"conc_kp:{access_key}", concurrency_used,
+        lambda r: r.hset(
+            'keypair.concurrency', access_key, concurrency_used,
         ),
     )

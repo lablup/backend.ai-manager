@@ -72,14 +72,14 @@ async def check_concurrency(
 
             def _pipe_builder(r: aioredis.Redis):
                 pipe = r.pipeline()
-                key = f'conc_kp:{sess_ctx.access_key}'
-                if conc := pipe.get(key):
+                key = 'keypair.concurrency'
+                if conc := pipe.hget(key, sess_ctx.access_key):
                     return conc
-                pipe.set(key, 0)
+                pipe.hset(key, sess_ctx.access_key, 0)
                 return 0
             concurrency_used = await redis.execute(
                 sched_ctx.registry.redis_stat,
-                _pipe_builder
+                _pipe_builder,
             )
             log.debug(
                 'access_key: {0} ({1} / {2})',

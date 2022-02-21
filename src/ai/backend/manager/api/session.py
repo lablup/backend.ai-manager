@@ -1429,15 +1429,15 @@ async def report_stats(root_ctx: RootContext, interval: float) -> None:
         GAUGE, 'ai.backend.manager.agent_instances', len(all_inst_ids))
 
     async with root_ctx.db.begin_readonly() as conn:
-        async def _pipe_builder(r: aioredis.Redis):
-            pipe = r.pipeline()
+        async def _sum_kp_conc(r: aioredis.Redis):
             result = 0
-            async for val in pipe.scan_iter(match='conc_kp*'):
+            keys = await r.hkeys('keypair.concurrency')
+            for val in keys:
                 result += int(val)
             return result
         n = await redis.execute(
             root_ctx.redis_stat,
-            _pipe_builder,
+            _sum_kp_conc,
         )
         await stats_monitor.report_metric(
             GAUGE, 'ai.backend.manager.active_kernels', n)

@@ -1618,12 +1618,17 @@ class AgentRegistry:
                     # Update concurrency_used for keypairs with running containers.
                     async def _pipe_builder(r: aioredis.Redis):
                         pipe = r.pipeline()
-                        async for k in pipe.scan_iter(match='conc_kp*'):
-                            ak = k[len('conc_kp:'):]
+                        kp_key = 'keypair.concurrency'
+                        keys = await r.hkeys(kp_key)
+                        for ak in keys:
                             if ak in concurrency_used_per_key:
-                                pipe.set(k, concurrency_used_per_key[ak])
+                                pipe.hset(
+                                    kp_key,
+                                    ak,
+                                    concurrency_used_per_key[ak],
+                                )
                             else:
-                                pipe.set(k, 0)
+                                pipe.hset(kp_key, ak, 0)
                     await redis.execute(
                         self.redis_stat,
                         _pipe_builder,
@@ -1631,8 +1636,9 @@ class AgentRegistry:
                 else:
                     async def _pipe_builder(r: aioredis.Redis):
                         pipe = r.pipeline()
-                        async for k in pipe.scan_iter(match='conc_kp*'):
-                            pipe.set(k, 0)
+                        keys = await r.hkeys('keypair.concurrency')
+                        for ak in keys:
+                            pipe.set(ak, 0)
                     await redis.execute(
                         self.redis_stat,
                         _pipe_builder,
@@ -1820,7 +1826,11 @@ class AgentRegistry:
                                     # decrement the user's concurrency counter
                                     await redis.execute(
                                         self.redis_stat,
-                                        lambda r: r.decr(f"conc_kp:{kernel['access_key']}")
+                                        lambda r: r.hincrby(
+                                            "keypair.concurrency",
+                                            kernel['access_key'],
+                                            -1,
+                                        ),
                                     )
                                 await conn.execute(
                                     sa.update(kernels)
@@ -1846,7 +1856,11 @@ class AgentRegistry:
                                     # decrement the user's concurrency counter
                                     await redis.execute(
                                         self.redis_stat,
-                                        lambda r: r.decr(f"conc_kp:{kernel['access_key']}")
+                                        lambda r: r.hincrby(
+                                            "keypair.concurrency",
+                                            kernel['access_key'],
+                                            -1,
+                                        ),
                                     )
                                 await conn.execute(
                                     sa.update(kernels)
@@ -2661,7 +2675,7 @@ class AgentRegistry:
         async def _recalc() -> None:
             assert kernel is not None
             async with self.db.begin() as conn:
-                await recalc_concurrency_used(conn, kernel['access_key'])
+                await recalc_concurrency_used(conn, self.redis_stat, kernel['access_key'])
                 await recalc_agent_resource_occupancy(conn, kernel['agent'])
 
         await execute_with_retry(_recalc)
