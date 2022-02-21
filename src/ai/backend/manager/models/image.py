@@ -21,7 +21,6 @@ from graphql.execution.executors.asyncio import AsyncioExecutor
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 from sqlalchemy.orm import (
-    declarative_base,
     relationship,
     selectinload,
 )
@@ -47,7 +46,7 @@ from ai.backend.manager.defs import DEFAULT_IMAGE_ARCH
 
 from .base import (
     BigInt, ForeignKeyIDColumn, IDColumn,
-    KVPair, ResourceLimit, metadata,
+    KVPair, ResourceLimit, Base,
 )
 from .user import UserRole
 from .utils import ExtendedAsyncSAEngine
@@ -164,9 +163,6 @@ async def update_aliases_from_file(session: AsyncSession, file: Path) -> None:
         except UnknownImageReference:
             print(f'{alias} -> target image not found')
     log.info('Done.')
-
-
-Base: Any = declarative_base(metadata=metadata)
 
 
 class ImageRow(Base):
