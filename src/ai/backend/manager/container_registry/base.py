@@ -168,7 +168,10 @@ class BaseContainerRegistry(metaclass=ABCMeta):
                         if m['platform']['architecture'] == manager_arch:
                             return await _load_manifest(m['digest'])
                     else:
-                        return 'image with matching architecture not found'
+                        if len(data['manifests']) == 1 and self.strict_architecture:
+                            return await _load_manifest(data['manifests'][0]['digest'])
+                        else:
+                            return 'data declared as manifest list but contains no manifest'
                 else:
                     config_digest = data['config']['digest']
                     size_bytes = (sum(layer['size'] for layer in data['layers']) +
