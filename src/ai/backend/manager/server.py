@@ -30,7 +30,6 @@ import click
 from pathlib import Path
 from setproctitle import setproctitle
 import aiomonitor
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai.backend.common import redis
 from ai.backend.common.cli import LazyGroup
