@@ -385,6 +385,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
     t.Dict({
         t.Key('all', default=False): t.ToBool,
         tx.AliasedKey(['group_id', 'groupId'], default=None): tx.UUID | t.String | t.Null,
+        tx.AliasedKey(['email', 'user_id', 'userID'], default=None): t.String | t.Null,
     }),
 )
 async def list_folders(request: web.Request, params: Any) -> web.Response:
@@ -406,6 +407,37 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
             query = (
                 sa.select([vfolders, users.c.email, groups.c.name], use_labels=True)
                 .select_from(j)
+            )
+            result = await conn.execute(query)
+            entries = []
+            for row in result:
+                is_owner = True if row.vfolders_user == user_uuid else False
+                entries.append({
+                    'name': row.vfolders_name,
+                    'id': row.vfolders_id,
+                    'host': row.vfolders_host,
+                    'usage_mode': row.vfolders_usage_mode,
+                    'created_at': row.vfolders_created_at,
+                    'is_owner': is_owner,
+                    'permission': row.vfolders_permission,
+                    'user': str(row.vfolders_user) if row.vfolders_user else None,
+                    'group': str(row.vfolders_group) if row.vfolders_group else None,
+                    'creator': row.vfolders_creator,
+                    'user_email': row.users_email,
+                    'group_name': row.groups_name,
+                    'ownership_type': row.vfolders_ownership_type,
+                    'type': row.vfolders_ownership_type,  # legacy
+                    'unmanaged_path': row.vfolders_unmanaged_path,
+                    'cloneable': row.vfolders_cloneable if row.vfolders_cloneable else False,
+                    'max_files': row.vfolders_max_files,
+                    'max_size': row.vfolders_max_size,
+                })
+        elif request['is_superadmin'] and params['email']:
+            j = (vfolders.join(users, isouter=True))
+            query = (
+                sa.select([vfolders, users.c.email, groups.c.name], use_labels=True)
+                .select_from(j)
+                .where(users.c.email == params['email'])
             )
             result = await conn.execute(query)
             entries = []
