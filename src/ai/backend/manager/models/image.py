@@ -146,6 +146,9 @@ async def update_aliases_from_file(session: AsyncSession, file: Path) -> None:
         if len(item) >= 2:
             architecture = item[2]
         else:
+            log.warn(
+                'architecture not set for {} => {}, assuming as {}',
+                target, alias, DEFAULT_IMAGE_ARCH)
             architecture = DEFAULT_IMAGE_ARCH
         try:
             image_row = await ImageRow.from_image_ref(
@@ -276,7 +279,7 @@ class ImageRow(Base):
         cls,
         session: AsyncConnection,
         reference_candidates: List[Union[ImageAlias, ImageRef]],
-        load_aliases=False,
+        load_aliases=True,
     ) -> ImageRow:
         """Tries to resolve matching row of image table by iterating through reference_candidates.
         If type of candidate element is `str`, it'll be considered only as an alias to image.
@@ -315,6 +318,9 @@ class ImageRow(Base):
 
     def __str__(self) -> str:
         return self.image_ref.canonical + f' ({self.image_ref.architecture})'
+
+    def __repr__(self) -> str:
+        return self.__str__()
 
     async def get_slot_ranges(
         self,
@@ -357,13 +363,6 @@ class ImageRow(Base):
 
         return min_slot, max_slot
 
-    async def _scan_reverse_aliases(self, conn: AsyncConnection) -> List[str]:
-        result = await conn.execute(
-            sa.select([ImageAliasRow.alias])
-            .where(ImageAliasRow.image == self.id),
-        )
-        return result.scalars().all()
-
     def _parse_row(self):
         res_limits = []
         for slot_key, slot_range in self.resources.items():
@@ -399,9 +398,8 @@ class ImageRow(Base):
         }
 
     async def inspect(self, conn: AsyncConnection) -> Mapping[str, Any]:
-        reverse_aliases = await self._scan_reverse_aliases(conn)
         parsed_image_info = self._parse_row()
-        parsed_image_info.update('reverse_aliases', reverse_aliases)
+        parsed_image_info['reverse_aliases'] = [x.alias for x in self.aliases]
         return parsed_image_info
 
     def set_resource_limit(
@@ -525,7 +523,7 @@ class Image(graphene.ObjectType):
             .where(ImageRow.name.in_(image_names))
             .options(selectinload(ImageRow.aliases))
         )
-        async with graph_ctx.create_db_session.begin() as session:
+        async with graph_ctx.db.begin_readonly_session() as session:
             result = await session.execute(query)
             return [
                 await Image.from_row(graph_ctx, row)
@@ -549,11 +547,11 @@ class Image(graphene.ObjectType):
         architecture: str,
     ) -> Image:
         try:
-            async with ctx.create_db_session() as session:
+            async with ctx.db.begin_readonly_session() as session:
                 row = await ImageRow.resolve(session, [
                     ImageRef(reference, architecture, ['*']),
                     ImageAlias(reference),
-                ], load_aliases=True)
+                ])
         except UnknownImageReference:
             raise ImageNotFound
         return await cls.from_row(ctx, row)
@@ -566,8 +564,8 @@ class Image(graphene.ObjectType):
         is_installed: bool = None,
         is_operation: bool = None,
     ) -> Sequence[Image]:
-        async with ctx.create_db_session() as session:
-            rows = await ImageRow.list(session, load_aliases=True)
+        async with ctx.db.begin_readonly_session() as session:
+            rows = await ImageRow.list(session)
         items: List[Image] = []
         # Convert to GQL objects
         for r in rows:
@@ -713,13 +711,12 @@ class ForgetImage(graphene.Mutation):
     ) -> ForgetImage:
         log.info('forget image {0} by API request', reference)
         ctx: GraphQueryContext = info.context
-        async with ctx.create_db_session() as session:
+        async with ctx.db.begin_session() as session:
             image_row = await ImageRow.resolve(session, [
                 ImageRef(reference, architecture, ['*']),
                 ImageAlias(reference),
             ])
-            async with session.begin():
-                await session.delete(image_row)
+            await session.delete(image_row)
         return ForgetImage(ok=True, msg='')
 
 
@@ -777,15 +774,14 @@ class DealiasImage(graphene.Mutation):
         log.info('dealias image {0} by API request', alias)
         ctx: GraphQueryContext = info.context
         try:
-            async with ctx.create_db_session() as session:
+            async with ctx.db.begin_session() as session:
                 existing_alias = await session.scalar(
                     sa.select(ImageAliasRow)
                     .where(ImageAliasRow.alias == alias),
                 )
                 if existing_alias is None:
                     raise DealiasImage(ok=False, msg=str('No such alias'))
-                async with session.begin():
-                    await session.delete(existing_alias)
+                await session.delete(existing_alias)
         except ValueError as e:
             return DealiasImage(ok=False, msg=str(e))
         return DealiasImage(ok=True, msg='')

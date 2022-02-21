@@ -31,7 +31,6 @@ from pathlib import Path
 from setproctitle import setproctitle
 import aiomonitor
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import sessionmaker
 
 from ai.backend.common import redis
 from ai.backend.common.cli import LazyGroup
@@ -309,7 +308,6 @@ async def redis_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 async def database_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     async with connect_database(root_ctx.local_config) as db:
         root_ctx.db = db
-        root_ctx.create_db_session = sessionmaker(db, class_=AsyncSession)
         yield
 
 

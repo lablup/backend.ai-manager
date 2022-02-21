@@ -9,8 +9,6 @@ from typing import Any, AsyncIterator, Dict, Mapping, Optional, TYPE_CHECKING, c
 import aiohttp
 import aiotools
 import sqlalchemy as sa
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import sessionmaker
 import yarl
 
 from abc import ABCMeta, abstractmethod
@@ -26,8 +24,6 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.manager.models.image import ImageRow
 from ai.backend.manager.models.utils import ExtendedAsyncSAEngine
 
-from ai.backend.manager.defs import DEFAULT_IMAGE_ARCH
-
 if TYPE_CHECKING:
     from ..background import ProgressReporter
 
@@ -37,7 +33,6 @@ log = BraceStyleAdapter(logging.getLogger(__name__))
 class BaseContainerRegistry(metaclass=ABCMeta):
 
     db: ExtendedAsyncSAEngine
-    create_db_session: sessionmaker
     registry_name: str
     registry_info: Mapping[str, Any]
     registry_url: yarl.URL
@@ -60,7 +55,6 @@ class BaseContainerRegistry(metaclass=ABCMeta):
         ssl_verify: bool = True,
     ) -> None:
         self.db = db
-        self.create_db_session = sessionmaker(db, class_=AsyncSession)
         self.registry_name = registry_name
         self.registry_info = registry_info
         self.registry_url = registry_info['']
@@ -109,7 +103,7 @@ class BaseContainerRegistry(metaclass=ABCMeta):
             image_identifiers = [
                 (k.canonical, k.architecture) for k in all_updates.keys()
             ]
-            async with self.create_db_session.begin() as session:
+            async with self.db.begin_session() as session:
                 existing_images = await session.scalars(
                     sa.select(ImageRow)
                     .where(
@@ -198,7 +192,7 @@ class BaseContainerRegistry(metaclass=ABCMeta):
                 if resp.status == 404:
                     # ignore missing tags
                     # (may occur after deleting an image from the docker hub)
-                    return {DEFAULT_IMAGE_ARCH: None}
+                    return {}
                 resp.raise_for_status()
                 data = await resp.json()
 
@@ -246,6 +240,12 @@ class BaseContainerRegistry(metaclass=ABCMeta):
 
         async with self.sema.get():
             manifests = await _load_manifest(tag)
+
+        if len(manifests.keys()) == 0:
+            log.warning('Skipped image - {}:{} (missing/deleted)', image, tag)
+            progress_msg = f"Skipped {image}:{tag} (missing/deleted)"
+            if (reporter := self.reporter.get()) is not None:
+                await reporter.update(1, message=progress_msg)
 
         idx = 0
         for architecture, manifest in manifests.items():

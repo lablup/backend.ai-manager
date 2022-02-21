@@ -45,8 +45,6 @@ from dateutil.tz import tzutc
 import snappy
 import sqlalchemy as sa
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql.expression import true
 from yarl import URL
 import zmq
@@ -244,7 +242,6 @@ class AgentRegistry:
     kernel_creation_tracker: Dict[KernelId, asyncio.Future]
     _post_kernel_creation_tasks: weakref.WeakValueDictionary[KernelId, asyncio.Task]
     _post_kernel_creation_infos: dict[KernelId, asyncio.Future]
-    create_db_session: sessionmaker
 
     def __init__(
         self,
@@ -261,7 +258,6 @@ class AgentRegistry:
         self.shared_config = shared_config
         self.docker = aiodocker.Docker()
         self.db = db
-        self.create_db_session = sessionmaker(db, class_=AsyncSession)
         self.redis_stat = redis_stat
         self.redis_live = redis_live
         self.redis_image = redis_image
@@ -927,7 +923,7 @@ class AgentRegistry:
 
             creation_config['mounts'] = mounts
             # TODO: merge into a single call
-            async with self.create_db_session() as session:
+            async with self.db.begin_readonly_session() as session:
                 log.debug('enqueue_session(): image ref => {} ({})', image_ref, image_ref.architecture)
                 image_row = await ImageRow.resolve(session, [image_ref])
             image_min_slots, image_max_slots = await image_row.get_slot_ranges(self.shared_config)
@@ -1194,7 +1190,7 @@ class AgentRegistry:
         # Aggregate image registry information
         keyfunc = lambda item: item.kernel.image_ref
         image_infos = {}
-        async with self.create_db_session() as session:
+        async with self.db.begin_readonly_session() as session:
             for image_ref, _ in itertools.groupby(
                 sorted(kernel_agent_bindings, key=keyfunc), key=keyfunc,
             ):

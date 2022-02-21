@@ -425,7 +425,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
 
     # Resolve the image reference.
     try:
-        async with root_ctx.create_db_session() as session:
+        async with root_ctx.db.begin_readonly_session() as session:
             image_row = await ImageRow.resolve(session, [
                 ImageRef(params['image'], params['architecture'], ['*']),
                 params['image'],
@@ -970,7 +970,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
 
         # Resolve the image reference.
         try:
-            async with root_ctx.create_db_session() as session:
+            async with root_ctx.db.begin_readonly_session() as session:
                 image_row = await ImageRow.resolve(session, [
                     ImageRef(kernel_config['image'], kernel_config['architecture'], ['*']),
                     kernel_config['image'],

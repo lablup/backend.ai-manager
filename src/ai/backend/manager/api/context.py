@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Sequence, TYPE_CHECKING
 
 import attr
-from sqlalchemy.orm import sessionmaker
 
 if TYPE_CHECKING:
     from ai.backend.common.events import EventDispatcher, EventProducer
@@ -49,5 +48,3 @@ class RootContext(BaseContext):
     error_monitor: ErrorPluginContext
     stats_monitor: StatsPluginContext
     background_task_manager: BackgroundTaskManager
-
-    create_db_session: sessionmaker

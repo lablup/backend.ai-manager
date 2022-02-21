@@ -5,7 +5,6 @@ import uuid
 
 import attr
 import graphene
-from sqlalchemy.orm import sessionmaker
 
 from ai.backend.manager.defs import DEFAULT_IMAGE_ARCH
 
@@ -136,7 +135,6 @@ class GraphQueryContext:
     user: Mapping[str, Any]  # TODO: express using typed dict
     access_key: str
     db: ExtendedAsyncSAEngine
-    create_db_session: sessionmaker
     redis_stat: RedisConnectionInfo
     redis_image: RedisConnectionInfo
     manager_status: ManagerStatus
