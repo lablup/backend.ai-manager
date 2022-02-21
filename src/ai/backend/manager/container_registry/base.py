@@ -41,6 +41,7 @@ class BaseContainerRegistry(metaclass=ABCMeta):
     base_hdrs: Dict[str, str]
     credentials: Dict[str, str]
     ssl_verify: bool
+    strict_architecture: bool
 
     sema: ContextVar[asyncio.Semaphore]
     reporter: ContextVar[Optional[ProgressReporter]]
@@ -54,6 +55,7 @@ class BaseContainerRegistry(metaclass=ABCMeta):
         *,
         max_concurrency_per_registry: int = 4,
         ssl_verify: bool = True,
+        strict_architecture: bool = False,
     ) -> None:
         self.etcd = etcd
         self.registry_name = registry_name
@@ -65,6 +67,7 @@ class BaseContainerRegistry(metaclass=ABCMeta):
         }
         self.credentials = {}
         self.ssl_verify = ssl_verify
+        self.strict_architecture = strict_architecture
         self.sema = ContextVar('sema')
         self.reporter = ContextVar('reporter', default=None)
         self.all_updates = ContextVar('all_updates')
@@ -174,7 +177,7 @@ class BaseContainerRegistry(metaclass=ABCMeta):
                                         **rqst_args) as resp:
                         resp.raise_for_status()
                         data = json.loads(await resp.read())
-                        if data['architecture'] != manager_arch:
+                        if data['architecture'] != manager_arch and self.strict_architecture:
                             return 'image with matching architecture not found'
                         labels = {}
                         if 'container_config' in data:
