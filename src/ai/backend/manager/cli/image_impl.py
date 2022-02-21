@@ -70,7 +70,7 @@ async def inspect_image(cli_ctx, canonical_or_alias, architecture):
         async with db.begin_readonly_session() as session:
             try:
                 image_row = await ImageRow.resolve(session, [
-                    ImageRef(canonical_or_alias, architecture, ['*']),
+                    ImageRef(canonical_or_alias, ['*'], architecture),
                     canonical_or_alias,
                 ], strict=True)
                 pprint(await image_row.inspect())
@@ -85,7 +85,7 @@ async def forget_image(cli_ctx, canonical_or_alias, architecture):
         async with db.begin_session() as session:
             try:
                 image_row = await ImageRow.resolve(session, [
-                    ImageRef(canonical_or_alias, architecture, ['*']),
+                    ImageRef(canonical_or_alias, ['*'], architecture),
                     canonical_or_alias,
                 ], strict=True)
                 await session.delete(image_row)
@@ -106,7 +106,7 @@ async def set_image_resource_limit(
         async with db.begin_session() as session:
             try:
                 image_row = await ImageRow.resolve(session, [
-                    ImageRef(canonical_or_alias, architecture, ['*']),
+                    ImageRef(canonical_or_alias, ['*'], architecture),
                     canonical_or_alias,
                 ])
                 await image_row.set_resource_limit(slot_type, range_value)
@@ -130,7 +130,7 @@ async def alias(cli_ctx, alias, target, architecture):
         async with db.begin_session() as session:
             try:
                 image_row = await ImageRow.resolve(session, [
-                    ImageRef(target, architecture, ['*']),
+                    ImageRef(target, ['*'], architecture),
                 ], strict=True)
                 await ImageAliasRow.create(session, alias, image_row)
             except UnknownImageReference:

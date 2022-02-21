@@ -151,7 +151,7 @@ async def update_aliases_from_file(session: AsyncSession, file: Path) -> None:
             architecture = DEFAULT_IMAGE_ARCH
         try:
             image_row = await ImageRow.from_image_ref(
-                session, ImageRef(target, architecture, ['*']),
+                session, ImageRef(target, ['*'], architecture),
             )
             image_alias = ImageAliasRow(
                 alias=alias,
@@ -210,10 +210,7 @@ class ImageRow(Base):
 
     @property
     def image_ref(self):
-        return ImageRef(
-            self.name, self.architecture,
-            [self.registry],
-        )
+        return ImageRef(self.name, [self.registry], self.architecture)
 
     @classmethod
     async def from_alias(
@@ -285,8 +282,8 @@ class ImageRow(Base):
         as an image canonical. For example:
         ```
         await resolve_image_row(conn, [
-            ImageRef(params['image'],
-            params['architecture']), params['image']
+            ImageRef(params['image'], params['image'],
+            params['architecture']),
         ])
         ```
         This kind of pattern is considered as 'good use case',
@@ -551,7 +548,7 @@ class Image(graphene.ObjectType):
         try:
             async with ctx.db.begin_readonly_session() as session:
                 row = await ImageRow.resolve(session, [
-                    ImageRef(reference, architecture, ['*']),
+                    ImageRef(reference, ['*'], architecture),
                     ImageAlias(reference),
                 ])
         except UnknownImageReference:
@@ -715,7 +712,7 @@ class ForgetImage(graphene.Mutation):
         ctx: GraphQueryContext = info.context
         async with ctx.db.begin_session() as session:
             image_row = await ImageRow.resolve(session, [
-                ImageRef(reference, architecture, ['*']),
+                ImageRef(reference, ['*'], architecture),
                 ImageAlias(reference),
             ])
             await session.delete(image_row)
@@ -742,7 +739,7 @@ class AliasImage(graphene.Mutation):
         target: str,
         architecture: str,
     ) -> AliasImage:
-        image_ref = ImageRef(target, architecture, ['*'])
+        image_ref = ImageRef(target, ['*'], architecture)
         log.info('alias image {0} -> {1} by API request', alias, image_ref)
         ctx: GraphQueryContext = info.context
         try:

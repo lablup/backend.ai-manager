@@ -427,7 +427,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
     try:
         async with root_ctx.db.begin_readonly_session() as session:
             image_row = await ImageRow.resolve(session, [
-                ImageRef(params['image'], params['architecture'], ['*']),
+                ImageRef(params['image'], ['*'], params['architecture']),
                 params['image'],
             ])
         requested_image_ref = image_row.image_ref
@@ -448,7 +448,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
         # NOTE: We can reuse the session IDs of TERMINATED sessions only.
         # NOTE: Reusing a session in the PENDING status returns an empty value in service_ports.
         kern = await root_ctx.registry.get_session(params['session_name'], owner_access_key)
-        running_image_ref = ImageRef(kern['image'], kern['architecture'], [kern['registry']])
+        running_image_ref = ImageRef(kern['image'], [kern['registry']], kern['architecture'])
         if running_image_ref != requested_image_ref:
             # The image must be same if get_or_create() called multiple times
             # against an existing (non-terminated) session
@@ -972,7 +972,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
         try:
             async with root_ctx.db.begin_readonly_session() as session:
                 image_row = await ImageRow.resolve(session, [
-                    ImageRef(kernel_config['image'], kernel_config['architecture'], ['*']),
+                    ImageRef(kernel_config['image'], ['*'], kernel_config['architecture']),
                     kernel_config['image'],
                 ])
             requested_image_ref = image_row.image_ref

@@ -7,7 +7,6 @@ import platform
 import re
 from typing import Final
 
-from ai.backend.common.docker import arch_name_aliases
 from ai.backend.common.types import SlotName, SlotTypes
 
 INTRINSIC_SLOTS: Final = {
@@ -16,6 +15,15 @@ INTRINSIC_SLOTS: Final = {
 }
 
 MANAGER_ARCH = platform.machine().lower().strip()
+# TODO: import arch_name_aliases from common once lablup/backend.ai-common#118 is merged
+arch_name_aliases = {
+    "arm64": "aarch64",  # macOS with LLVM
+    "amd64": "x86_64",   # Windows/Linux
+    "x64": "x86_64",     # Windows
+    "x32": "x86",        # Windows
+    "i686": "x86",       # Windows
+}
+
 DEFAULT_IMAGE_ARCH = arch_name_aliases.get(MANAGER_ARCH, MANAGER_ARCH)
 # DEFAULT_IMAGE_ARCH = 'x86_64'
 

@@ -2438,7 +2438,7 @@ class AgentRegistry:
             def _pipe_builder(r: aioredis.Redis):
                 pipe = r.pipeline()
                 for image in loaded_images:
-                    image_ref = ImageRef(image[0], agent_info['architecture'], known_registries)
+                    image_ref = ImageRef(image[0], known_registries, agent_info['architecture'])
                     pipe.sadd(image_ref.canonical, agent_id)
                 return pipe
             await redis.execute(self.redis_image, _pipe_builder)

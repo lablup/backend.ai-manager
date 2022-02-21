@@ -354,7 +354,7 @@ class KernelInfo:
             cluster_role=row['cluster_role'],
             cluster_idx=row['cluster_idx'],
             cluster_hostname=row['cluster_hostname'],
-            image_ref=ImageRef(row['image'], row['architecture'], [row['registry']]),
+            image_ref=ImageRef(row['image'], [row['registry']], row['architecture']),
             resource_opts=row['resource_opts'],
             requested_slots=row['occupied_slots'],
             bootstrap_script=row['bootstrap_script'],

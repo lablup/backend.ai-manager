@@ -330,8 +330,8 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
         allowed_docker_registries = result.scalar()
 
     # TODO: select agent to run image builder based on image architecture
-    source_image = ImageRef(params['src'], params['architecture'], allowed_docker_registries)
-    target_image = ImageRef(params['target'], params['architecture'], allowed_docker_registries)
+    source_image = ImageRef(params['src'], allowed_docker_registries, params['architecture'])
+    target_image = ImageRef(params['target'], allowed_docker_registries, params['architecture'])
 
     # TODO: validate and convert arguments to template variables
     dockerfile_content = tpl.render({
@@ -390,8 +390,8 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
 
     importer_image = ImageRef(
         root_ctx.local_config['manager']['importer-image'],
-        params['architecture'],
         allowed_docker_registries,
+        params['architecture'],
     )
 
     docker_creds = {}
