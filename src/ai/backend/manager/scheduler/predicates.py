@@ -72,7 +72,7 @@ async def check_concurrency(
 
             def _pipe_builder(r: aioredis.Redis):
                 pipe = r.pipeline()
-                key = f'conc_kp:{sess_ctx.access_key}:num_conc'
+                key = f'conc_kp:{sess_ctx.access_key}'
                 if conc := pipe.get(key):
                     return conc
                 pipe.set(key, 0)

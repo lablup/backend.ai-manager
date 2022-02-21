@@ -1616,12 +1616,11 @@ class AgentRegistry:
 
                 if len(concurrency_used_per_key) > 0:
                     # Update concurrency_used for keypairs with running containers.
-                    def _pipe_builder(r: aioredis.Redis):
+                    async def _pipe_builder(r: aioredis.Redis):
                         pipe = r.pipeline()
-                        ks = pipe.scan_iter(match='conc_kp*')
-                        for k in ks:
-                            ak = k[len('conc_kp:'):-len(':num_conc')]
-                            if k in concurrency_used_per_key:
+                        async for k in pipe.scan_iter(match='conc_kp*'):
+                            ak = k[len('conc_kp:'):]
+                            if ak in concurrency_used_per_key:
                                 pipe.set(k, concurrency_used_per_key[ak])
                             else:
                                 pipe.set(k, 0)
@@ -1630,10 +1629,9 @@ class AgentRegistry:
                         _pipe_builder,
                     )
                 else:
-                    def _pipe_builder(r: aioredis.Redis):
+                    async def _pipe_builder(r: aioredis.Redis):
                         pipe = r.pipeline()
-                        ks = pipe.scan_iter(match='conc_kp*')
-                        for k in ks:
+                        async for k in pipe.scan_iter(match='conc_kp*'):
                             pipe.set(k, 0)
                     await redis.execute(
                         self.redis_stat,
@@ -1822,7 +1820,7 @@ class AgentRegistry:
                                     # decrement the user's concurrency counter
                                     await redis.execute(
                                         self.redis_stat,
-                                        lambda r: r.decr(f"conc_kp:{kernel['access_key']}:num_conc")
+                                        lambda r: r.decr(f"conc_kp:{kernel['access_key']}")
                                     )
                                 await conn.execute(
                                     sa.update(kernels)
@@ -1848,7 +1846,7 @@ class AgentRegistry:
                                     # decrement the user's concurrency counter
                                     await redis.execute(
                                         self.redis_stat,
-                                        lambda r: r.decr(f"conc_kp:{kernel['access_key']}:num_conc")
+                                        lambda r: r.decr(f"conc_kp:{kernel['access_key']}")
                                     )
                                 await conn.execute(
                                     sa.update(kernels)

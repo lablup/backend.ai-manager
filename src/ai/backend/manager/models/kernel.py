@@ -35,6 +35,7 @@ from ai.backend.common.types import (
     BinarySize,
     ClusterMode,
     KernelId,
+    SchedulingContext,
     SessionId,
     SessionTypes,
     SessionResult,
@@ -1488,21 +1489,25 @@ class LegacyComputeSessionList(graphene.ObjectType):
     items = graphene.List(LegacyComputeSession, required=True)
 
 
-async def recalc_concurrency_used(db_conn: SAConnection, access_key: AccessKey) -> None:
+async def recalc_concurrency_used(
+    db_conn: SAConnection,
+    sched_ctx: SchedulingContext,
+    access_key: AccessKey,
+) -> None:
     async with db_conn.begin_nested():
         query = (
-            sa.update(keypairs)
-            .values(
-                concurrency_used=(
-                    sa.select([sa.func.count(kernels.c.id)])
-                    .select_from(kernels)
-                    .where(
-                        (kernels.c.access_key == access_key) &
-                        (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
-                    )
-                    .scalar_subquery()
-                ),
+            sa.select([sa.func.count(kernels.c.id)])
+            .select_from(kernels)
+            .where(
+                (kernels.c.access_key == access_key) &
+                (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
             )
-            .where(keypairs.c.access_key == access_key)
         )
-        await db_conn.execute(query)
+        concurrency_used = await db_conn.execute(query)
+    
+    await redis.execute(
+        sched_ctx.registry.redis_stat,
+        lambda r: r.set(
+            f"conc_kp:{access_key}", concurrency_used,
+        ),
+    )

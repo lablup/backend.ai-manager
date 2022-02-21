@@ -1429,11 +1429,16 @@ async def report_stats(root_ctx: RootContext, interval: float) -> None:
         GAUGE, 'ai.backend.manager.agent_instances', len(all_inst_ids))
 
     async with root_ctx.db.begin_readonly() as conn:
-        query = (
-            sa.select([sa.func.sum(keypairs.c.concurrency_used)])
-            .select_from(keypairs)
+        async def _pipe_builder(r: aioredis.Redis):
+            pipe = r.pipeline()
+            result = 0
+            async for val in pipe.scan_iter(match='conc_kp*'):
+                result += int(val)
+            return result
+        n = await redis.execute(
+            root_ctx.redis_stat,
+            _pipe_builder,
         )
-        n = await conn.scalar(query)
         await stats_monitor.report_metric(
             GAUGE, 'ai.backend.manager.active_kernels', n)
 
