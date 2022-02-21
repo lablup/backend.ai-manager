@@ -280,6 +280,7 @@ class ImageRow(Base):
         session: AsyncConnection,
         reference_candidates: List[Union[ImageAlias, ImageRef]],
         load_aliases=True,
+        strict=False,
     ) -> ImageRow:
         """Tries to resolve matching row of image table by iterating through reference_candidates.
         If type of candidate element is `str`, it'll be considered only as an alias to image.
@@ -296,6 +297,9 @@ class ImageRow(Base):
         since accepting multiple reference candidates is intended to make
         user explicitly declare that the code will first try to consider string
         as an image canonical and try to load image, and changes to alias if it fails.
+        if `strict` is False and image table has only one row
+        with respect to requested canonical, this function will
+        return that row regardless of actual architecture.
         """
 
         for reference in reference_candidates:
@@ -303,7 +307,7 @@ class ImageRow(Base):
             if isinstance(reference, str):
                 resolver_func = cls.from_alias
             elif isinstance(reference, ImageRef):
-                resolver_func = functools.partial(cls.from_image_ref, strict=False)
+                resolver_func = functools.partial(cls.from_image_ref, strict=strict)
             if (row := await resolver_func(session, reference, load_aliases=load_aliases)):
                 return row
         raise UnknownImageReference
@@ -389,6 +393,7 @@ class ImageRow(Base):
             'name': self.image,
             'humanized_name': self.image,  # TODO: implement
             'tag': self.tag,
+            'architecture': self.architecture,
             'registry': self.registry,
             'digest': self.config_digest,
             'labels': self.labels,
@@ -419,7 +424,8 @@ class ImageRow(Base):
 
 class ImageAliasRow(Base):
     __tablename__ = 'image_aliases'
-    alias = sa.Column('alias', sa.String(128), primary_key=True)
+    id = IDColumn('id')
+    alias = sa.Column('alias', sa.String, unique=True)
     image_id = ForeignKeyIDColumn('image', 'images.id', nullable=False)
     image: relationship
 

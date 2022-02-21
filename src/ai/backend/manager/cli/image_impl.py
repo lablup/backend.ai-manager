@@ -72,7 +72,7 @@ async def inspect_image(cli_ctx, canonical_or_alias, architecture):
                 image_row = await ImageRow.resolve(session, [
                     ImageRef(canonical_or_alias, architecture, ['*']),
                     canonical_or_alias,
-                ])
+                ], strict=True)
                 pprint(await image_row.inspect(session))
             except UnknownImageReference:
                 log.exception('Image not found.')
@@ -87,7 +87,7 @@ async def forget_image(cli_ctx, canonical_or_alias, architecture):
                 image_row = await ImageRow.resolve(session, [
                     ImageRef(canonical_or_alias, architecture, ['*']),
                     canonical_or_alias,
-                ])
+                ], strict=True)
                 await session.delete(image_row)
             except UnknownImageReference:
                 log.exception('Image not found.')
@@ -131,7 +131,7 @@ async def alias(cli_ctx, alias, target, architecture):
             try:
                 image_row = await ImageRow.resolve(session, [
                     ImageRef(target, architecture, ['*']),
-                ])
+                ], strict=True)
                 await ImageAliasRow.create(session, alias, image_row)
             except UnknownImageReference:
                 log.exception('Image not found.')

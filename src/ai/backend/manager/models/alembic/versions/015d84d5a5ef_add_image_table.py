@@ -41,7 +41,8 @@ def upgrade():
 
     op.create_table(
         'image_aliases', metadata,
-        sa.Column('alias', sa.CHAR(128), primary_key=True),
+        IDColumn('id'),
+        sa.Column('alias', sa.String, unique=True),
         ForeignKeyIDColumn('image', 'images.id', nullable=False),
     )
 

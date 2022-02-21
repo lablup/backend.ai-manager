@@ -96,7 +96,11 @@ class ExtendedAsyncSAEngine(SAEngine):
     @actxmgr
     async def begin_session(self) -> AsyncIterator[SASession]:
         async with self.begin() as conn:
-            yield SASession(bind=conn)
+            session = SASession(bind=conn)
+            try:
+                yield session
+            finally:
+                await session.commit()
 
     @actxmgr
     async def begin_readonly_session(self, deferrable: bool = False) -> AsyncIterator[SASession]:
