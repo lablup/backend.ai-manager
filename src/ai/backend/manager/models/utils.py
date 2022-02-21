@@ -24,6 +24,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import (
     AsyncConnection as SAConnection,
     AsyncEngine as SAEngine,
+    AsyncSession as SASession,
 )
 from tenacity import (
     AsyncRetrying,
@@ -91,6 +92,16 @@ class ExtendedAsyncSAEngine(SAEngine):
                     yield conn_with_exec_opts
                 finally:
                     self._readonly_txn_count -= 1
+
+    @actxmgr
+    async def begin_session(self) -> AsyncIterator[SASession]:
+        async with self.begin() as conn:
+            yield SASession(bind=conn)
+
+    @actxmgr
+    async def begin_readonly_session(self, deferrable: bool = False) -> AsyncIterator[SASession]:
+        async with self.begin_readonly(deferrable=deferrable) as conn:
+            yield SASession(bind=conn)
 
     @actxmgr
     async def advisory_lock(self, lock_id: AdvisoryLock) -> AsyncIterator[None]:
