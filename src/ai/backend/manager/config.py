@@ -683,7 +683,7 @@ class SharedConfig(AbstractConfig):
                 scanner_cls = get_container_registry(registry_info)
                 scanner = scanner_cls(
                     self.etcd, registry_name, registry_info,
-                    strict_architecture=strict_architecture
+                    strict_architecture=strict_architecture,
                 )
                 tg.create_task(scanner.rescan_single_registry(reporter))
         # TODO: delete images removed from registry?
