@@ -4,16 +4,13 @@ import asyncio
 import contextlib
 import json
 import logging
-from pprint import pprint
 from typing import AsyncIterator, TYPE_CHECKING
 import sys
 
 import click
-from tabulate import tabulate
 
 from ai.backend.common.cli import EnumChoice, MinMaxRange
 from ai.backend.common.config import redis_config_iv
-from ai.backend.common.docker import ImageRef
 from ai.backend.common.etcd import (
     AsyncEtcd, ConfigScopes,
     quote as etcd_quote,
@@ -21,6 +18,15 @@ from ai.backend.common.etcd import (
 )
 from ai.backend.common.logging import BraceStyleAdapter
 
+from .image_impl import (
+    alias as alias_impl,
+    dealias as dealias_impl,
+    forget_image as forget_image_impl,
+    inspect_image as inspect_image_impl,
+    list_images as list_images_impl,
+    rescan_images as rescan_images_impl,
+    set_image_resource_limit as set_image_resource_limit_impl,
+)
 from ..config import SharedConfig
 
 if TYPE_CHECKING:
@@ -199,133 +205,87 @@ def delete(cli_ctx: CLIContext, key, prefix, scope) -> None:
 @click.option('-i', '--installed', is_flag=True,
               help='Show only the installed images.')
 @click.pass_obj
-def list_images(cli_ctx: CLIContext, short, installed) -> None:
+def list_images(cli_ctx, short, installed) -> None:
     '''List all configured images.'''
-    async def _impl():
-        async with config_ctx(cli_ctx) as shared_config:
-            displayed_items = []
-            try:
-                items = await shared_config.list_images()
-                # NOTE: installed/installed_agents fields are no longer provided in CLI,
-                #       until we finish the epic refactoring of image metadata db.
-                for item in items:
-                    if installed and not item['installed']:
-                        continue
-                    if short:
-                        img = ImageRef(f"{item['name']}:{item['tag']}",
-                                       item['registry'])
-                        displayed_items.append((img.canonical, item['digest']))
-                    else:
-                        pprint(item)
-                if short:
-                    print(tabulate(displayed_items, tablefmt='plain'))
-            except Exception:
-                log.exception('An error occurred.')
     with cli_ctx.logger:
-        asyncio.run(_impl())
+        asyncio.run(list_images_impl(cli_ctx, short, installed))
 
 
 @cli.command()
-@click.argument('reference')
+@click.argument('canonical_or_alias')
+@click.argument('architecture')
 @click.pass_obj
-def inspect_image(cli_ctx: CLIContext, reference) -> None:
+def inspect_image(cli_ctx, canonical_or_alias, architecture) -> None:
     '''Show the details of the given image or alias.'''
-    async def _impl():
-        async with config_ctx(cli_ctx) as shared_config:
-            try:
-                item = await shared_config.inspect_image(reference)
-                pprint(item)
-            except Exception:
-                log.exception('An error occurred.')
     with cli_ctx.logger:
-        asyncio.run(_impl())
+        asyncio.run(inspect_image_impl(cli_ctx, canonical_or_alias, architecture))
 
 
 @cli.command()
-@click.argument('reference')
+@click.argument('canonical_or_alias')
+@click.argument('architecture')
 @click.pass_obj
-def forget_image(cli_ctx: CLIContext, reference) -> None:
-    '''
-    Forget (delete) a specific image.
-    NOTE: aliases to the given reference are NOT deleted.
-    '''
-    async def _impl():
-        async with config_ctx(cli_ctx) as shared_config:
-            try:
-                await shared_config.forget_image(reference)
-                log.info('Done.')
-            except Exception:
-                log.exception('An error occurred.')
+def forget_image(cli_ctx, canonical_or_alias, architecture) -> None:
+    '''Forget (delete) a specific image.'''
     with cli_ctx.logger:
-        asyncio.run(_impl())
+        asyncio.run(forget_image_impl(cli_ctx, canonical_or_alias, architecture))
 
 
 @cli.command()
-@click.argument('reference')
+@click.argument('canonical_or_alias')
 @click.argument('slot_type')
 @click.argument('range_value', type=MinMaxRange)
+@click.argument('architecture')
 @click.pass_obj
-def set_image_resource_limit(cli_ctx: CLIContext, reference, slot_type, range_value) -> None:
+def set_image_resource_limit(
+    cli_ctx,
+    canonical_or_alias,
+    slot_type,
+    range_value,
+    architecture,
+) -> None:
     '''Set the MIN:MAX values of a SLOT_TYPE limit for the given image REFERENCE.'''
-    async def _impl():
-        async with config_ctx(cli_ctx) as shared_config:
-            try:
-                await shared_config.set_image_resource_limit(
-                    reference, slot_type, range_value)
-            except Exception:
-                log.exception('An error occurred.')
     with cli_ctx.logger:
-        asyncio.run(_impl())
+        asyncio.run(set_image_resource_limit_impl(
+            cli_ctx,
+            canonical_or_alias,
+            slot_type,
+            range_value,
+            architecture,
+        ))
 
 
 @cli.command()
 @click.argument('registry')
 @click.pass_obj
-def rescan_images(cli_ctx: CLIContext, registry) -> None:
+def rescan_images(cli_ctx, registry) -> None:
     '''
     Update the kernel image metadata from all configured docker registries.
 
     Pass the name (usually hostname or "lablup") of the Docker registry configured as REGISTRY.
     '''
-    async def _impl():
-        async with config_ctx(cli_ctx) as shared_config:
-            try:
-                await shared_config.rescan_images(registry)
-            except Exception:
-                log.exception('An error occurred.')
     with cli_ctx.logger:
-        asyncio.run(_impl())
+        asyncio.run(rescan_images_impl(cli_ctx, registry))
 
 
 @cli.command()
 @click.argument('alias')
 @click.argument('target')
+@click.argument('architecture')
 @click.pass_obj
-def alias(cli_ctx: CLIContext, alias, target) -> None:
+def alias(cli_ctx, alias, target, architecture) -> None:
     '''Add an image alias from the given alias to the target image reference.'''
-    async def _impl():
-        async with config_ctx(cli_ctx) as shared_config:
-            try:
-                await shared_config.alias(alias, target)
-            except Exception:
-                log.exception('An error occurred.')
     with cli_ctx.logger:
-        asyncio.run(_impl())
+        asyncio.run(alias_impl(cli_ctx, alias, target, architecture))
 
 
 @cli.command()
 @click.argument('alias')
 @click.pass_obj
-def dealias(cli_ctx: CLIContext, alias) -> None:
+def dealias(cli_ctx, alias) -> None:
     '''Remove an alias.'''
-    async def _impl():
-        async with config_ctx(cli_ctx) as shared_config:
-            try:
-                await shared_config.dealias(alias)
-            except Exception:
-                log.exception('An error occurred.')
     with cli_ctx.logger:
-        asyncio.run(_impl())
+        asyncio.run(dealias_impl(cli_ctx, alias))
 
 
 @cli.command()
