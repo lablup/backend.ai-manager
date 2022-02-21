@@ -270,7 +270,7 @@ class BaseContainerRegistry(metaclass=ABCMeta):
                 update_key = ImageRef(
                     f'{self.registry_name}/{image}:{tag}',
                     [self.registry_name],
-                    architecture
+                    architecture,
                 )
                 updates = {
                     'config_digest': config_digest,
