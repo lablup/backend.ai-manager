@@ -62,6 +62,7 @@ log = BraceStyleAdapter(logging.getLogger(__name__))
 __all__ = (
     'rescan_images',
     'update_aliases_from_file',
+    'ImageAliasRow',
     'ImageRow',
     'Image',
     'PreloadImage',
@@ -132,13 +133,14 @@ async def rescan_images(
     # TODO: delete images removed from registry?
 
 
-async def update_aliases_from_file(session: AsyncSession, file: Path) -> None:
+async def update_aliases_from_file(session: AsyncSession, file: Path) -> List[ImageAliasRow]:
     log.info('Updating image aliases from "{0}"', file)
+    ret: List[ImageAliasRow] = []
     try:
         data = yaml.safe_load(open(file, 'r', encoding='utf-8'))
     except IOError:
         log.error('Cannot open "{0}".', file)
-        return
+        return []
     for item in data['aliases']:
         alias = item[0]
         target = item[1]
@@ -159,10 +161,12 @@ async def update_aliases_from_file(session: AsyncSession, file: Path) -> None:
             )
             # let user call session.begin()
             session.add(image_alias)
+            ret.append(image_alias)
             print(f'{alias} -> {image_row.image_ref}')
         except UnknownImageReference:
             print(f'{alias} -> target image not found')
     log.info('Done.')
+    return ret
 
 
 class ImageRow(Base):

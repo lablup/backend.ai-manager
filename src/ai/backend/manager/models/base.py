@@ -242,7 +242,10 @@ class GUID(TypeDecorator, Generic[UUID_SubType]):
             return value
         else:
             cls = type(self)
-            return cast(UUID_SubType, cls.uuid_subtype_func(uuid.UUID(value)))
+            if isinstance(value, bytes):
+                return cast(UUID_SubType, cls.uuid_subtype_func(uuid.UUID(bytes=value)))
+            else:
+                return cast(UUID_SubType, cls.uuid_subtype_func(uuid.UUID(value)))
 
 
 class SessionIDColumnType(GUID[SessionId]):
