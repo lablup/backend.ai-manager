@@ -402,7 +402,7 @@ class ImageRow(Base):
             'supported_accelerators': accels,
         }
 
-    async def inspect(self, conn: AsyncConnection) -> Mapping[str, Any]:
+    async def inspect(self) -> Mapping[str, Any]:
         parsed_image_info = self._parse_row()
         parsed_image_info['reverse_aliases'] = [x.alias for x in self.aliases]
         return parsed_image_info

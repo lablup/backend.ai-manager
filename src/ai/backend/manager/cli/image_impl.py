@@ -73,7 +73,7 @@ async def inspect_image(cli_ctx, canonical_or_alias, architecture):
                     ImageRef(canonical_or_alias, architecture, ['*']),
                     canonical_or_alias,
                 ], strict=True)
-                pprint(await image_row.inspect(session))
+                pprint(await image_row.inspect())
             except UnknownImageReference:
                 log.exception('Image not found.')
             except Exception:
