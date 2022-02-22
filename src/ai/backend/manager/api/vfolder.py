@@ -1747,7 +1747,6 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
 
         # TODO: accept quota as input parameter and pass as argument options
         try:
-            print("folder id in bgtask:", folder_id)
             async with root_ctx.storage_manager.request(
                 source_folder_host, 'POST', 'folder/clone',
                 json={
@@ -1801,7 +1800,6 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
         if 'user' not in allowed_vfolder_types:
             raise InvalidAPIParameters('user vfolder cannot be created in this host')
 
-        print("folder id in db:", folder_id)
         user_uuid = str(user_uuid)
         group_uuid = None
         ownership_type = 'user'
