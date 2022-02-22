@@ -1465,16 +1465,6 @@ async def report_stats(root_ctx: RootContext, interval: float) -> None:
         """
 
 
-async def stats_report_timer(root_ctx: RootContext):
-    try:
-        aiotools.create_timer(
-            functools.partial(report_stats, root_ctx), 1.0,
-        )
-    except Exception:
-        await root_ctx.error_monitor.capture_exception()
-        log.exception('stats_report_timer: unexpected error')
-
-
 @server_status_required(ALL_ALLOWED)
 @auth_required
 @check_api_params(
@@ -2114,7 +2104,9 @@ async def init(app: web.Application) -> None:
     # Scan ALIVE agents
     app_ctx.agent_lost_checker = aiotools.create_timer(
         functools.partial(check_agent_lost, root_ctx), 1.0)
-    app_ctx.stats_task = asyncio.create_task(stats_report_timer(root_ctx))
+    app_ctx.stats_task = aiotools.create_timer(
+        functools.partial(report_stats, root_ctx), 1.0,
+    )
 
 
 async def shutdown(app: web.Application) -> None:
