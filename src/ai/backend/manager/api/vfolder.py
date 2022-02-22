@@ -396,6 +396,32 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
     user_role = request['user']['role']
     user_uuid = request['user']['uuid']
 
+    def make_entries(result, user_uuid) -> List[Mapping[str, Any]]:
+        entries = []
+        for row in result:
+            is_owner = True if row.vfolders_user == user_uuid else False
+            entries.append({
+                'name': row.vfolders_name,
+                'id': row.vfolders_id,
+                'host': row.vfolders_host,
+                'usage_mode': row.vfolders_usage_mode,
+                'created_at': row.vfolders_created_at,
+                'is_owner': is_owner,
+                'permission': row.vfolders_permission,
+                'user': str(row.vfolders_user) if row.vfolders_user else None,
+                'group': str(row.vfolders_group) if row.vfolders_group else None,
+                'creator': row.vfolders_creator,
+                'user_email': row.users_email,
+                'group_name': row.groups_name,
+                'ownership_type': row.vfolders_ownership_type,
+                'type': row.vfolders_ownership_type,  # legacy
+                'unmanaged_path': row.vfolders_unmanaged_path,
+                'cloneable': row.vfolders_cloneable if row.vfolders_cloneable else False,
+                'max_files': row.vfolders_max_files,
+                'max_size': row.vfolders_max_size,
+            })
+        return entries
+
     log.info('VFOLDER.LIST (ak:{})', access_key)
     entries: List[Mapping[str, Any]] | Sequence[Mapping[str, Any]]
     async with root_ctx.db.begin() as conn:
@@ -409,29 +435,7 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
                 .select_from(j)
             )
             result = await conn.execute(query)
-            entries = []
-            for row in result:
-                is_owner = True if row.vfolders_user == user_uuid else False
-                entries.append({
-                    'name': row.vfolders_name,
-                    'id': row.vfolders_id,
-                    'host': row.vfolders_host,
-                    'usage_mode': row.vfolders_usage_mode,
-                    'created_at': row.vfolders_created_at,
-                    'is_owner': is_owner,
-                    'permission': row.vfolders_permission,
-                    'user': str(row.vfolders_user) if row.vfolders_user else None,
-                    'group': str(row.vfolders_group) if row.vfolders_group else None,
-                    'creator': row.vfolders_creator,
-                    'user_email': row.users_email,
-                    'group_name': row.groups_name,
-                    'ownership_type': row.vfolders_ownership_type,
-                    'type': row.vfolders_ownership_type,  # legacy
-                    'unmanaged_path': row.vfolders_unmanaged_path,
-                    'cloneable': row.vfolders_cloneable if row.vfolders_cloneable else False,
-                    'max_files': row.vfolders_max_files,
-                    'max_size': row.vfolders_max_size,
-                })
+            entries = make_entries(result, user_uuid)
         elif request['is_superadmin'] and params['email']:
             j = (vfolders.join(users, isouter=True))
             query = (
@@ -440,29 +444,32 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
                 .where(users.c.email == params['email'])
             )
             result = await conn.execute(query)
-            entries = []
+            entries = make_entries(result, user_uuid)
+            query = (
+                sa.select([users.c.uuid], use_labels=True)
+                .select_from(users)
+                .where(users.c.email == params['email'])
+            )
+            result = await conn.execute(query)
             for row in result:
-                is_owner = True if row.vfolders_user == user_uuid else False
-                entries.append({
-                    'name': row.vfolders_name,
-                    'id': row.vfolders_id,
-                    'host': row.vfolders_host,
-                    'usage_mode': row.vfolders_usage_mode,
-                    'created_at': row.vfolders_created_at,
-                    'is_owner': is_owner,
-                    'permission': row.vfolders_permission,
-                    'user': str(row.vfolders_user) if row.vfolders_user else None,
-                    'group': str(row.vfolders_group) if row.vfolders_group else None,
-                    'creator': row.vfolders_creator,
-                    'user_email': row.users_email,
-                    'group_name': row.groups_name,
-                    'ownership_type': row.vfolders_ownership_type,
-                    'type': row.vfolders_ownership_type,  # legacy
-                    'unmanaged_path': row.vfolders_unmanaged_path,
-                    'cloneable': row.vfolders_cloneable if row.vfolders_cloneable else False,
-                    'max_files': row.vfolders_max_files,
-                    'max_size': row.vfolders_max_size,
-                })
+                delegated_uuid = row[0]
+            j = (
+                vfolders.join(
+                    vfolder_permissions,
+                    vfolders.c.id == vfolder_permissions.c.vfolder,
+                    isouter=True,
+                ).join(users, users.c.email == params['email'], isouter=True)
+            )
+            query = (
+                sa.select([vfolders], use_labels=True)
+                .select_from(j)
+                .where(
+                    (vfolder_permissions.c.user == delegated_uuid) &
+                    (vfolders.c.ownership_type == VFolderOwnershipType.USER)
+                )
+            )
+            result = await conn.execute(query)
+            entries.extend(make_entries(result, user_uuid))
         else:
             extra_vf_conds = None
             if params['group_id'] is not None:
