@@ -421,7 +421,6 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
                 'max_size': row.vfolders_max_size,
             })
         return entries
-
     log.info('VFOLDER.LIST (ak:{})', access_key)
     entries: List[Mapping[str, Any]] | Sequence[Mapping[str, Any]]
     async with root_ctx.db.begin() as conn:
@@ -437,7 +436,8 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
             result = await conn.execute(query)
             entries = make_entries(result, user_uuid)
         elif request['is_superadmin'] and params['email']:
-            j = (vfolders.join(users, isouter=True))
+            j = (vfolders.join(users, vfolders.c.user == users.c.uuid, isouter=True)
+                         .join(groups, vfolders.c.group == groups.c.id, isouter=True))
             query = (
                 sa.select([vfolders, users.c.email, groups.c.name], use_labels=True)
                 .select_from(j)
@@ -445,28 +445,13 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
             )
             result = await conn.execute(query)
             entries = make_entries(result, user_uuid)
+            j = (vfolders.join(vfolder_invitations, isouter=True)
+                         .join(users, isouter=True)
+                         .join(groups, isouter=True))
             query = (
-                sa.select([users.c.uuid], use_labels=True)
-                .select_from(users)
-                .where(users.c.email == params['email'])
-            )
-            result = await conn.execute(query)
-            for row in result:
-                delegated_uuid = row[0]
-            j = (
-                vfolders.join(
-                    vfolder_permissions,
-                    vfolders.c.id == vfolder_permissions.c.vfolder,
-                    isouter=True,
-                ).join(users, users.c.email == params['email'], isouter=True)
-            )
-            query = (
-                sa.select([vfolders], use_labels=True)
+                sa.select([vfolders, users.c.email, groups.c.name], use_labels=True)
                 .select_from(j)
-                .where(
-                    (vfolder_permissions.c.user == delegated_uuid) &
-                    (vfolders.c.ownership_type == VFolderOwnershipType.USER)
-                )
+                .where(vfolder_invitations.c.invitee == params['email'])
             )
             result = await conn.execute(query)
             entries.extend(make_entries(result, user_uuid))
