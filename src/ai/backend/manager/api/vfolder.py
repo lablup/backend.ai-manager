@@ -396,7 +396,7 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
     user_role = request['user']['role']
     user_uuid = request['user']['uuid']
 
-    def make_entries(result, user_uuid) -> List[Mapping[str, Any]]:
+    def make_entries(result, user_uuid) -> List[Dict[str, Any]]:
         entries = []
         for row in result:
             is_owner = True if row.vfolders_user == user_uuid else False
