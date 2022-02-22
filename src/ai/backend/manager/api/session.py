@@ -1466,20 +1466,14 @@ async def report_stats(root_ctx: RootContext, interval: float) -> None:
 
 
 async def stats_report_timer(root_ctx: RootContext):
-    while True:
-        try:
-            aiotools.create_timer(
-                functools.partial(report_stats, root_ctx), 1.0,
-            )
-        except asyncio.CancelledError:
-            break
-        except Exception:
-            await root_ctx.error_monitor.capture_exception()
-            log.exception('stats_report_timer: unexpected error')
-        try:
-            await asyncio.sleep(5)
-        except asyncio.CancelledError:
-            break
+    try:
+        aiotools.create_timer(
+            functools.partial(report_stats, root_ctx), 1.0,
+        )
+    except Exception:
+        await root_ctx.error_monitor.capture_exception()
+        log.exception('stats_report_timer: unexpected error')
+
 
 
 @server_status_required(ALL_ALLOWED)
