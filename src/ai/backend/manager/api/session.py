@@ -1101,7 +1101,7 @@ async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.
     session_name: str = request.match_info['session_name']
     app_ctx: PrivateContext = request.app['session.context']
     database_ptask_group: aiotools.PersistentTaskGroup = app_ctx.database_ptask_group
-    rpc_ptask_group: aiotools.PersistentTaskGroup =app_ctx.rpc_ptask_group
+    rpc_ptask_group: aiotools.PersistentTaskGroup = app_ctx.rpc_ptask_group
     access_key: AccessKey = request['keypair']['access_key']
     service: str = params['app']
     myself = asyncio.current_task()
@@ -1473,7 +1473,6 @@ async def stats_report_timer(root_ctx: RootContext):
     except Exception:
         await root_ctx.error_monitor.capture_exception()
         log.exception('stats_report_timer: unexpected error')
-
 
 
 @server_status_required(ALL_ALLOWED)
