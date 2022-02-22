@@ -25,12 +25,12 @@ import aiohttp
 from aiohttp import web
 import aiohttp_cors
 import sqlalchemy as sa
-from ..background import ProgressReporter
 import trafaret as t
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
 
+from ..background import ProgressReporter
 from ..models import (
     agents,
     kernels,
@@ -1715,6 +1715,7 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
              params['usage_mode'].value, params['permission'].value)
     source_folder_host = row['host']
     target_folder_host = params['folder_host']
+    folder_id = uuid.uuid4()
 
     # check if the source vfolder is allowed to be cloned
     if not row['cloneable']:
@@ -1746,7 +1747,7 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
 
         # TODO: accept quota as input parameter and pass as argument options
         try:
-            folder_id = uuid.uuid4()
+            print("folder id in bgtask:", folder_id)
             async with root_ctx.storage_manager.request(
                 source_folder_host, 'POST', 'folder/clone',
                 json={
@@ -1800,11 +1801,12 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
         if 'user' not in allowed_vfolder_types:
             raise InvalidAPIParameters('user vfolder cannot be created in this host')
 
+        print("folder id in db:", folder_id)
         user_uuid = str(user_uuid)
         group_uuid = None
         ownership_type = 'user'
         insert_values = {
-            'id': uuid.uuid4().hex,
+            'id': folder_id.hex,
             'name': params['target_name'],
             'usage_mode': params['usage_mode'],
             'permission': params['permission'],
@@ -1818,7 +1820,7 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
             'cloneable': params['cloneable'],
         }
         resp = {
-            'id': uuid.uuid4().hex,
+            'id': folder_id.hex,
             'name': params['target_name'],
             'host': target_folder_host,
             'usage_mode': params['usage_mode'].value,
