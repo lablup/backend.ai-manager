@@ -22,7 +22,7 @@ VFolderRow = Mapping[str, Any]
 
 
 async def get_vfid(root_ctx: RootContext, name: str) -> str:
-    async with root_ctx.db.begin() as conn:
+    async with root_ctx.db.begin_readonly() as conn:
         query = (
             sa.select([vfolders.c.id])
             .select_from(vfolders)
@@ -30,13 +30,11 @@ async def get_vfid(root_ctx: RootContext, name: str) -> str:
         )
         folder_id = await conn.scalar(query)
 
-        query = sa.delete(vfolders).where(vfolders.c.id == folder_id)
-
         return folder_id.hex
 
 
 async def get_volume(root_ctx: RootContext, vfid: str) -> str:
-    async with root_ctx.db.begin() as conn:
+    async with root_ctx.db.begin_readonly() as conn:
         query = (
             sa.select([vfolders.c.host])
             .select_from(vfolders)
@@ -84,7 +82,7 @@ async def create_or_update_filebrowser(
     try:
         async with proxy_info.session.request(
             "POST",
-            proxy_info.manager_api_url / "browser/create",
+            proxy_info.manager_api_url / "storage/filebrowser/create",
             headers=headers,
             json={"vfolders": vfolders},
         ) as client_resp:
@@ -125,7 +123,7 @@ async def destroy_filebrowser(
         try:
             async with proxy_info.session.request(
                 "DELETE",
-                proxy_info.manager_api_url / "browser/destroy",
+                proxy_info.manager_api_url / "storage/filebrowser/destroy",
                 headers=headers,
                 json={"container_id": container_id, "auth_token": auth_token},
             ) as client_resp:
@@ -147,7 +145,7 @@ def create_app(
     default_cors_options: CORSOptions,
 ) -> Tuple[web.Application, Iterable[WebMiddleware]]:
     app = web.Application()
-    app["prefix"] = "browser"
+    app["prefix"] = "storage/filebrowser"
     app["api_versions"] = (
         2,
         3,
