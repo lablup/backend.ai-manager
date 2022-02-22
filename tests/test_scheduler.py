@@ -11,8 +11,6 @@ from unittest import mock
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4, UUID
 from pprint import pprint
-from datetime import datetime
-from dateutil.tz import tzutc
 
 import attr
 from dateutil.parser import parse as dtparse
@@ -294,7 +292,7 @@ def example_pending_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
-                    created_at='2021-12-28T23:59:59+00:00',
+                    created_at=dtparse('2021-12-28T23:59:59+00:00'),
                 ),
             ],
             access_key=AccessKey('user01'),
@@ -316,7 +314,7 @@ def example_pending_sessions():
             }),
             target_sgroup_names=[],
             **_common_dummy_for_pending_session,
-            created_at='2022-01-24T00:00:59+00:00',
+            created_at=dtparse('2022-01-24T00:00:59+00:00'),
         ),
         PendingSession(  # cuda
             kernels=[
@@ -339,7 +337,7 @@ def example_pending_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
-                    created_at='2022-02-01T23:59:59+00:00',
+                    created_at=dtparse('2022-02-01T23:59:59+00:00'),
                 ),
             ],
             access_key=AccessKey('user02'),
@@ -361,7 +359,7 @@ def example_pending_sessions():
             }),
             target_sgroup_names=[],
             **_common_dummy_for_pending_session,
-            created_at='2022-01-01T23:59:59+00:00',
+            created_at=dtparse('2022-01-01T23:59:59+00:00'),
         ),
         PendingSession(  # cpu-only
             kernels=[
@@ -384,7 +382,7 @@ def example_pending_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
-                    created_at='2021-12-01T23:59:59+00:00',
+                    created_at=dtparse('2021-12-01T23:59:59+00:00'),
                 ),
                 KernelInfo(
                     kernel_id=pending_session_kernel_ids[2].kernel_ids[1],
@@ -405,7 +403,7 @@ def example_pending_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
-                    created_at='2020-06-29T00:00:00+00:00',
+                    created_at=dtparse('2020-06-29T00:00:00+00:00'),
                 ),
                 KernelInfo(
                     kernel_id=pending_session_kernel_ids[2].kernel_ids[2],
@@ -426,7 +424,7 @@ def example_pending_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
-                    created_at='2022-01-16T00:00:00+00:00',
+                    created_at=dtparse('2022-01-16T00:00:00+00:00'),
                 ),
             ],
             access_key=AccessKey('user03'),
@@ -448,7 +446,7 @@ def example_pending_sessions():
             }),
             target_sgroup_names=[],
             **_common_dummy_for_pending_session,
-            created_at='2021-11-29T00:00:00+00:00',
+            created_at=dtparse('2021-11-29T00:00:00+00:00'),
         ),
     ]
 
@@ -477,7 +475,7 @@ def example_existing_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
-                    created_at='2022-02-05T00:00:00+00:00',
+                    created_at=dtparse('2022-02-05T00:00:00+00:00'),
                 ),
                 KernelInfo(
                     kernel_id=existing_session_kernel_ids[0].kernel_ids[1],
@@ -498,7 +496,7 @@ def example_existing_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
-                    created_at='2021-12-31T00:00:00+00:00',
+                    created_at=dtparse('2021-12-31T00:00:00+00:00'),
                 ),
             ],
             access_key=AccessKey('user01'),
@@ -537,7 +535,7 @@ def example_existing_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
-                    created_at='2021-09-03T00:00:00+00:00',
+                    created_at=dtparse('2021-09-03T00:00:00+00:00'),
                 ),
             ],
             access_key=AccessKey('user02'),
@@ -576,7 +574,7 @@ def example_existing_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
-                    created_at='2022-01-15T00:00:00+00:00',
+                    created_at=dtparse('2022-01-15T00:00:00+00:00'),
                 ),
             ],
             access_key=AccessKey('user03'),
@@ -677,7 +675,7 @@ def gen_pending_for_holb_tests(session_id: str, status_data: Mapping[str, Any]) 
         requested_slots=ResourceSlot({'cpu': Decimal(1), 'mem': Decimal(1024)}),
         target_sgroup_names=[],
         **_common_dummy_for_pending_session,
-        created_at='2020-03-21T00:00:00+00:00',
+        created_at=dtparse('2020-03-21T00:00:00+00:00'),
     )
 
 
