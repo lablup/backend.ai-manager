@@ -1431,9 +1431,9 @@ async def report_stats(root_ctx: RootContext, interval: float) -> None:
     async with root_ctx.db.begin_readonly() as conn:
         async def _sum_kp_conc(r: aioredis.Redis):
             result = 0
-            keys = await r.hkeys('keypair.concurrency')
-            for val in keys:
-                result += int(val)
+            cons = await r.hvals('keypair.concurrency')
+            for con in cons:
+                result += int(con)
             return result
         n = await redis.execute(
             root_ctx.redis_stat,

@@ -70,16 +70,15 @@ async def check_concurrency(
             result = await db_conn.execute(select_query)
             resource_policy = result.first()
 
-            def _pipe_builder(r: aioredis.Redis):
-                pipe = r.pipeline()
+            async def _getset_kpcon(r: aioredis.Redis):
                 key = 'keypair.concurrency'
-                if conc := pipe.hget(key, sess_ctx.access_key):
-                    return conc
-                pipe.hset(key, sess_ctx.access_key, 0)
+                if conc := await r.hget(key, sess_ctx.access_key):
+                    return int(conc)
+                await r.hset(key, sess_ctx.access_key, 0)
                 return 0
             concurrency_used = await redis.execute(
                 sched_ctx.registry.redis_stat,
-                _pipe_builder,
+                _getset_kpcon,
             )
             log.debug(
                 'access_key: {0} ({1} / {2})',
@@ -94,12 +93,14 @@ async def check_concurrency(
                 )
 
             # Increment concurrency usage of keypair.
-            update_query = (
-                sa.update(keypairs)
-                .values(concurrency_used=keypairs.c.concurrency_used + 1)
-                .where(keypairs.c.access_key == sess_ctx.access_key)
+            await redis.execute(
+                sched_ctx.registry.redis_stat,
+                lambda r: r.hincrby(
+                    'keypair.concurrency',
+                    sess_ctx.access_key,
+                    1,
+                ),
             )
-            await db_conn.execute(update_query)
             return PredicateResult(True)
 
     return await execute_with_retry(_check)
