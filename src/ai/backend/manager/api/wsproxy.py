@@ -203,7 +203,7 @@ class WebSocketProxy:
 
     async def downstream(self) -> None:
         try:
-            with aiotools.PersistentTaskGroup() as tg:
+            async with aiotools.PersistentTaskGroup() as tg:
                 self.upstream_buffer_task = tg.create_task(
                     self.consume_upstream_buffer(),
                 )
