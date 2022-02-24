@@ -380,7 +380,6 @@ async def _query_userinfo(
 
 
 async def _create(request: web.Request, params: Any) -> web.Response:
-    database_ptask_group: aiotools.PersistentTaskGroup = request.app['database_ptask_group']
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
     scopes_param = {
@@ -396,6 +395,8 @@ async def _create(request: web.Request, params: Any) -> web.Response:
 
     root_ctx: RootContext = request.app['_root.context']
     app_ctx: PrivateContext = request.app['session.context']
+    database_ptask_group: aiotools.PersistentTaskGroup = app_ctx.database_ptask_group
+
     resp: MutableMapping[str, Any] = {}
     current_task = asyncio.current_task()
     assert current_task is not None
@@ -2117,7 +2118,7 @@ async def shutdown(app: web.Application) -> None:
     await app_ctx.stats_task
 
     database_ptask_group: aiotools.PersistentTaskGroup = app_ctx.database_ptask_group
-    rpc_ptask_group: aiotools.PersistentTaskGroup = app["rpc_ptask_group"]
+    rpc_ptask_group: aiotools.PersistentTaskGroup = app_ctx.rpc_ptask_group
     await database_ptask_group.shutdown()
     await rpc_ptask_group.shutdown()
 
