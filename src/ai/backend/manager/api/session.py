@@ -2105,7 +2105,7 @@ async def init(app: web.Application) -> None:
     app_ctx.agent_lost_checker = aiotools.create_timer(
         functools.partial(check_agent_lost, root_ctx), 1.0)
     app_ctx.stats_task = aiotools.create_timer(
-        functools.partial(report_stats, root_ctx), 1.0,
+        functools.partial(report_stats, root_ctx), 5.0,
     )
 
 
