@@ -395,7 +395,6 @@ async def _create(request: web.Request, params: Any) -> web.Response:
 
     root_ctx: RootContext = request.app['_root.context']
     app_ctx: PrivateContext = request.app['session.context']
-    database_ptask_group: aiotools.PersistentTaskGroup = app_ctx.database_ptask_group
 
     resp: MutableMapping[str, Any] = {}
     current_task = asyncio.current_task()
@@ -496,7 +495,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             params['bootstrap_script'] = script
 
     try:
-        kernel_id = await asyncio.shield(database_ptask_group.create_task(
+        kernel_id = await asyncio.shield(app_ctx.database_ptask_group.create_task(
             root_ctx.registry.enqueue_session(
                 session_creation_id,
                 params['session_name'], owner_access_key,
@@ -849,7 +848,6 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
 async def create_cluster(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     app_ctx: PrivateContext = request.app['session.context']
-    database_ptask_group: aiotools.PersistentTaskGroup = app_ctx.database_ptask_group
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
     scopes_param = {
@@ -999,7 +997,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
         async with root_ctx.db.begin_readonly() as conn:
             owner_uuid, group_id, resource_policy = await _query_userinfo(request, params, conn)
 
-        session_id = await asyncio.shield(database_ptask_group.create_task(
+        session_id = await asyncio.shield(app_ctx.database_ptask_group.create_task(
             root_ctx.registry.enqueue_session(
                 session_creation_id,
                 params['session_name'],
@@ -1101,14 +1099,12 @@ async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.
     root_ctx: RootContext = request.app['_root.context']
     session_name: str = request.match_info['session_name']
     app_ctx: PrivateContext = request.app['session.context']
-    database_ptask_group: aiotools.PersistentTaskGroup = app_ctx.database_ptask_group
-    rpc_ptask_group: aiotools.PersistentTaskGroup = app_ctx.rpc_ptask_group
     access_key: AccessKey = request['keypair']['access_key']
     service: str = params['app']
     myself = asyncio.current_task()
     assert myself is not None
     try:
-        kernel = await asyncio.shield(database_ptask_group.create_task(
+        kernel = await asyncio.shield(app_ctx.database_ptask_group.create_task(
             root_ctx.registry.get_session(session_name, access_key),
         ))
     except (SessionNotFound, TooManySessionsMatched):
@@ -1149,7 +1145,7 @@ async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.
     else:
         raise AppNotFound(f'{session_name}:{service}')
 
-    await asyncio.shield(database_ptask_group.create_task(
+    await asyncio.shield(app_ctx.database_ptask_group.create_task(
         root_ctx.registry.increment_session_usage(session_name, access_key),
     ))
 
@@ -1160,7 +1156,7 @@ async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.
         opts['envs'] = json.loads(params['envs'])
 
     result = await asyncio.shield(
-        rpc_ptask_group.create_task(
+        app_ctx.rpc_ptask_group.create_task(
             root_ctx.registry.start_service(session_name, access_key, service, opts),
         ),
     )
@@ -2117,10 +2113,8 @@ async def shutdown(app: web.Application) -> None:
     app_ctx.stats_task.cancel()
     await app_ctx.stats_task
 
-    database_ptask_group: aiotools.PersistentTaskGroup = app_ctx.database_ptask_group
-    rpc_ptask_group: aiotools.PersistentTaskGroup = app_ctx.rpc_ptask_group
-    await database_ptask_group.shutdown()
-    await rpc_ptask_group.shutdown()
+    await app_ctx.database_ptask_group.shutdown()
+    await app_ctx.rpc_ptask_group.shutdown()
 
     await cancel_tasks(app_ctx.pending_waits)
 
