@@ -235,5 +235,12 @@ async def check_scaling_group(
             False,
             "No available resource in scaling groups.",
         )
+    for sgroup in sgroups:
+        allowed_session_types = sgroup['scheduler_opts']['allowed_session_types']
+        if sess_ctx.session_type.value.lower() not in allowed_session_types:
+            return PredicateResult(
+                False,
+                "Not allowed session type in scaling groups.",
+            )
     sess_ctx.target_sgroup_names.extend(target_sgroup_names)
     return PredicateResult(True)

@@ -395,6 +395,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
 
     root_ctx: RootContext = request.app['_root.context']
     app_ctx: PrivateContext = request.app['session.context']
+
     resp: MutableMapping[str, Any] = {}
     current_task = asyncio.current_task()
     assert current_task is not None
@@ -407,18 +408,16 @@ async def _create(request: web.Request, params: Any) -> web.Response:
         if len(alias_folders) != len(set(alias_folders)):
             raise InvalidAPIParameters('Duplicate alias folder name exists.')
 
-        p: str
-        for p in alias_folders:
-            if p is None:
+        alias_name: str
+        for alias_name in alias_folders:
+            if alias_name is None:
                 continue
-            if not p.startswith('/home/work/'):
-                raise InvalidAPIParameters(f'Path {p} should start with /home/work/')
-
-            alias_name = p.replace('/home/work/', '')
+            if alias_name.startswith("/home/work/"):
+                alias_name = alias_name.replace('/home/work/', '')
             if alias_name == '':
                 raise InvalidAPIParameters('Alias name cannot be empty.')
             if not verify_vfolder_name(alias_name):
-                raise InvalidAPIParameters(f'Path {str(p)} is reserved for internal operations.')
+                raise InvalidAPIParameters(str(alias_name) + ' is reserved for internal path.')
             if alias_name in original_folders:
                 raise InvalidAPIParameters('Alias name cannot be set to an existing folder name: '
                                             + str(alias_name))
@@ -427,10 +426,12 @@ async def _create(request: web.Request, params: Any) -> web.Response:
     try:
         requested_image_ref = \
             await ImageRef.resolve_alias(params['image'], root_ctx.shared_config.etcd)
-        async with root_ctx.db.begin() as conn:
-            query = (sa.select([domains.c.allowed_docker_registries])
-                       .select_from(domains)
-                       .where(domains.c.name == params['domain']))
+        async with root_ctx.db.begin_readonly() as conn:
+            query = (
+                sa.select([domains.c.allowed_docker_registries])
+                .select_from(domains)
+                .where(domains.c.name == params['domain'])
+            )
             allowed_registries = await conn.scalar(query)
             if requested_image_ref.registry not in allowed_registries:
                 raise AliasResolutionFailed
@@ -494,32 +495,34 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             params['bootstrap_script'] = script
 
     try:
-        kernel_id = await asyncio.shield(root_ctx.registry.enqueue_session(
-            session_creation_id,
-            params['session_name'], owner_access_key,
-            [{
-                'image_ref': requested_image_ref,
-                'cluster_role': DEFAULT_ROLE,
-                'cluster_idx': 1,
-                'cluster_hostname': f"{DEFAULT_ROLE}1",
-                'creation_config': params['config'],
-                'bootstrap_script': params['bootstrap_script'],
-                'startup_command': params['startup_command'],
-            }],
-            params['config']['scaling_group'],
-            params['session_type'],
-            resource_policy,
-            domain_name=params['domain'],  # type: ignore  # params always have it
-            group_id=group_id,
-            user_uuid=owner_uuid,
-            user_role=request['user']['role'],
-            cluster_mode=params['cluster_mode'],
-            cluster_size=params['cluster_size'],
-            startup_command=params['startup_command'],
-            session_tag=params['tag'],
-            starts_at=starts_at,
-            agent_list=params['config']['agent_list'],
-        ))
+        kernel_id = await asyncio.shield(app_ctx.database_ptask_group.create_task(
+            root_ctx.registry.enqueue_session(
+                session_creation_id,
+                params['session_name'], owner_access_key,
+                [{
+                    'image_ref': requested_image_ref,
+                    'cluster_role': DEFAULT_ROLE,
+                    'cluster_idx': 1,
+                    'cluster_hostname': f"{DEFAULT_ROLE}1",
+                    'creation_config': params['config'],
+                    'bootstrap_script': params['bootstrap_script'],
+                    'startup_command': params['startup_command'],
+                }],
+                params['config']['scaling_group'],
+                params['session_type'],
+                resource_policy,
+                domain_name=params['domain'],  # type: ignore  # params always have it
+                group_id=group_id,
+                user_uuid=owner_uuid,
+                user_role=request['user']['role'],
+                cluster_mode=params['cluster_mode'],
+                cluster_size=params['cluster_size'],
+                startup_command=params['startup_command'],
+                session_tag=params['tag'],
+                starts_at=starts_at,
+                agent_list=params['config']['agent_list'],
+            )),
+        )
         resp['sessionId'] = str(kernel_id)  # changed since API v5
         resp['sessionName'] = str(params['session_name'])
         resp['status'] = 'PENDING'
@@ -635,26 +638,29 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
         log.debug('Validation error: {0}', e.as_dict())
         raise InvalidAPIParameters('Input validation error',
                                    extra_data=e.as_dict())
-    async with root_ctx.db.begin() as conn:
+    async with root_ctx.db.begin_readonly() as conn:
         query = (
             sa.select([session_templates])
             .select_from(session_templates)
-            .where((session_templates.c.id == params['template_id']) &
-                   session_templates.c.is_active)
+            .where(
+                (session_templates.c.id == params['template_id']) &
+                session_templates.c.is_active,
+            )
         )
         result = await conn.execute(query)
         template_info = result.fetchone()
         template = template_info['template']
         if not template:
             raise TaskTemplateNotFound
-
         group_name = None
         if template_info['domain_name'] and template_info['group_id']:
             query = (
                 sa.select([groups.c.name])
                 .select_from(groups)
-                .where((groups.c.domain_name == template_info['domain_name']) &
-                       (groups.c.id == template_info['group_id']))
+                .where(
+                    (groups.c.domain_name == template_info['domain_name']) &
+                    (groups.c.id == template_info['group_id']),
+                )
             )
             group_name = await conn.scalar(query)
 
@@ -869,7 +875,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
     else:
         raise SessionAlreadyExists
 
-    async with root_ctx.db.begin() as conn:
+    async with root_ctx.db.begin_readonly() as conn:
         query = (
             sa.select([session_templates.c.template])
             .select_from(session_templates)
@@ -879,117 +885,105 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
             )
         )
         template = await conn.scalar(query)
+        log.debug('task template: {}', template)
         if not template:
             raise TaskTemplateNotFound
-        mounts = []
-        mount_map = {}
-        environ = {}
 
-        if _mounts := template['spec'].get('mounts'):  # noqa
-            mounts = list(_mounts.keys())
-            mount_map = {
-                key: value
-                for (key, value) in _mounts.items()
-                if len(value) > 0
-            }
-        if _environ := template['spec'].get('environ'):  # noqa
-            environ = _environ
+    mounts = []
+    mount_map = {}
+    environ = {}
 
-        log.debug('cluster template: {}', template)
+    if _mounts := template['spec'].get('mounts'):  # noqa
+        mounts = list(_mounts.keys())
+        mount_map = {
+            key: value
+            for (key, value) in _mounts.items()
+            if len(value) > 0
+        }
+    if _environ := template['spec'].get('environ'):  # noqa
+        environ = _environ
 
-        kernel_configs: List[KernelEnqueueingConfig] = []
-        for node in template['spec']['nodes']:
-            # Resolve session template.
-            query = (
-                sa.select([session_templates.c.template])
-                .select_from(session_templates)
-                .where(
-                    (session_templates.c.id == node['session_template']) &
-                    session_templates.c.is_active,
+    log.debug('cluster template: {}', template)
+
+    kernel_configs: List[KernelEnqueueingConfig] = []
+    for node in template['spec']['nodes']:
+        # Resolve session template.
+        kernel_config = {
+            'image_ref': template['spec']['kernel']['image'],
+            'cluster_role': node['cluster_role'],
+            'creation_config': {
+                'mount': mounts,
+                'mount_map': mount_map,
+                'environ': environ,
+            },
+        }
+
+        if template['spec']['sess_type'] == 'interactive':
+            kernel_config['sess_type'] = SessionTypes.INTERACTIVE
+        elif template['spec']['sess_type'] == 'batch':
+            kernel_config['sess_type'] = SessionTypes.BATCH
+
+        if tag := template['metadata'].get('tag', None):
+            kernel_config['tag'] = tag
+        if runtime_opt := template['spec']['kernel']['run']:
+            if bootstrap := runtime_opt['bootstrap']:
+                kernel_config['bootstrap_script'] = bootstrap
+            if startup := runtime_opt['startup_command']:
+                kernel_config['startup_command'] = startup
+
+        if resources := template['spec'].get('resources'):
+            kernel_config['creation_config']['resources'] = resources
+
+        if git := template['spec']['kernel']['git']:
+            if _dest := git.get('dest_dir'):
+                target = _dest
+            else:
+                target = git['repository'].split('/')[-1]
+
+            cmd_builder = 'git clone '
+            if credential := git.get('credential'):
+                proto, url = git['repository'].split('://')
+                cmd_builder += f'{proto}://{credential["username"]}:{credential["password"]}@{url}'
+            else:
+                cmd_builder += git['repository']
+            if branch := git.get('branch'):
+                cmd_builder += f' -b {branch}'
+            cmd_builder += f' {target}\n'
+
+            if commit := git.get('commit'):
+                cmd_builder = 'CWD=$(pwd)\n' + cmd_builder
+                cmd_builder += f'cd {target}\n'
+                cmd_builder += f'git checkout {commit}\n'
+                cmd_builder += 'cd $CWD\n'
+
+            bootstrap = base64.b64decode(kernel_config.get('bootstrap_script') or b'').decode()
+            bootstrap += '\n'
+            bootstrap += cmd_builder
+            kernel_config['bootstrap_script'] = base64.b64encode(bootstrap.encode()).decode()
+
+        # Resolve the image reference.
+        try:
+            requested_image_ref = \
+                await ImageRef.resolve_alias(kernel_config['image_ref'],
+                                                root_ctx.shared_config.etcd)
+            async with root_ctx.db.begin_readonly() as conn:
+                query = (
+                    sa.select([domains.c.allowed_docker_registries])
+                    .select_from(domains)
+                    .where(domains.c.name == params['domain'])
                 )
+                allowed_registries = await conn.scalar(query)
+                if requested_image_ref.registry not in allowed_registries:
+                    raise AliasResolutionFailed
+                kernel_config['image_ref'] = requested_image_ref
+        except AliasResolutionFailed:
+            raise ImageNotFound('unknown alias or disallowed registry')
+
+        for i in range(node['replicas']):
+            kernel_config['cluster_idx'] = i + 1
+            kernel_configs.append(
+                check_typed_dict(kernel_config, KernelEnqueueingConfig),  # type: ignore
             )
-            session_template = await conn.scalar(query)
-            if not template:
-                raise TaskTemplateNotFound
-            log.debug('task template: {}', session_template)
-            kernel_config = {
-                'image_ref': session_template['spec']['kernel']['image'],
-                'cluster_role': node['cluster_role'],
-                'creation_config': {
-                    'mount': mounts,
-                    'mount_map': mount_map,
-                    'environ': environ,
-                },
-            }
-
-            if session_template['spec']['sess_type'] == 'interactive':
-                kernel_config['sess_type'] = SessionTypes.INTERACTIVE
-            elif session_template['spec']['sess_type'] == 'batch':
-                kernel_config['sess_type'] = SessionTypes.BATCH
-
-            # TODO: Remove `type: ignore` when mypy supports type inference for walrus operator
-            # Check https://github.com/python/mypy/issues/7316
-            # TODO: remove `NOQA` when flake8 supports Python 3.8 and walrus operator
-            # Check https://gitlab.com/pycqa/flake8/issues/599
-            if tag := session_template['metadata'].get('tag', None):
-                kernel_config['tag'] = tag
-            if runtime_opt := session_template['spec']['kernel']['run']:
-                if bootstrap := runtime_opt['bootstrap']:
-                    kernel_config['bootstrap_script'] = bootstrap
-                if startup := runtime_opt['startup_command']:
-                    kernel_config['startup_command'] = startup
-
-            if resources := template['spec'].get('resources'):
-                kernel_config['creation_config']['resources'] = resources
-
-            if git := session_template['spec']['kernel']['git']:  # noqa
-                if _dest := git.get('dest_dir'):  # noqa
-                    target = _dest
-                else:
-                    target = git['repository'].split('/')[-1]
-
-                cmd_builder = 'git clone '
-                if credential := git.get('credential'):  # noqa
-                    proto, url = git['repository'].split('://')
-                    cmd_builder += f'{proto}://{credential["username"]}:{credential["password"]}@{url}'
-                else:
-                    cmd_builder += git['repository']
-                if branch := git.get('branch'):  # noqa
-                    cmd_builder += f' -b {branch}'
-                cmd_builder += f' {target}\n'
-
-                if commit := git.get('commit'):  # noqa
-                    cmd_builder = 'CWD=$(pwd)\n' + cmd_builder
-                    cmd_builder += f'cd {target}\n'
-                    cmd_builder += f'git checkout {commit}\n'
-                    cmd_builder += 'cd $CWD\n'
-
-                bootstrap = base64.b64decode(kernel_config.get('bootstrap_script') or b'').decode()
-                bootstrap += '\n'
-                bootstrap += cmd_builder
-                kernel_config['bootstrap_script'] = base64.b64encode(bootstrap.encode()).decode()
-
-            # Resolve the image reference.
-            try:
-                requested_image_ref = \
-                    await ImageRef.resolve_alias(kernel_config['image_ref'],
-                                                 root_ctx.shared_config.etcd)
-                async with root_ctx.db.begin() as conn:
-                    query = (sa.select([domains.c.allowed_docker_registries])
-                             .select_from(domains)
-                             .where(domains.c.name == params['domain']))
-                    allowed_registries = await conn.scalar(query)
-                    if requested_image_ref.registry not in allowed_registries:
-                        raise AliasResolutionFailed
-                    kernel_config['image_ref'] = requested_image_ref
-            except AliasResolutionFailed:
-                raise ImageNotFound('unknown alias or disallowed registry')
-
-            for i in range(node['replicas']):
-                kernel_config['cluster_idx'] = i + 1
-                kernel_configs.append(
-                    check_typed_dict(kernel_config, KernelEnqueueingConfig),  # type: ignore
-                )
 
     session_creation_id = secrets.token_urlsafe(16)
     start_event = asyncio.Event()
@@ -1000,22 +994,24 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
     assert current_task is not None
 
     try:
-        async with root_ctx.db.begin() as conn:
+        async with root_ctx.db.begin_readonly() as conn:
             owner_uuid, group_id, resource_policy = await _query_userinfo(request, params, conn)
 
-        session_id = await asyncio.shield(root_ctx.registry.enqueue_session(
-            session_creation_id,
-            params['session_name'],
-            owner_access_key,
-            kernel_configs,
-            params['scaling_group'],
-            params['sess_type'],
-            resource_policy,
-            domain_name=params['domain'],  # type: ignore
-            group_id=group_id,
-            user_uuid=owner_uuid,
-            user_role=request['user']['role'],
-            session_tag=params['tag'],
+        session_id = await asyncio.shield(app_ctx.database_ptask_group.create_task(
+            root_ctx.registry.enqueue_session(
+                session_creation_id,
+                params['session_name'],
+                owner_access_key,
+                kernel_configs,
+                params['scaling_group'],
+                params['sess_type'],
+                resource_policy,
+                domain_name=params['domain'],  # type: ignore
+                group_id=group_id,
+                user_uuid=owner_uuid,
+                user_role=request['user']['role'],
+                session_tag=params['tag'],
+            ),
         ))
         kernel_id = cast(KernelId, session_id)  # the main kernel's ID is the session ID.
         resp['kernelId'] = str(kernel_id)
@@ -1036,7 +1032,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
                 resp['status'] = 'TIMEOUT'
             else:
                 await asyncio.sleep(0.5)
-                async with root_ctx.db.begin() as conn:
+                async with root_ctx.db.begin_readonly() as conn:
                     query = (
                         sa.select([
                             kernels.c.status,
@@ -1102,12 +1098,15 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
 async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     session_name: str = request.match_info['session_name']
+    app_ctx: PrivateContext = request.app['session.context']
     access_key: AccessKey = request['keypair']['access_key']
     service: str = params['app']
     myself = asyncio.current_task()
     assert myself is not None
     try:
-        kernel = await asyncio.shield(root_ctx.registry.get_session(session_name, access_key))
+        kernel = await asyncio.shield(app_ctx.database_ptask_group.create_task(
+            root_ctx.registry.get_session(session_name, access_key),
+        ))
     except (SessionNotFound, TooManySessionsMatched):
         raise
 
@@ -1146,7 +1145,9 @@ async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.
     else:
         raise AppNotFound(f'{session_name}:{service}')
 
-    await asyncio.shield(root_ctx.registry.increment_session_usage(session_name, access_key))
+    await asyncio.shield(app_ctx.database_ptask_group.create_task(
+        root_ctx.registry.increment_session_usage(session_name, access_key),
+    ))
 
     opts: MutableMapping[str, Union[None, str, List[str]]] = {}
     if params['arguments'] is not None:
@@ -1155,7 +1156,9 @@ async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.
         opts['envs'] = json.loads(params['envs'])
 
     result = await asyncio.shield(
-        root_ctx.registry.start_service(session_name, access_key, service, opts),
+        app_ctx.rpc_ptask_group.create_task(
+            root_ctx.registry.start_service(session_name, access_key, service, opts),
+        ),
     )
     if result['status'] == 'failed':
         raise InternalServerError(
@@ -1395,12 +1398,12 @@ async def handle_kernel_log(
 
             async def _update_log() -> None:
                 async with root_ctx.db.begin() as conn:
-                    query = (
+                    update_query = (
                         sa.update(kernels)
                         .values(container_log=log_data)
                         .where(kernels.c.id == event.kernel_id)
                     )
-                    await conn.execute(query)
+                    await conn.execute(update_query)
 
             await execute_with_retry(_update_log)
         finally:
@@ -1414,7 +1417,7 @@ async def handle_kernel_log(
         await redis_conn.close()
 
 
-async def report_stats(root_ctx: RootContext) -> None:
+async def report_stats(root_ctx: RootContext, interval: float) -> None:
     stats_monitor = root_ctx.stats_monitor
     await stats_monitor.report_metric(
         GAUGE, 'ai.backend.manager.coroutines', len(asyncio.all_tasks()))
@@ -1425,17 +1428,21 @@ async def report_stats(root_ctx: RootContext) -> None:
     await stats_monitor.report_metric(
         GAUGE, 'ai.backend.manager.agent_instances', len(all_inst_ids))
 
-    async with root_ctx.db.begin() as conn:
-        query = (sa.select([sa.func.sum(keypairs.c.concurrency_used)])
-                   .select_from(keypairs))
+    async with root_ctx.db.begin_readonly() as conn:
+        query = (
+            sa.select([sa.func.sum(keypairs.c.concurrency_used)])
+            .select_from(keypairs)
+        )
         n = await conn.scalar(query)
         await stats_monitor.report_metric(
             GAUGE, 'ai.backend.manager.active_kernels', n)
 
-        subquery = (sa.select([sa.func.count()])
-                      .select_from(keypairs)
-                      .where(keypairs.c.is_active == true())
-                      .group_by(keypairs.c.user_id))
+        subquery = (
+            sa.select([sa.func.count()])
+            .select_from(keypairs)
+            .where(keypairs.c.is_active == true())
+            .group_by(keypairs.c.user_id)
+        )
         query = sa.select([sa.func.count()]).select_from(subquery.alias())
         n = await conn.scalar(query)
         await stats_monitor.report_metric(
@@ -1453,21 +1460,6 @@ async def report_stats(root_ctx: RootContext) -> None:
         await stats_monitor.report_metric(
             GAUGE, 'ai.backend.manager.accum_kernels', n)
         """
-
-
-async def stats_report_timer(root_ctx: RootContext):
-    while True:
-        try:
-            await asyncio.shield(report_stats(root_ctx))
-        except asyncio.CancelledError:
-            break
-        except Exception:
-            await root_ctx.error_monitor.capture_exception()
-            log.exception('stats_report_timer: unexpected error')
-        try:
-            await asyncio.sleep(5)
-        except asyncio.CancelledError:
-            break
 
 
 @server_status_required(ALL_ALLOWED)
@@ -1492,16 +1484,16 @@ async def rename_session(request: web.Request, params: Any) -> web.Response:
             session_name, owner_access_key,
             allow_stale=True,
             db_connection=conn,
+            for_update=True,
         )
         if compute_session['status'] != KernelStatus.RUNNING:
             raise InvalidAPIParameters('Can\'t change name of not running session')
-
-        query = (
+        update_query = (
             sa.update(kernels)
             .values(session_name=new_name)
             .where(kernels.c.session_id == compute_session['session_id'])
         )
-        await conn.execute(query)
+        await conn.execute(update_query)
 
     return web.Response(status=204)
 
@@ -1555,7 +1547,7 @@ async def match_sessions(request: web.Request, params: Any) -> web.Response:
     log.info('MATCH_SESSIONS(ak:{0}/{1}, prefix:{2})',
              requester_access_key, owner_access_key, id_or_name_prefix)
     matches: List[Dict[str, Any]] = []
-    async with root_ctx.db.begin() as conn:
+    async with root_ctx.db.begin_readonly() as conn:
         session_infos = await match_session_ids(
             id_or_name_prefix,
             owner_access_key,
@@ -1971,7 +1963,7 @@ async def get_container_logs(request: web.Request, params: Any) -> web.Response:
     log.info('GET_CONTAINER_LOG (ak:{}/{}, s:{})',
              requester_access_key, owner_access_key, session_name)
     resp = {'result': {'logs': ''}}
-    async with root_ctx.db.begin() as conn:
+    async with root_ctx.db.begin_readonly() as conn:
         compute_session = await root_ctx.registry.get_session(
             session_name, owner_access_key,
             allow_stale=True,
@@ -2010,7 +2002,7 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
     user_role = request['user']['role']
     user_uuid = request['user']['uuid']
     kernel_id_str = params['kernel_id'].hex
-    async with root_ctx.db.begin() as conn:
+    async with root_ctx.db.begin_readonly() as conn:
         matched_vfolders = await query_accessible_vfolders(
             conn, user_uuid,
             user_role=user_role, domain_name=domain_name,
@@ -2060,13 +2052,16 @@ class PrivateContext:
     pending_waits: Set[asyncio.Task[None]]
     agent_lost_checker: asyncio.Task[None]
     stats_task: asyncio.Task[None]
+    database_ptask_group: aiotools.PersistentTaskGroup
+    rpc_ptask_group: aiotools.PersistentTaskGroup
 
 
 async def init(app: web.Application) -> None:
     root_ctx: RootContext = app['_root.context']
     app_ctx: PrivateContext = app['session.context']
-
     app_ctx.session_creation_tracker = {}
+    app_ctx.database_ptask_group = aiotools.PersistentTaskGroup()
+    app_ctx.rpc_ptask_group = aiotools.PersistentTaskGroup()
 
     # passive events
     evd = root_ctx.event_dispatcher
@@ -2106,16 +2101,20 @@ async def init(app: web.Application) -> None:
     # Scan ALIVE agents
     app_ctx.agent_lost_checker = aiotools.create_timer(
         functools.partial(check_agent_lost, root_ctx), 1.0)
-    app_ctx.stats_task = asyncio.create_task(stats_report_timer(root_ctx))
+    app_ctx.stats_task = aiotools.create_timer(
+        functools.partial(report_stats, root_ctx), 5.0,
+    )
 
 
 async def shutdown(app: web.Application) -> None:
     app_ctx: PrivateContext = app['session.context']
-
     app_ctx.agent_lost_checker.cancel()
     await app_ctx.agent_lost_checker
     app_ctx.stats_task.cancel()
     await app_ctx.stats_task
+
+    await app_ctx.database_ptask_group.shutdown()
+    await app_ctx.rpc_ptask_group.shutdown()
 
     await cancel_tasks(app_ctx.pending_waits)
 

@@ -741,6 +741,7 @@ class SchedulerDispatcher(aobject):
                             sched_ctx,
                             scheduled_session,
                         ))
+
         except DBAPIError as e:
             if getattr(e.orig, 'pgcode', None) == '55P03':
                 log.info("prepare(): cancelled due to advisory lock timeout; "
@@ -810,6 +811,7 @@ class SchedulerDispatcher(aobject):
                 await self.registry.destroy_session_lowlevel(
                     session.session_id, destroyed_kernels,
                 )
+                await self.registry.recalc_resource_usage()
             except Exception as destroy_err:
                 log.error(log_fmt + 'cleanup-start-failure: error', *log_args, exc_info=destroy_err)
             finally:

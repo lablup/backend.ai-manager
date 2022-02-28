@@ -8,7 +8,7 @@
   },
   "docker": {
     "registry": {
-      "index.docker.io": {
+      "cr.backend.ai": {
         "": "https://cr.backend.ai",
         "type": "harbor2",
         "project": "stable,ngc"
