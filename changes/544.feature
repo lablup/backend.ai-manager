@@ -1,1 +1,1 @@
-Add vfolder listing feature with only userid to superadmin in `list_folders` api.
+Allow superadmins to list vfolders as specific users
