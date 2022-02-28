@@ -1,1 +1,1 @@
-Split vfolder creation and clone operations and run clone operation as a background task and clients keep track of the progress and result
+Prevent potential blocking of mutating database transactions when vfolder clone operations take too long time, by making clone operation async (background task) with transactions
