@@ -9,7 +9,6 @@ from decimal import Decimal
 import functools
 import json
 import logging
-import msgpack
 import re
 from typing import (
     Any,
@@ -26,6 +25,7 @@ from aioredis import Redis
 from aioredis.client import Pipeline as RedisPipeline
 from async_timeout import timeout as _timeout
 from dateutil.tz import tzutc
+import msgpack
 import sqlalchemy as sa
 import trafaret as t
 import yarl
@@ -318,7 +318,7 @@ async def get_container_stats_for_period(request: web.Request, start_date, end_d
         pipe = r.pipeline()
         for row in rows:
             pipe.get(str(row['id']))
-        return await pipe.execute()
+        return pipe
 
     raw_stats = await redis.execute(root_ctx.redis_stat, _pipe_builder)
 
