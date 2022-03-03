@@ -4,9 +4,19 @@ import asyncio
 from contextvars import ContextVar
 import logging
 import json
-from typing import Any, AsyncIterator, Dict, Mapping, Optional, TYPE_CHECKING, cast
+from typing import (
+    Any,
+    AsyncIterator,
+    ClassVar,
+    Dict,
+    Mapping,
+    Optional,
+    TYPE_CHECKING,
+    cast,
+)
 
 import aiohttp
+from aiolimiter import AsyncLimiter
 import aiotools
 import yarl
 
@@ -29,6 +39,9 @@ log = BraceStyleAdapter(logging.getLogger(__name__))
 
 
 class BaseContainerRegistry(metaclass=ABCMeta):
+
+    default_rate_limit: ClassVar = (200, 30)
+    manifest_rate_limit: ClassVar = (200, 30)
 
     etcd: AsyncEtcd
     registry_name: str
@@ -65,6 +78,8 @@ class BaseContainerRegistry(metaclass=ABCMeta):
         self.sema = ContextVar('sema')
         self.reporter = ContextVar('reporter', default=None)
         self.all_updates = ContextVar('all_updates')
+        self.default_rate_limiter = AsyncLimiter(*type(self).default_rate_limit)
+        self.manifest_rate_limiter = AsyncLimiter(*type(self).manifest_rate_limit)
 
     async def rescan_single_registry(
         self,
@@ -93,7 +108,6 @@ class BaseContainerRegistry(metaclass=ABCMeta):
                 async for image in self.fetch_repositories(sess):
                     if not any((w in image) for w in non_kernel_words):  # skip non-kernel images
                         tg.create_task(self._scan_image(sess, image))
-                        await asyncio.sleep(3)
         all_updates = self.all_updates.get()
         if not all_updates:
             log.info('No images found in registry {0}', self.registry_url)
@@ -119,7 +133,10 @@ class BaseContainerRegistry(metaclass=ABCMeta):
             {'n': '10'},
         )
         while tag_list_url is not None:
-            async with sess.get(tag_list_url, **rqst_args) as resp:
+            async with (
+                self.default_rate_limiter,
+                sess.get(tag_list_url, **rqst_args) as resp,
+            ):
                 data = json.loads(await resp.read())
                 if 'tags' in data:
                     # sometimes there are dangling image names in the hub.
@@ -151,8 +168,13 @@ class BaseContainerRegistry(metaclass=ABCMeta):
         skip_reason = None
         try:
             async with self.sema.get():
-                async with sess.get(self.registry_url / f'v2/{image}/manifests/{tag}',
-                                    **rqst_args) as resp:
+                async with (
+                    self.manifest_rate_limiter,
+                    sess.get(
+                        self.registry_url / f'v2/{image}/manifests/{tag}',
+                        **rqst_args,
+                    ) as resp,
+                ):
                     if resp.status == 404:
                         # ignore missing tags
                         # (may occur after deleting an image from the docker hub)
@@ -164,8 +186,13 @@ class BaseContainerRegistry(metaclass=ABCMeta):
                     size_bytes = (sum(layer['size'] for layer in data['layers']) +
                                     data['config']['size'])
 
-                async with sess.get(self.registry_url / f'v2/{image}/blobs/{config_digest}',
-                                    **rqst_args) as resp:
+                async with (
+                    self.default_rate_limiter,
+                    sess.get(
+                        self.registry_url / f'v2/{image}/blobs/{config_digest}',
+                        **rqst_args,
+                    ) as resp,
+                ):
                     # content-type may not be json...
                     resp.raise_for_status()
                     data = json.loads(await resp.read())
@@ -201,8 +228,10 @@ class BaseContainerRegistry(metaclass=ABCMeta):
                 updates[f'{tag_prefix}/accels'] = accels
 
             res_prefix = 'ai.backend.resource.min.'
-            for k, v in filter(lambda pair: pair[0].startswith(res_prefix),
-                                labels.items()):
+            for k, v in filter(
+                lambda pair: pair[0].startswith(res_prefix),
+                labels.items(),
+            ):
                 res_key = k[len(res_prefix):]
                 updates[f'{tag_prefix}/resource/{res_key}/min'] = v
             self.all_updates.get().update(updates)
