@@ -26,7 +26,6 @@ from typing import (
 from aiohttp import web
 import trafaret as t
 import sqlalchemy as sa
-from sqlalchemy.sql.expression import true
 import yaml
 
 from ai.backend.common.logging import BraceStyleAdapter
