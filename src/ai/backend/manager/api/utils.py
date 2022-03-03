@@ -65,10 +65,7 @@ async def get_access_key_scopes(request: web.Request, params: Any = None) -> Tup
                 .select_from(
                     sa.join(keypairs, users,
                             keypairs.c.user == users.c.uuid))
-                .where(
-                    (keypairs.c.access_key == owner_access_key)
-                    & (keypairs.c.is_active == true()),
-                )
+                .where(keypairs.c.access_key == owner_access_key)
             )
             result = await conn.execute(query)
             row = result.first()
