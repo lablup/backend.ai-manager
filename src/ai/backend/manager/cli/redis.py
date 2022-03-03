@@ -102,6 +102,7 @@ def clear_history(cli_ctx: CLIContext, timedelta):
                     delta_seconds = int(timedelta)
             except ValueError:
                 log.exception('invalid timedelta value provided')
+                return
             target_datetime = datetime.datetime.now() - datetime.timedelta(seconds=delta_seconds)
             async with connect_database(cli_ctx.local_config) as db:
                 async with db.begin_readonly() as conn:
