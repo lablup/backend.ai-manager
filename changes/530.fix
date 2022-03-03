@@ -1,1 +1,1 @@
-Fix admin can't session which deactivated user owns
+Allow admins to take actions on behalf of "inactivated" keypairs, such as terminating an RUNNING compute session created by the inactive keypair.
