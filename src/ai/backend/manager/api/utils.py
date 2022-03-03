@@ -73,23 +73,9 @@ async def get_access_key_scopes(request: web.Request, params: Any = None) -> Tup
             result = await conn.execute(query)
             row = result.first()
             if row is None:
-                requester_query = (
-                    sa.select([users.c.domain_name, users.c.role]).select_from(
-                        sa.join(keypairs, users, keypairs.c.user == users.c.uuid),
-                    ).where(
-                        (keypairs.c.access_key == requester_access_key) &
-                        (keypairs.c.is_active == true()),
-                    )
-                )
-                requester_result = await conn.execute(requester_query)
-                requester_row = requester_result.first()
-                if requester_row is None:
-                    raise InvalidAPIParameters("Unknown or inactive owner access key")
-                owner_domain = requester_row["domain_name"]
-                owner_role = requester_row["role"]
-            else:
-                owner_domain = row["domain_name"]
-                owner_role = row["role"]
+                raise InvalidAPIParameters('Unknown or inactive owner access key')
+            owner_domain = row['domain_name']
+            owner_role = row['role']
         if request['is_superadmin']:
             pass
         elif request['is_admin']:
