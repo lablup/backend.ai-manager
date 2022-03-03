@@ -2002,7 +2002,7 @@ class AgentRegistry:
         access_key: AccessKey,
     ) -> None:
         log.warning('restart_session({})', session_name_or_id)
-        async with self.db.begin() as conn:
+        async with self.db.begin_readonly() as conn:
             session_infos = await match_session_ids(
                 session_name_or_id,
                 access_key,
@@ -2625,6 +2625,7 @@ class AgentRegistry:
                     ])
                     .select_from(kernels)
                     .where(kernels.c.id == kernel_id)
+                    .with_for_update()
                 )
                 result = await conn.execute(select_query)
                 kernel = result.first()
