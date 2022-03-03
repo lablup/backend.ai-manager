@@ -115,8 +115,6 @@ def clear_history(cli_ctx: CLIContext, timedelta):
                     )
                     result = await conn.execute(query)
                     target_kernels = [str(x['id']) for x in result.all()]
-            print(target_datetime)
-            log.info('target kernels: {}', target_kernels)
             async with redis_ctx(cli_ctx) as redis_objects:
                 await redis.execute(
                     redis_objects['stat'],
