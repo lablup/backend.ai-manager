@@ -1,0 +1,1 @@
+Prevent redis pool depletion in proxying streaming app requests by executing the entire connection tracker script in a non-bursty manner.

@@ -3,6 +3,7 @@ from __future__ import annotations
 import enum
 from typing import (
     Any,
+    Dict,
     Mapping,
     Sequence,
     TYPE_CHECKING,
@@ -27,11 +28,16 @@ from ai.backend.common.types import (
 
 from .kernel import AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES, kernels
 from .base import (
-    metadata,
     batch_result,
-    EnumType, Item, PaginatedList,
+    EnumType, Item,
+    metadata,
+    PaginatedList,
+    privileged_mutation,
     ResourceSlotColumn,
+    set_if_set,
+    simple_db_mutate,
 )
+from .user import UserRole
 from .minilang.queryfilter import QueryFilterParser
 from .minilang.ordering import QueryOrderParser
 if TYPE_CHECKING:
@@ -39,7 +45,7 @@ if TYPE_CHECKING:
 
 __all__: Sequence[str] = (
     'agents', 'AgentStatus',
-    'AgentList', 'Agent',
+    'AgentList', 'Agent', 'ModifyAgent',
     'recalc_agent_resource_occupancy',
 )
 
@@ -317,6 +323,11 @@ class Agent(graphene.ObjectType):
             )
 
 
+class ModifyAgentInput(graphene.InputObjectType):
+    schedulable = graphene.Boolean(required=False, default=True)
+    scaling_group = graphene.String(required=False)
+
+
 class AgentList(graphene.ObjectType):
     class Meta:
         interfaces = (PaginatedList, )
@@ -347,3 +358,38 @@ async def recalc_agent_resource_occupancy(db_conn: SAConnection, agent_id: Agent
         .where(agents.c.id == agent_id)
     )
     await db_conn.execute(query)
+
+
+class ModifyAgent(graphene.Mutation):
+
+    allowed_roles = (UserRole.SUPERADMIN,)
+
+    class Arguments:
+        id = graphene.String(required=True)
+        props = ModifyAgentInput(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @classmethod
+    @privileged_mutation(
+        UserRole.SUPERADMIN,
+        lambda id, **kwargs: (None, id),
+    )
+    async def mutate(
+        cls,
+        root,
+        info: graphene.ResolveInfo,
+        id: str,
+        props: ModifyAgentInput,
+    ) -> ModifyAgent:
+        graph_ctx: GraphQueryContext = info.context
+        data: Dict[str, Any] = {}
+        set_if_set(props, data, 'schedulable')
+        set_if_set(props, data, 'scaling_group')
+        await graph_ctx.registry.update_scaling_group(id, data['scaling_group'])
+
+        update_query = (
+            sa.update(agents).values(data).where(agents.c.id == id)
+        )
+        return await simple_db_mutate(cls, graph_ctx, update_query)

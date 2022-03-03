@@ -5,6 +5,7 @@ import collections
 import enum
 import functools
 import logging
+import trafaret as t
 from typing import (
     Any,
     Awaitable,
@@ -23,6 +24,7 @@ from typing import (
     Type,
     TypeVar,
     Union,
+    cast,
 )
 import sys
 import uuid
@@ -190,6 +192,30 @@ class ResourceSlotColumn(TypeDecorator):
         return ResourceSlotColumn()
 
 
+class StructuredJSONBColumn(TypeDecorator):
+    """
+    A column type check scheduler_opts's validation using trafaret.
+    """
+
+    impl = JSONB
+    cache_ok = True
+
+    def __init__(self, schema: t.Trafaret) -> None:
+        super().__init__()
+        self._schema = schema
+
+    def process_bind_param(self, value, dialect):
+        return self._schema.check(value)
+
+    def process_result_value(self, raw_value, dialect):
+        if raw_value is None:
+            return self._schema.check({})
+        return self._schema.check(raw_value)
+
+    def copy(self):
+        return StructuredJSONBColumn(self._schema)
+
+
 class CurrencyTypes(enum.Enum):
     KRW = 'KRW'
     USD = 'USD'
@@ -204,7 +230,7 @@ class GUID(TypeDecorator, Generic[UUID_SubType]):
     Uses PostgreSQL's UUID type, otherwise uses CHAR(16) storing as raw bytes.
     """
     impl = CHAR
-    uuid_subtype_func: ClassVar[Callable[[Any], UUID_SubType]] = lambda v: v
+    uuid_subtype_func: ClassVar[Callable[[Any], Any]] = lambda v: v
     cache_ok = True
 
     def load_dialect_impl(self, dialect):
@@ -236,15 +262,17 @@ class GUID(TypeDecorator, Generic[UUID_SubType]):
             return value
         else:
             cls = type(self)
-            return cls.uuid_subtype_func(uuid.UUID(value))
+            return cast(UUID_SubType, cls.uuid_subtype_func(uuid.UUID(value)))
 
 
-class SessionIDColumnType(GUID):
+class SessionIDColumnType(GUID[SessionId]):
     uuid_subtype_func = SessionId
+    cache_ok = True
 
 
-class KernelIDColumnType(GUID):
+class KernelIDColumnType(GUID[KernelId]):
     uuid_subtype_func = KernelId
+    cache_ok = True
 
 
 def IDColumn(name='id'):

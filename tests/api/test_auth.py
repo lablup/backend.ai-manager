@@ -1,8 +1,9 @@
-from collections import UserDict
 from datetime import datetime, timedelta
 import json
+from unittest.mock import MagicMock
 import uuid
 
+from aiohttp import web
 from dateutil.tz import tzutc, gettz
 import pytest
 
@@ -20,7 +21,7 @@ from ai.backend.manager.server import (
 
 
 def test_extract_auth_params():
-    request = UserDict()
+    request = MagicMock(spec=web.Request)
 
     request.headers = {}
     assert _extract_auth_params(request) is None
@@ -37,6 +38,7 @@ def test_extract_auth_params():
     request.headers = {'Authorization': ('BackendAI signMethod=HMAC-SHA256,'
                                          'credential=fake-ak:fake-sig')}
     ret = _extract_auth_params(request)
+    assert ret is not None
     assert ret[0] == 'HMAC-SHA256'
     assert ret[1] == 'fake-ak'
     assert ret[2] == 'fake-sig'
@@ -45,7 +47,7 @@ def test_extract_auth_params():
 def test_check_date():
     # UserDict allows attribute assignment like types.SimpleNamespace
     # but also works like a plain dict.
-    request = UserDict()
+    request = MagicMock(spec=web.Request)
 
     request.headers = {'X-Nothing': ''}
     assert not check_date(request)

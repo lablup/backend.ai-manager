@@ -8,7 +8,6 @@ import pytest
 
 from ai.backend.common import redis
 from ai.backend.common.events import (
-    AbstractEvent,
     BgtaskDoneEvent,
     BgtaskFailedEvent,
     BgtaskUpdatedEvent,
@@ -22,109 +21,6 @@ from ai.backend.manager.api.context import RootContext
 from ai.backend.manager.server import (
     shared_config_ctx, event_dispatcher_ctx, background_task_ctx,
 )
-
-
-@attr.s(slots=True, frozen=True)
-class TestEvent(AbstractEvent):
-    name = "testing"
-
-    value: int = attr.ib()
-
-    def serialize(self) -> tuple:
-        return (self.value + 1, )
-
-    @classmethod
-    def deserialize(cls, value: tuple):
-        return cls(value[0] + 1)
-
-
-@pytest.mark.asyncio
-async def test_dispatch(etcd_fixture, create_app_and_client) -> None:
-    app, client = await create_app_and_client(
-        [shared_config_ctx, event_dispatcher_ctx],
-        ['.events'],
-    )
-    root_ctx: RootContext = app['_root.context']
-    producer: EventProducer = root_ctx.event_producer
-    dispatcher: EventDispatcher = root_ctx.event_dispatcher
-
-    records = set()
-
-    async def acb(context: web.Application, source: AgentId, event: TestEvent) -> None:
-        assert context is app
-        assert source == AgentId('i-test')
-        assert isinstance(event, TestEvent)
-        assert event.name == "testing"
-        assert event.value == 1001
-        await asyncio.sleep(0.01)
-        records.add('async')
-
-    def scb(context: web.Application, source: AgentId, event: TestEvent) -> None:
-        assert context is app
-        assert source == AgentId('i-test')
-        assert isinstance(event, TestEvent)
-        assert event.name == "testing"
-        assert event.value == 1001
-        records.add('sync')
-
-    dispatcher.subscribe(TestEvent, app, acb)
-    dispatcher.subscribe(TestEvent, app, scb)
-
-    # Dispatch the event
-    await producer.produce_event(TestEvent(999), source='i-test')
-    await asyncio.sleep(0.2)
-    assert records == {'async', 'sync'}
-
-    await redis.execute(producer.redis_client, lambda r: r.flushdb())
-    await producer.close()
-    await dispatcher.close()
-
-
-@pytest.mark.asyncio
-async def test_error_on_dispatch(etcd_fixture, create_app_and_client, event_loop) -> None:
-
-    def handle_exception(loop, context):
-        exc = context['exception']
-        exception_log.append(type(exc).__name__)
-
-    app, client = await create_app_and_client(
-        [shared_config_ctx, event_dispatcher_ctx],
-        ['.events'],
-        scheduler_opts={'exception_handler': handle_exception},
-    )
-    root_ctx: RootContext = app['_root.context']
-    producer: EventProducer = root_ctx.event_producer
-    dispatcher: EventDispatcher = root_ctx.event_dispatcher
-    old_handler = event_loop.get_exception_handler()
-    event_loop.set_exception_handler(handle_exception)
-
-    exception_log: list[str] = []
-
-    async def acb(context: web.Application, source: AgentId, event: TestEvent) -> None:
-        assert context is app
-        assert source == AgentId('i-test')
-        assert isinstance(event, TestEvent)
-        raise ZeroDivisionError
-
-    def scb(context: web.Application, source: AgentId, event: TestEvent) -> None:
-        assert context is app
-        assert source == AgentId('i-test')
-        assert isinstance(event, TestEvent)
-        raise OverflowError
-
-    dispatcher.subscribe(TestEvent, app, scb)
-    dispatcher.subscribe(TestEvent, app, acb)
-    await producer.produce_event(TestEvent(0), source='i-test')
-    await asyncio.sleep(0.2)
-    assert len(exception_log) == 2
-    assert 'ZeroDivisionError' in exception_log
-    assert 'OverflowError' in exception_log
-
-    event_loop.set_exception_handler(old_handler)
-
-    await redis.execute(producer.redis_client, lambda r: r.flushdb())
-    await producer.close()
-    await dispatcher.close()
 
 
 @pytest.mark.asyncio

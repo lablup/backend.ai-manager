@@ -47,7 +47,6 @@ from ai.backend.common.events import (
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import AccessKey, aobject, SessionTypes
 from ai.backend.common.utils import nmget
-from ai.backend.manager.models.utils import ExtendedAsyncSAEngine
 
 from .defs import DEFAULT_ROLE, REDIS_LIVE_DB, REDIS_STAT_DB, AdvisoryLock
 from .distributed import GlobalTimer
@@ -59,8 +58,8 @@ if TYPE_CHECKING:
     from ai.backend.common.types import AgentId, KernelId, SessionId
     from sqlalchemy.ext.asyncio import (
         AsyncConnection as SAConnection,
-        AsyncEngine as SAEngine,
     )
+    from .models.utils import ExtendedAsyncSAEngine as SAEngine
 
 log = BraceStyleAdapter(logging.getLogger("ai.backend.manager.idle"))
 
@@ -80,7 +79,7 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
     name: ClassVar[str] = "base"
     check_interval: float = 10.0
 
-    _db: ExtendedAsyncSAEngine
+    _db: SAEngine
     _shared_config: SharedConfig
     _event_dispatcher: EventDispatcher
     _event_producer: EventProducer
@@ -579,6 +578,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
         """
         try:
             utilizations = {k: 0.0 for k in self.resource_thresholds.keys()}
+            live_stat = {}
             for kernel_id in kernel_ids:
                 raw_live_stat = await redis.execute(self._redis_stat, lambda r: r.get(str(kernel_id)))
                 live_stat = msgpack.unpackb(raw_live_stat)

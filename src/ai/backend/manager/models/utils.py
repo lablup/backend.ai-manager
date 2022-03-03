@@ -11,7 +11,6 @@ from typing import (
     AsyncIterator,
     Awaitable,
     Callable,
-    Final,
     Mapping,
     Tuple,
     TypeVar,
@@ -26,6 +25,13 @@ from sqlalchemy.ext.asyncio import (
     AsyncConnection as SAConnection,
     AsyncEngine as SAEngine,
 )
+from tenacity import (
+    AsyncRetrying,
+    RetryError,
+    TryAgain,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from ai.backend.common.json import ExtendedJSONEncoder
 from ai.backend.common.logging import BraceStyleAdapter
@@ -33,6 +39,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 if TYPE_CHECKING:
     from ..config import LocalConfig
 from ..defs import AdvisoryLock
+from ..types import Sentinel
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 
@@ -54,9 +61,9 @@ class ExtendedAsyncSAEngine(SAEngine):
             self._generic_txn_count += 1
             if self._generic_txn_count >= self._txn_concurrency_threshold:
                 log.warning(
-                    "The number of concurrent read-only transaction ({}) exceeded the threshold {}.",
+                    "The number of concurrent generic transaction ({}) exceeded the threshold {}.",
                     self._generic_txn_count, self._txn_concurrency_threshold,
-                    stack_info=True,
+                    stack_info=False,
                 )
             try:
                 yield conn
@@ -69,9 +76,9 @@ class ExtendedAsyncSAEngine(SAEngine):
             self._readonly_txn_count += 1
             if self._readonly_txn_count >= self._txn_concurrency_threshold:
                 log.warning(
-                    "The number of concurrent generic transaction ({}) exceeded the threshold {}.",
+                    "The number of concurrent read-only transaction ({}) exceeded the threshold {}.",
                     self._readonly_txn_count, self._txn_concurrency_threshold,
-                    stack_info=True,
+                    stack_info=False,
                 )
             conn_with_exec_opts = await conn.execution_options(
                 postgresql_readonly=True,
@@ -95,13 +102,9 @@ class ExtendedAsyncSAEngine(SAEngine):
                 # but in this case:
                 #  - The lock ID is only given from trusted codes.
                 #  - asyncpg does not support parameter interpolation with raw SQL statements.
-                while not lock_acquired:
-                    result = await lock_conn.exec_driver_sql(
-                        f"SELECT pg_try_advisory_lock({lock_id:d});",
-                    )
-                    lock_acquired = result.scalar()
-                    if not lock_acquired:
-                        await asyncio.sleep(0.2)
+                await lock_conn.exec_driver_sql(
+                    f"SELECT pg_advisory_lock({lock_id:d});",
+                )
             except sa.exc.DBAPIError as e:
                 if getattr(e.orig, 'pgcode', None) == '55P03':  # lock not available error
                     # This may happen upon shutdown after some time.
@@ -110,9 +113,10 @@ class ExtendedAsyncSAEngine(SAEngine):
             except asyncio.CancelledError:
                 raise
             else:
+                lock_acquired = True
                 yield
             finally:
-                if lock_acquired:
+                if lock_acquired and not lock_conn.closed:
                     await lock_conn.exec_driver_sql(
                         f"SELECT pg_advisory_unlock({lock_id:d})",
                     )
@@ -177,19 +181,24 @@ TQueryResult = TypeVar('TQueryResult')
 
 
 async def execute_with_retry(txn_func: Callable[[], Awaitable[TQueryResult]]) -> TQueryResult:
-    max_retries: Final = 10
-    num_retries = 0
-    while True:
-        if num_retries == max_retries:
-            raise RuntimeError(f"DB serialization failed after {max_retries} retries")
-        try:
-            return await txn_func()
-        except DBAPIError as e:
-            num_retries += 1
-            if getattr(e.orig, 'pgcode', None) == '40001':
-                await asyncio.sleep((num_retries - 1) * 0.02)
-                continue
-            raise
+    max_attempts = 20
+    result: TQueryResult | Sentinel = Sentinel.token
+    try:
+        async for attempt in AsyncRetrying(
+            wait=wait_exponential(multiplier=0.02, min=0.02, max=5.0),
+            stop=stop_after_attempt(max_attempts),
+        ):
+            with attempt:
+                try:
+                    result = await txn_func()
+                except DBAPIError as e:
+                    if getattr(e.orig, 'pgcode', None) == '40001':
+                        raise TryAgain
+                    raise
+    except RetryError:
+        raise RuntimeError(f"DB serialization failed after {max_attempts} retries")
+    assert result is not Sentinel.token
+    return result
 
 
 def sql_json_merge(

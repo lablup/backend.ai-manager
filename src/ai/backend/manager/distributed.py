@@ -7,6 +7,8 @@ from typing import (
     TYPE_CHECKING,
 )
 
+from .defs import AdvisoryLock
+
 if TYPE_CHECKING:
     from ai.backend.manager.models.utils import ExtendedAsyncSAEngine
     from ai.backend.common.events import AbstractEvent, EventProducer
@@ -38,18 +40,19 @@ class GlobalTimer:
         self.initial_delay = initial_delay
 
     async def generate_tick(self) -> None:
-        try:
-            await asyncio.sleep(self.initial_delay)
-            while True:
-                async with self.db.advisory_lock(self.timer_id):
-                    await self._event_producer.produce_event(self._event_factory())
-                    await asyncio.sleep(self.interval)
-        except asyncio.CancelledError:
-            pass
+        await asyncio.sleep(self.initial_delay)
+        while True:
+            async with self.db.advisory_lock(AdvisoryLock(self.timer_id)):
+                await self._event_producer.produce_event(self._event_factory())
+                await asyncio.sleep(self.interval)
 
     async def join(self) -> None:
         self._tick_task = asyncio.create_task(self.generate_tick())
 
     async def leave(self) -> None:
-        self._tick_task.cancel()
-        await self._tick_task
+        if not self._tick_task.done():
+            self._tick_task.cancel()
+            try:
+                await self._tick_task
+            except asyncio.CancelledError:
+                pass

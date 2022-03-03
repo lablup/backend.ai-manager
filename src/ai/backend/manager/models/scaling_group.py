@@ -10,12 +10,16 @@ from typing import (
 )
 import uuid
 
+import graphene
+from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 from sqlalchemy.engine.row import Row
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
-import graphene
-from graphene.types.datetime import DateTime as GQLDateTime
+import trafaret as t
+
+from ai.backend.common import validators as tx
+from ai.backend.common.types import SessionTypes
 
 from .base import (
     metadata,
@@ -24,6 +28,7 @@ from .base import (
     set_if_set,
     batch_result,
     batch_multiresult,
+    StructuredJSONBColumn,
 )
 from .group import resolve_group_name_or_id
 from .user import UserRole
@@ -59,10 +64,16 @@ scaling_groups = sa.Table(
     sa.Column('is_active', sa.Boolean, index=True, default=True),
     sa.Column('created_at', sa.DateTime(timezone=True),
               server_default=sa.func.now()),
+    sa.Column('wsproxy_addr', sa.String(length=1024), nullable=True),
     sa.Column('driver', sa.String(length=64), nullable=False),
     sa.Column('driver_opts', pgsql.JSONB(), nullable=False, default={}),
     sa.Column('scheduler', sa.String(length=64), nullable=False),
-    sa.Column('scheduler_opts', pgsql.JSONB(), nullable=False, default={}),
+    sa.Column('scheduler_opts', StructuredJSONBColumn(
+        t.Dict({
+            t.Key('allowed_session_types', default=['interactive', 'batch']):
+                t.List(tx.Enum(SessionTypes)),
+        }).allow_extra('*'),
+    ), nullable=False, default={}),
 )
 
 
@@ -168,6 +179,7 @@ class ScalingGroup(graphene.ObjectType):
     description = graphene.String()
     is_active = graphene.Boolean()
     created_at = GQLDateTime()
+    wsproxy_addr = graphene.String()
     driver = graphene.String()
     driver_opts = graphene.JSONString()
     scheduler = graphene.String()
@@ -186,6 +198,7 @@ class ScalingGroup(graphene.ObjectType):
             description=row['description'],
             is_active=row['is_active'],
             created_at=row['created_at'],
+            wsproxy_addr=row['wsproxy_addr'],
             driver=row['driver'],
             driver_opts=row['driver_opts'],
             scheduler=row['scheduler'],
@@ -324,6 +337,7 @@ class ScalingGroup(graphene.ObjectType):
 class CreateScalingGroupInput(graphene.InputObjectType):
     description = graphene.String(required=False, default='')
     is_active = graphene.Boolean(required=False, default=True)
+    wsproxy_addr = graphene.String(required=False)
     driver = graphene.String(required=True)
     driver_opts = graphene.JSONString(required=False, default={})
     scheduler = graphene.String(required=True)
@@ -333,6 +347,7 @@ class CreateScalingGroupInput(graphene.InputObjectType):
 class ModifyScalingGroupInput(graphene.InputObjectType):
     description = graphene.String(required=False)
     is_active = graphene.Boolean(required=False)
+    wsproxy_addr = graphene.String(required=False)
     driver = graphene.String(required=False)
     driver_opts = graphene.JSONString(required=False)
     scheduler = graphene.String(required=False)
@@ -363,6 +378,7 @@ class CreateScalingGroup(graphene.Mutation):
             'name': name,
             'description': props.description,
             'is_active': bool(props.is_active),
+            'wsproxy_addr': props.wsproxy_addr,
             'driver': props.driver,
             'driver_opts': props.driver_opts,
             'scheduler': props.scheduler,
@@ -399,6 +415,7 @@ class ModifyScalingGroup(graphene.Mutation):
         set_if_set(props, data, 'description')
         set_if_set(props, data, 'is_active')
         set_if_set(props, data, 'driver')
+        set_if_set(props, data, 'wsproxy_addr')
         set_if_set(props, data, 'driver_opts')
         set_if_set(props, data, 'scheduler')
         set_if_set(props, data, 'scheduler_opts')

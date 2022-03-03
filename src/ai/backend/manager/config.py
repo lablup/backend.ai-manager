@@ -205,6 +205,7 @@ import os
 from pathlib import Path
 from pprint import pformat
 import secrets
+import socket
 import sys
 from typing import (
     Any,
@@ -282,6 +283,8 @@ manager_local_config_iv = t.Dict({
     }),
     t.Key('manager'): t.Dict({
         t.Key('num-proc', default=_max_cpu_count): t.Int[1:_max_cpu_count],
+        t.Key('id', default=f"i-{socket.gethostname()}"): t.String,
+        t.Key('user', default=None): tx.UserID(default_uid=_file_perm.st_uid),
         t.Key('user', default=None): tx.UserID(default_uid=_file_perm.st_uid),
         t.Key('group', default=None): tx.GroupID(default_gid=_file_perm.st_gid),
         t.Key('service-addr', default=('0.0.0.0', 8080)): tx.HostPortPair,
@@ -746,10 +749,10 @@ class SharedConfig(AbstractConfig):
         return await self.etcd.get_prefix_dict('nodes/manager')
 
     @aiotools.lru_cache(maxsize=1, expire_after=2.0)
-    async def get_manager_status(self) -> Optional[ManagerStatus]:
+    async def get_manager_status(self) -> ManagerStatus:
         status = await self.etcd.get('manager/status')
         if status is None:
-            return None
+            return ManagerStatus.TERMINATED
         return ManagerStatus(status)
 
     async def watch_manager_status(self):
@@ -761,7 +764,7 @@ class SharedConfig(AbstractConfig):
     #       in a per-request basis.
     @aiotools.lru_cache(maxsize=1, expire_after=2.0)
     async def get_allowed_origins(self):
-        return await self.get('config/api/allow-origins')
+        return await self.etcd.get('config/api/allow-origins')
 
     # TODO: refactor using contextvars in Python 3.7 so that the result is cached
     #       in a per-request basis.

@@ -5,30 +5,32 @@ from typing import (
     Callable,
     Iterable,
     AsyncContextManager,
-    # AsyncIterator,
-    Tuple,
-    Type,
     Mapping,
+    Tuple,
+    TYPE_CHECKING,
 )
+from typing_extensions import TypeAlias
 
 from aiohttp import web
 import aiohttp_cors
 
+if TYPE_CHECKING:
+    from .context import RootContext
 
-WebRequestHandler = Callable[
+
+WebRequestHandler: TypeAlias = Callable[
     [web.Request],
     Awaitable[web.StreamResponse],
 ]
-WebMiddleware = Callable[
+WebMiddleware: TypeAlias = Callable[
     [web.Request, WebRequestHandler],
     Awaitable[web.StreamResponse],
 ]
 
-CORSOptions = Mapping[str, aiohttp_cors.ResourceOptions]
-AppCreator = Callable[
+CORSOptions: TypeAlias = Mapping[str, aiohttp_cors.ResourceOptions]
+AppCreator: TypeAlias = Callable[
     [CORSOptions],
     Tuple[web.Application, Iterable[WebMiddleware]],
 ]
 
-# CleanupContext = Callable[[RootContext], AsyncIterator[None]]
-CleanupContext = Type[AsyncContextManager]
+CleanupContext: TypeAlias = Callable[['RootContext'], AsyncContextManager[None]]

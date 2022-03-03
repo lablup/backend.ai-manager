@@ -321,12 +321,17 @@ async def match_session_ids(
     )
     if extra_cond is not None:
         cond_id = cond_id & extra_cond
-    cond_name = (
+    cond_equal_name = (
+        (kernels.c.session_name == (f'{session_name_or_id}')) &
+        (kernels.c.access_key == access_key)
+    )
+    cond_prefix_name = (
         (kernels.c.session_name.like(f'{session_name_or_id}%')) &
         (kernels.c.access_key == access_key)
     )
     if extra_cond is not None:
-        cond_name = cond_name & extra_cond
+        cond_equal_name = cond_equal_name & extra_cond
+        cond_prefix_name = cond_prefix_name & extra_cond
     cond_session_id = (
         (sa.sql.expression.cast(kernels.c.session_id, sa.String).like(f'{session_name_or_id}%')) &
         (kernels.c.access_key == access_key)
@@ -358,7 +363,7 @@ async def match_session_ids(
     )
     if for_update:
         match_sid_by_id = match_sid_by_id.with_for_update()
-    match_sid_by_name = (
+    match_sid_by_equal_name = (
         sa.select(info_cols)
         .select_from(kernels)
         .where(
@@ -367,7 +372,24 @@ async def match_session_ids(
                     [kernels.c.session_id],
                 )
                 .select_from(kernels)
-                .where(cond_name)
+                .where(cond_equal_name)
+                .group_by(kernels.c.session_id)
+                .limit(max_matches).offset(0),
+            )) &
+            (kernels.c.cluster_role == DEFAULT_ROLE),
+        )
+        .order_by(sa.desc(kernels.c.created_at))
+    )
+    match_sid_by_prefix_name = (
+        sa.select(info_cols)
+        .select_from(kernels)
+        .where(
+            (kernels.c.session_id.in_(
+                sa.select(
+                    [kernels.c.session_id],
+                )
+                .select_from(kernels)
+                .where(cond_prefix_name)
                 .group_by(kernels.c.session_id)
                 .limit(max_matches).offset(0),
             )) &
@@ -376,7 +398,8 @@ async def match_session_ids(
         .order_by(sa.desc(kernels.c.created_at))
     )
     if for_update:
-        match_sid_by_name = match_sid_by_name.with_for_update()
+        match_sid_by_equal_name = match_sid_by_equal_name.with_for_update()
+        match_sid_by_prefix_name = match_sid_by_prefix_name.with_for_update()
     match_sid_by_session_id = (
         sa.select(info_cols)
         .select_from(kernels)
@@ -398,7 +421,8 @@ async def match_session_ids(
         match_sid_by_session_id = match_sid_by_session_id.with_for_update()
     for match_query in [
         match_sid_by_session_id,
-        match_sid_by_name,
+        match_sid_by_equal_name,
+        match_sid_by_prefix_name,
         match_sid_by_id,
     ]:
         result = await db_connection.execute(match_query)

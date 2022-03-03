@@ -104,20 +104,21 @@ async def push_session_events(
     if group_name == '*':
         group_id = '*'
     else:
-        async with root_ctx.db.begin() as conn:
+        async with root_ctx.db.begin_readonly() as conn:
             query = (
                 sa.select([groups.c.id])
                 .select_from(groups)
                 .where(groups.c.name == group_name)
             )
-            row = await conn.first(query)
+            result = await conn.execute(query)
+            row = result.first()
             if row is None:
                 raise GroupNotFound
             group_id = row['id']
     app_ctx.session_event_queues.add(my_queue)
     defer(lambda: app_ctx.session_event_queues.remove(my_queue))
-    try:
-        async with sse_response(request) as resp:
+    async with sse_response(request) as resp:
+        try:
             while True:
                 evdata = await my_queue.get()
                 try:
@@ -159,8 +160,8 @@ async def push_session_events(
                     await resp.send(json.dumps(response_data), event=event_name)
                 finally:
                     my_queue.task_done()
-    finally:
-        return resp
+        finally:
+            return resp
 
 
 @server_status_required(READ_ALLOWED)
@@ -212,8 +213,8 @@ async def push_background_task_events(
     my_queue: asyncio.Queue[BgtaskEvents | Sentinel] = asyncio.Queue()
     app_ctx.task_update_queues.add(my_queue)
     defer(lambda: app_ctx.task_update_queues.remove(my_queue))
-    try:
-        async with sse_response(request) as resp:
+    async with sse_response(request) as resp:
+        try:
             while True:
                 event = await my_queue.get()
                 try:
@@ -236,8 +237,8 @@ async def push_background_task_events(
                         break
                 finally:
                     my_queue.task_done()
-    finally:
-        return resp
+        finally:
+            return resp
 
 
 async def enqueue_kernel_creation_status_update(

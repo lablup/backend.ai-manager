@@ -9,9 +9,7 @@ from typing import (
     Optional,
     Sequence,
     TYPE_CHECKING,
-    Tuple,
     TypedDict,
-    Union,
 )
 
 import graphene
@@ -364,7 +362,7 @@ class DomainDotfile(TypedDict):
 async def query_domain_dotfiles(
     conn: SAConnection,
     name: str,
-) -> Tuple[Union[List[DomainDotfile], None], Union[int, None]]:
+) -> tuple[List[DomainDotfile], int]:
     query = (
         sa.select([domains.c.dotfiles])
         .select_from(domains)
@@ -372,7 +370,7 @@ async def query_domain_dotfiles(
     )
     packed_dotfile = await conn.scalar(query)
     if packed_dotfile is None:
-        return None, None
+        return [], MAXIMUM_DOTFILE_SIZE
     rows = msgpack.unpackb(packed_dotfile)
     return rows, MAXIMUM_DOTFILE_SIZE - len(packed_dotfile)
 

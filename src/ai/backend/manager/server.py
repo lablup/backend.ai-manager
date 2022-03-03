@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager as actxmgr, closing
 from datetime import datetime
 import functools
 import importlib
@@ -241,7 +242,7 @@ async def exception_middleware(request: web.Request,
         return resp
 
 
-@aiotools.actxmgr
+@actxmgr
 async def shared_config_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     # populate public interfaces
     root_ctx.shared_config = SharedConfig(
@@ -255,7 +256,7 @@ async def shared_config_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     await root_ctx.shared_config.close()
 
 
-@aiotools.actxmgr
+@actxmgr
 async def webapp_plugin_ctx(root_app: web.Application) -> AsyncIterator[None]:
     root_ctx: RootContext = root_app['_root.context']
     plugin_ctx = WebappPluginContext(root_ctx.shared_config.etcd, root_ctx.local_config)
@@ -270,7 +271,7 @@ async def webapp_plugin_ctx(root_app: web.Application) -> AsyncIterator[None]:
     await plugin_ctx.cleanup()
 
 
-@aiotools.actxmgr
+@actxmgr
 async def manager_status_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     if root_ctx.pidx == 0:
         mgr_status = await root_ctx.shared_config.get_manager_status()
@@ -284,7 +285,7 @@ async def manager_status_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     yield
 
 
-@aiotools.actxmgr
+@actxmgr
 async def redis_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 
     root_ctx.redis_live = redis.get_redis_object(root_ctx.shared_config.data['redis'], db=REDIS_LIVE_DB)
@@ -302,14 +303,14 @@ async def redis_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     await root_ctx.redis_live.close()
 
 
-@aiotools.actxmgr
+@actxmgr
 async def database_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     async with connect_database(root_ctx.local_config) as db:
         root_ctx.db = db
         yield
 
 
-@aiotools.actxmgr
+@actxmgr
 async def event_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 
     root_ctx.event_producer = await EventProducer.new(
@@ -320,13 +321,14 @@ async def event_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
         root_ctx.shared_config.data['redis'],
         db=REDIS_STREAM_DB,
         log_events=root_ctx.local_config['debug']['log-events'],
+        node_id=root_ctx.local_config['manager']['id'],
     )
     yield
     await root_ctx.event_dispatcher.close()
     await root_ctx.event_producer.close()
 
 
-@aiotools.actxmgr
+@actxmgr
 async def idle_checker_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     root_ctx.idle_checkers = await create_idle_checkers(
         root_ctx.db,
@@ -339,7 +341,7 @@ async def idle_checker_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
         await instance.aclose()
 
 
-@aiotools.actxmgr
+@actxmgr
 async def storage_manager_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     raw_vol_config = await root_ctx.shared_config.etcd.get_prefix('volumes')
     config = volume_config_iv.check(raw_vol_config)
@@ -348,7 +350,7 @@ async def storage_manager_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     await root_ctx.storage_manager.aclose()
 
 
-@aiotools.actxmgr
+@actxmgr
 async def hook_plugin_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     ctx = HookPluginContext(root_ctx.shared_config.etcd, root_ctx.local_config)
     root_ctx.hook_plugin_ctx = ctx
@@ -364,7 +366,7 @@ async def hook_plugin_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     await ctx.cleanup()
 
 
-@aiotools.actxmgr
+@actxmgr
 async def agent_registry_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     root_ctx.registry = AgentRegistry(
         root_ctx.shared_config,
@@ -382,7 +384,7 @@ async def agent_registry_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     await root_ctx.registry.shutdown()
 
 
-@aiotools.actxmgr
+@actxmgr
 async def sched_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     sched_dispatcher = await SchedulerDispatcher.new(
         root_ctx.local_config, root_ctx.shared_config,
@@ -393,7 +395,7 @@ async def sched_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     await sched_dispatcher.close()
 
 
-@aiotools.actxmgr
+@actxmgr
 async def monitoring_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     ectx = ErrorPluginContext(root_ctx.shared_config.etcd, root_ctx.local_config)
     sctx = StatsPluginContext(root_ctx.shared_config.etcd, root_ctx.local_config)
@@ -531,7 +533,10 @@ def build_root_app(
     async def _call_cleanup_context_shutdown_handlers(app: web.Application) -> None:
         for cctx in app['_cctx_instances']:
             if hasattr(cctx, 'shutdown'):
-                await cctx.shutdown()
+                try:
+                    await cctx.shutdown()
+                except Exception:
+                    log.exception("error while shutting down a cleanup context")
 
     app['_cctx_instances'] = []
     app.on_shutdown.append(_call_cleanup_context_shutdown_handlers)
@@ -553,7 +558,7 @@ def build_root_app(
     return app
 
 
-@aiotools.actxmgr
+@actxmgr
 async def server_main(
     loop: asyncio.AbstractEventLoop,
     pidx: int,
@@ -579,62 +584,64 @@ async def server_main(
     root_app = build_root_app(pidx, _args[0], subapp_pkgs=subapp_pkgs)
     root_ctx: RootContext = root_app['_root.context']
 
+    # Start aiomonitor.
+    # Port is set by config (default=50001).
+    m = aiomonitor.Monitor(
+        loop,
+        port=root_ctx.local_config['manager']['aiomonitor-port'] + pidx,
+        console_enabled=False,
+    )
+    m.prompt = f"monitor (manager[{pidx}@{os.getpid()}]) >>> "
+    m.start()
+
     # Plugin webapps should be loaded before runner.setup(),
     # which freezes on_startup event.
-    async with shared_config_ctx(root_ctx), \
-               webapp_plugin_ctx(root_app):
-        ssl_ctx = None
-        if root_ctx.local_config['manager']['ssl-enabled']:
-            ssl_ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-            ssl_ctx.load_cert_chain(
-                str(root_ctx.local_config['manager']['ssl-cert']),
-                str(root_ctx.local_config['manager']['ssl-privkey']),
+    with closing(m):
+        async with (
+            shared_config_ctx(root_ctx),
+            webapp_plugin_ctx(root_app),
+        ):
+            ssl_ctx = None
+            if root_ctx.local_config['manager']['ssl-enabled']:
+                ssl_ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+                ssl_ctx.load_cert_chain(
+                    str(root_ctx.local_config['manager']['ssl-cert']),
+                    str(root_ctx.local_config['manager']['ssl-privkey']),
+                )
+
+            runner = web.AppRunner(root_app, keepalive_timeout=30.0)
+            await runner.setup()
+            service_addr = root_ctx.local_config['manager']['service-addr']
+            site = web.TCPSite(
+                runner,
+                str(service_addr.host),
+                service_addr.port,
+                backlog=1024,
+                reuse_port=True,
+                ssl_context=ssl_ctx,
             )
+            await site.start()
 
-        # Start aiomonitor.
-        # Port is set by config (default=50001).
-        m = aiomonitor.Monitor(
-            loop,
-            port=root_ctx.local_config['manager']['aiomonitor-port'],
-            console_enabled=False,
-        )
-        m.prompt = "monitor (manager) >>> "
-        m.start()
+            if os.geteuid() == 0:
+                uid = root_ctx.local_config['manager']['user']
+                gid = root_ctx.local_config['manager']['group']
+                os.setgroups([
+                    g.gr_gid for g in grp.getgrall()
+                    if pwd.getpwuid(uid).pw_name in g.gr_mem
+                ])
+                os.setgid(gid)
+                os.setuid(uid)
+                log.info('changed process uid and gid to {}:{}', uid, gid)
+            log.info('started handling API requests at {}', service_addr)
 
-        runner = web.AppRunner(root_app, keepalive_timeout=30.0)
-        await runner.setup()
-        service_addr = root_ctx.local_config['manager']['service-addr']
-        site = web.TCPSite(
-            runner,
-            str(service_addr.host),
-            service_addr.port,
-            backlog=1024,
-            reuse_port=True,
-            ssl_context=ssl_ctx,
-        )
-        await site.start()
-
-        if os.geteuid() == 0:
-            uid = root_ctx.local_config['manager']['user']
-            gid = root_ctx.local_config['manager']['group']
-            os.setgroups([
-                g.gr_gid for g in grp.getgrall()
-                if pwd.getpwuid(uid).pw_name in g.gr_mem
-            ])
-            os.setgid(gid)
-            os.setuid(uid)
-            log.info('changed process uid and gid to {}:{}', uid, gid)
-        log.info('started handling API requests at {}', service_addr)
-
-        try:
-            yield
-        finally:
-            m.close()
-            log.info('shutting down...')
-            await runner.cleanup()
+            try:
+                yield
+            finally:
+                log.info('shutting down...')
+                await runner.cleanup()
 
 
-@aiotools.actxmgr
+@actxmgr
 async def server_main_logwrapper(
     loop: asyncio.AbstractEventLoop,
     pidx: int,
