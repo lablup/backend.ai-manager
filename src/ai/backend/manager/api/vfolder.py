@@ -424,7 +424,7 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
 
     log.info('VFOLDER.LIST (ak:{})', access_key)
     entries: List[Mapping[str, Any]] | Sequence[Mapping[str, Any]]
-    async with root_ctx.db.begin() as conn:
+    async with root_ctx.db.begin_readonly() as conn:
         allowed_vfolder_types = await root_ctx.shared_config.get_vfolder_types()
         if request['is_superadmin'] and params['all']:
             # List all folders for superadmin if all is specified
