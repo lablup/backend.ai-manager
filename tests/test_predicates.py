@@ -11,8 +11,8 @@ from ai.backend.manager.scheduler.predicates import check_scaling_group
 
 @pytest.mark.asyncio
 @mock.patch('ai.backend.manager.scheduler.predicates.execute_with_retry')
-async def test_allowed_session_types_check(mock_query_result):
-    mock_query_result.return_value = [
+async def test_allowed_session_types_check(mock_query):
+    mock_query.return_value = [
         {
             'name': 'a',
             'scheduler_opts': {
@@ -35,6 +35,8 @@ async def test_allowed_session_types_check(mock_query_result):
     mock_conn = MagicMock()
     mock_sched_ctx = MagicMock()
     mock_sess_ctx = MagicMock()
+
+    # Preferred scaling group with one match in allowed sgroups
 
     mock_sess_ctx.session_type = SessionTypes.BATCH
     mock_sess_ctx.scaling_group = 'a'
@@ -82,6 +84,8 @@ async def test_allowed_session_types_check(mock_query_result):
     assert result.passed
     assert mock_sess_ctx.target_sgroup_names == ['c']
 
+    # Non-existent/disallowed preferred scaling group
+
     mock_sess_ctx.session_type = SessionTypes.INTERACTIVE
     mock_sess_ctx.scaling_group = 'x'
     mock_sess_ctx.target_sgroup_names = []
@@ -90,6 +94,8 @@ async def test_allowed_session_types_check(mock_query_result):
     assert result.message is not None
     assert "do not have access" in result.message
     assert mock_sess_ctx.target_sgroup_names == []
+
+    # No preferred scaling group with partially matching allowed sgroups
 
     mock_sess_ctx.session_type = SessionTypes.BATCH
     mock_sess_ctx.scaling_group = None
@@ -105,7 +111,9 @@ async def test_allowed_session_types_check(mock_query_result):
     assert result.passed
     assert mock_sess_ctx.target_sgroup_names == ['b', 'c']
 
-    mock_query_result.return_value = []
+    # No preferred scaling group with an empty list of allowed sgroups
+
+    mock_query.return_value = []
 
     mock_sess_ctx.session_type = SessionTypes.BATCH
     mock_sess_ctx.scaling_group = 'x'
@@ -125,7 +133,9 @@ async def test_allowed_session_types_check(mock_query_result):
     assert "do not have any" in result.message
     assert mock_sess_ctx.target_sgroup_names == []
 
-    mock_query_result.return_value = [
+    # No preferred scaling group with a non-empty list of allowed sgroups
+
+    mock_query.return_value = [
         {
             'name': 'a',
             'scheduler_opts': {
