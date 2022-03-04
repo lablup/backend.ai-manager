@@ -936,4 +936,4 @@ async def _rollback_predicate_mutations(
     # (especially with multi-node multi-container cluster sessions)
     # may accumulate up multiple subtractions, resulting in
     # negative concurrency_occupied values.
-    await recalc_concurrency_used(db_conn, sched_ctx, session.access_key)
+    await recalc_concurrency_used(db_conn, sched_ctx.registry.redis_stat, session.access_key)

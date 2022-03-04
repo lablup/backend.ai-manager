@@ -1489,7 +1489,7 @@ class LegacyComputeSessionList(graphene.ObjectType):
 
 async def recalc_concurrency_used(
     db_conn: SAConnection,
-    sched_ctx: Any,
+    redis_stat: RedisConnectionInfo,
     access_key: AccessKey,
 ) -> None:
     async with db_conn.begin_nested():
@@ -1504,7 +1504,7 @@ async def recalc_concurrency_used(
         concurrency_used = await db_conn.execute(query)
 
     await redis.execute(
-        sched_ctx.registry.redis_stat,
+        redis_stat,
         lambda r: r.hset(
             'keypair.concurrency', access_key, concurrency_used,
         ),
