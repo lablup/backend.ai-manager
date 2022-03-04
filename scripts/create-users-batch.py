@@ -92,11 +92,15 @@ def main(username_pattern: str, num_users: int,
             'is_active': True,
             'is_admin': False,
             'resource_policy': resource_policy,
-            'concurrency_used': 0,
             'rate_limit': rate_limit,
             'num_queries': 0,
         }
         fixture['keypairs'].append(kp)
+        kp_conc = {
+            'access_key': ak,
+            'concurrency_used': 0,
+        }
+        fixture['keypairs_concurrency'].append(kp_conc)
         ug = {
             'user_id': user_uuid,
             'group_id': group_uuid,

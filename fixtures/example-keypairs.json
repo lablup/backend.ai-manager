@@ -129,7 +129,6 @@
             "secret_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
             "is_active": true,
             "resource_policy": "default",
-            "concurrency_used": 0,
             "rate_limit": 30000,
             "num_queries": 0,
             "is_admin": true,
@@ -141,7 +140,6 @@
             "secret_key": "cWbsM_vBB4CzTW7JdORRMx8SjGI3-wEXAMPLEKEY",
             "is_active": true,
             "resource_policy": "default",
-            "concurrency_used": 0,
             "rate_limit": 30000,
             "num_queries": 0,
             "is_admin": true,
@@ -153,7 +151,6 @@
             "secret_key": "C8qnIo29EZvXkPK_MXcuAakYTy4NYrxwmCEyNPlf",
             "is_active": true,
             "resource_policy": "default",
-            "concurrency_used": 0,
             "rate_limit": 30000,
             "num_queries": 0,
             "is_admin": false,
@@ -165,11 +162,28 @@
             "secret_key": "7tuEwF1J7FfK41vOM4uSSyWCUWjPBolpVwvgkSBu",
             "is_active": true,
             "resource_policy": "default",
-            "concurrency_used": 0,
             "rate_limit": 30000,
             "num_queries": 0,
             "is_admin": false,
             "user": "2e10157d-20ca-4bd0-9806-3f909cbcd0e6"
+        }
+    ],
+    "keypairs_concurrency": [
+        {
+            "access_key": "AKIAIOSFODNN7EXAMPLE",
+            "concurrency_used": 0
+        },
+        {
+            "access_key": "AKIAHUKCHDEZGEXAMPLE",
+            "concurrency_used": 0
+        },
+        {
+            "access_key": "AKIANABBDUSEREXAMPLE",
+            "concurrency_used": 0
+        },
+        {
+            "access_key": "AKIANAMONITOREXAMPLE",
+            "concurrency_used": 0
         }
     ]
 }

@@ -93,6 +93,7 @@ from ..models import (
     domains,
     association_groups_users as agus, groups,
     keypairs, kernels, query_bootstrap_script,
+    keypairs_concurrency,
     keypair_resource_policies,
     scaling_groups,
     users, UserRole,
@@ -1430,8 +1431,8 @@ async def report_stats(root_ctx: RootContext, interval: float) -> None:
 
     async with root_ctx.db.begin_readonly() as conn:
         query = (
-            sa.select([sa.func.sum(keypairs.c.concurrency_used)])
-            .select_from(keypairs)
+            sa.select([sa.func.sum(keypairs_concurrency.c.concurrency_used)])
+            .select_from(keypairs_concurrency)
         )
         n = await conn.scalar(query)
         await stats_monitor.report_metric(

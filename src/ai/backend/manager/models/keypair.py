@@ -78,7 +78,6 @@ keypairs = sa.Table(
     sa.Column('modified_at', sa.DateTime(timezone=True),
               server_default=sa.func.now(), onupdate=sa.func.current_timestamp()),
     sa.Column('last_used', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('concurrency_used', sa.Integer),
     sa.Column('rate_limit', sa.Integer),
     sa.Column('num_queries', sa.Integer, server_default='0'),
 
@@ -143,7 +142,6 @@ class KeyPair(graphene.ObjectType):
     resource_policy = graphene.String()
     created_at = GQLDateTime()
     last_used = GQLDateTime()
-    concurrency_used = graphene.Int()
     rate_limit = graphene.Int()
     num_queries = graphene.Int()
     user = graphene.UUID()
@@ -189,7 +187,6 @@ class KeyPair(graphene.ObjectType):
             created_at=row['created_at'],
             last_used=row['last_used'],
             concurrency_limit=0,  # moved to resource policy
-            concurrency_used=row['concurrency_used'],
             rate_limit=row['rate_limit'],
             user=row['user'],
             ssh_public_key=row['ssh_public_key'],
@@ -256,7 +253,6 @@ class KeyPair(graphene.ObjectType):
         "created_at": ("keypairs_created_at", dtparse),
         "last_used": ("keypairs_last_used", dtparse),
         "concurrency_limit": ("keypairs_concurrency_limit", None),
-        "concurrency_used": ("keypairs_concurrency_used", None),
         "rate_limit": ("keypairs_rate_limit", None),
         "num_queries": ("keypairs_num_queries", None),
         "ssh_public_key": ("keypairs_ssh_public_key", None),
@@ -272,7 +268,6 @@ class KeyPair(graphene.ObjectType):
         "created_at": "keypairs_created_at",
         "last_used": "keypairs_last_used",
         "concurrency_limit": "keypairs_concurrency_limit",
-        "concurrency_used": "keypairs_concurrency_used",
         "rate_limit": "keypairs_rate_limit",
         "num_queries": "keypairs_num_queries",
     }
@@ -472,7 +467,6 @@ class CreateKeyPair(graphene.Mutation):
             'is_active': props.is_active,
             'is_admin': props.is_admin,
             'resource_policy': props.resource_policy,
-            'concurrency_used': 0,
             'rate_limit': props.rate_limit,
             'num_queries': 0,
             'ssh_public_key': pubkey,

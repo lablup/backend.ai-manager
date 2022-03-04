@@ -108,6 +108,7 @@ from .defs import DEFAULT_ROLE, INTRINSIC_SLOTS
 from .types import SessionGetter
 from .models import (
     agents, kernels, keypairs, vfolders,
+    keypairs_concurrency,
     query_group_dotfiles, query_domain_dotfiles,
     keypair_resource_policies,
     AgentStatus, KernelStatus,
@@ -1618,24 +1619,24 @@ class AgentRegistry:
                     # Update concurrency_used for keypairs with running containers.
                     for ak, used in concurrency_used_per_key.items():
                         query = (
-                            sa.update(keypairs)
+                            sa.update(keypairs_concurrency)
                             .values(concurrency_used=used)
-                            .where(keypairs.c.access_key == ak)
+                            .where(keypairs_concurrency.c.access_key == ak)
                         )
                         await conn.execute(query)
                     # Update all other keypairs to have concurrency_used = 0.
                     query = (
-                        sa.update(keypairs)
+                        sa.update(keypairs_concurrency)
                         .values(concurrency_used=0)
-                        .where(keypairs.c.concurrency_used != 0)
-                        .where(sa.not_(keypairs.c.access_key.in_(concurrency_used_per_key.keys())))
+                        .where(keypairs_concurrency.c.concurrency_used != 0)
+                        .where(sa.not_(keypairs_concurrency.c.access_key.in_(concurrency_used_per_key.keys())))
                     )
                     await conn.execute(query)
                 else:
                     query = (
-                        sa.update(keypairs)
+                        sa.update(keypairs_concurrency)
                         .values(concurrency_used=0)
-                        .where(keypairs.c.concurrency_used != 0)
+                        .where(keypairs_concurrency.c.concurrency_used != 0)
                     )
                     await conn.execute(query)
 
@@ -1849,11 +1850,11 @@ class AgentRegistry:
                                     # The main session is terminated;
                                     # decrement the user's concurrency counter
                                     await conn.execute(
-                                        sa.update(keypairs)
+                                        sa.update(keypairs_concurrency)
                                         .values({
-                                            'concurrency_used': keypairs.c.concurrency_used - 1,
+                                            'concurrency_used': keypairs_concurrency.c.concurrency_used - 1,
                                         })
-                                        .where(keypairs.c.access_key == kernel['access_key']),
+                                        .where(keypairs_concurrency.c.access_key == kernel['access_key']),
                                     )
                                 await conn.execute(
                                     sa.update(kernels)
