@@ -4,6 +4,9 @@ import asyncio
 from contextvars import ContextVar
 import logging
 import json
+from pathlib import Path
+import pickle
+import tempfile
 from typing import (
     Any,
     AsyncIterator,
@@ -36,6 +39,36 @@ if TYPE_CHECKING:
 from ..api.utils import chunked
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
+
+_limiters: dict[str, AsyncLimiter] = {}
+
+
+def _load_limiter(name: str, default_config: tuple[float, float]) -> AsyncLimiter:
+    if (o := _limiters.get(name)) is not None:
+        return o
+    path = Path(tempfile.gettempdir(), f"bai.container_registry.asynclimiter.{name}")
+    try:
+        with open(path, "rb") as f:
+            o = cast(AsyncLimiter, pickle.load(f))
+            if o.max_rate != default_config[0] or o.time_period != default_config[1]:
+                o = AsyncLimiter(max_rate=default_config[0], time_period=default_config[1])
+                print(f"Recreated async limiter from pickled file: {name}", flush=True)
+            else:
+                print(f"Loaded async limiter from pickled file: {name}", flush=True)
+    except (OSError, pickle.PickleError):
+        o = AsyncLimiter(max_rate=default_config[0], time_period=default_config[1])
+    _limiters[name] = o
+    return o
+
+
+def _save_limiter(name: str, config: AsyncLimiter) -> None:
+    path = Path(tempfile.gettempdir(), f"bai.container_registry.asynclimiter.{name}")
+    try:
+        with open(path, "wb") as f:
+            pickle.dump(config, f)
+        print(f"Saved async limiter to pickled file: {name}", flush=True)
+    except OSError:
+        log.debug("Failed to store async limiter ({}) status in {}", name, path)
 
 
 class BaseContainerRegistry(metaclass=ABCMeta):
@@ -78,8 +111,20 @@ class BaseContainerRegistry(metaclass=ABCMeta):
         self.sema = ContextVar('sema')
         self.reporter = ContextVar('reporter', default=None)
         self.all_updates = ContextVar('all_updates')
+        self._limiter_prefix = f"{hash(self.registry_url):x}"
+        # TODO: Use a per-registry global lock to store/load rate limiter states.
         self.default_rate_limiter = AsyncLimiter(*type(self).default_rate_limit)
         self.manifest_rate_limiter = AsyncLimiter(*type(self).manifest_rate_limit)
+        # self.default_rate_limiter = _load_limiter(
+        #     f"{self._limiter_prefix}.default",
+        #     type(self).default_rate_limit,
+        # )
+        # self.manifest_rate_limiter = _load_limiter(
+        #     f"{self._limiter_prefix}.manifest",
+        #     type(self).manifest_rate_limit,
+        # )
+        # atexit.register(_save_limiter, f"{self._limiter_prefix}.default", self.default_rate_limiter)
+        # atexit.register(_save_limiter, f"{self._limiter_prefix}.manifest", self.manifest_rate_limiter)
 
     async def rescan_single_registry(
         self,
