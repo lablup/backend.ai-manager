@@ -386,7 +386,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
     t.Dict({
         t.Key('all', default=False): t.ToBool,
         tx.AliasedKey(['group_id', 'groupId'], default=None): tx.UUID | t.String | t.Null,
-        tx.AliasedKey(['email', 'user_id', 'userID'], default=None): t.String | t.Null,
+        tx.AliasedKey(['owner_user_email', 'ownerUserEmail'], default=None): t.Email | t.Null,
     }),
 )
 async def list_folders(request: web.Request, params: Any) -> web.Response:
@@ -400,14 +400,13 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
     def make_entries(result, user_uuid) -> List[Dict[str, Any]]:
         entries = []
         for row in result:
-            is_owner = True if row.vfolders_user == user_uuid else False
             entries.append({
                 'name': row.vfolders_name,
                 'id': row.vfolders_id,
                 'host': row.vfolders_host,
                 'usage_mode': row.vfolders_usage_mode,
                 'created_at': row.vfolders_created_at,
-                'is_owner': is_owner,
+                'is_owner': (row.vfolders_user == user_uuid),
                 'permission': row.vfolders_permission,
                 'user': str(row.vfolders_user) if row.vfolders_user else None,
                 'group': str(row.vfolders_group) if row.vfolders_group else None,
@@ -422,6 +421,7 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
                 'max_size': row.vfolders_max_size,
             })
         return entries
+
     log.info('VFOLDER.LIST (ak:{})', access_key)
     entries: List[Mapping[str, Any]] | Sequence[Mapping[str, Any]]
     async with root_ctx.db.begin() as conn:
@@ -436,13 +436,13 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
             )
             result = await conn.execute(query)
             entries = make_entries(result, user_uuid)
-        elif request['is_superadmin'] and params['email']:
+        elif request['is_superadmin'] and params['owner_user_email']:
             j = (vfolders.join(users, vfolders.c.user == users.c.uuid, isouter=True)
                          .join(groups, vfolders.c.group == groups.c.id, isouter=True))
             query = (
                 sa.select([vfolders, users.c.email, groups.c.name], use_labels=True)
                 .select_from(j)
-                .where(users.c.email == params['email'])
+                .where(users.c.email == params['owner_user_email'])
             )
             result = await conn.execute(query)
             entries = make_entries(result, user_uuid)
@@ -452,7 +452,7 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
             query = (
                 sa.select([vfolders, users.c.email, groups.c.name], use_labels=True)
                 .select_from(j)
-                .where(vfolder_invitations.c.invitee == params['email'])
+                .where(vfolder_invitations.c.invitee == params['owner_user_email'])
             )
             result = await conn.execute(query)
             entries.extend(make_entries(result, user_uuid))
@@ -470,26 +470,26 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
                 allowed_vfolder_types=allowed_vfolder_types,
                 extra_vf_conds=extra_vf_conds,
             )
-        for entry in entries:
-            resp.append({
-                'name': entry['name'],
-                'id': entry['id'].hex,
-                'host': entry['host'],
-                'usage_mode': entry['usage_mode'].value,
-                'created_at': str(entry['created_at']),
-                'is_owner': entry['is_owner'],
-                'permission': entry['permission'].value,
-                'user': str(entry['user']) if entry['user'] else None,
-                'group': str(entry['group']) if entry['group'] else None,
-                'creator': entry['creator'],
-                'user_email': entry['user_email'],
-                'group_name': entry['group_name'],
-                'ownership_type': entry['ownership_type'].value,
-                'type': entry['ownership_type'].value,  # legacy
-                'cloneable': entry['cloneable'],
-                'max_files': entry['max_files'],
-                'max_size': entry['max_size'],
-            })
+    for entry in entries:
+        resp.append({
+            'name': entry['name'],
+            'id': entry['id'].hex,
+            'host': entry['host'],
+            'usage_mode': entry['usage_mode'].value,
+            'created_at': str(entry['created_at']),
+            'is_owner': entry['is_owner'],
+            'permission': entry['permission'].value,
+            'user': str(entry['user']) if entry['user'] else None,
+            'group': str(entry['group']) if entry['group'] else None,
+            'creator': entry['creator'],
+            'user_email': entry['user_email'],
+            'group_name': entry['group_name'],
+            'ownership_type': entry['ownership_type'].value,
+            'type': entry['ownership_type'].value,  # legacy
+            'cloneable': entry['cloneable'],
+            'max_files': entry['max_files'],
+            'max_size': entry['max_size'],
+        })
     return web.json_response(resp, status=200)
 
 
