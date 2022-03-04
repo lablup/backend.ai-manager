@@ -21,4 +21,4 @@ def upgrade():
 
 
 def downgrade():
-    op.add_column('keypairs', sa.Column('concurrency_used', sa.Integer, default=0))
+    op.add_column('keypairs', sa.Column('concurrency_used', sa.Integer, nullable=True))
