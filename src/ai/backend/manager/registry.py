@@ -1629,7 +1629,9 @@ class AgentRegistry:
                         sa.update(keypairs_concurrency)
                         .values(concurrency_used=0)
                         .where(keypairs_concurrency.c.concurrency_used != 0)
-                        .where(sa.not_(keypairs_concurrency.c.access_key.in_(concurrency_used_per_key.keys())))
+                        .where(sa.not_(
+                            keypairs_concurrency.c.access_key.in_(concurrency_used_per_key.keys()),
+                        ))
                     )
                     await conn.execute(query)
                 else:
@@ -1852,9 +1854,12 @@ class AgentRegistry:
                                     await conn.execute(
                                         sa.update(keypairs_concurrency)
                                         .values({
-                                            'concurrency_used': keypairs_concurrency.c.concurrency_used - 1,
+                                            'concurrency_used':
+                                            keypairs_concurrency.c.concurrency_used - 1,
                                         })
-                                        .where(keypairs_concurrency.c.access_key == kernel['access_key']),
+                                        .where(
+                                            keypairs_concurrency.c.access_key == kernel['access_key'],
+                                        ),
                                     )
                                 await conn.execute(
                                     sa.update(kernels)

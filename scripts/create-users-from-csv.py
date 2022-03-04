@@ -49,6 +49,7 @@ def main(csv_path: str,
     fixture: Mapping[str, List[Dict[str, Any]]] = {
         'users': [],
         'keypairs': [],
+        'keypairs_concurrency': [],
         'association_groups_users': [],
     }
 

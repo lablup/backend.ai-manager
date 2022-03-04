@@ -14,7 +14,7 @@ from ai.backend.common.types import (
 )
 
 from ..models import (
-    domains, groups, kernels, keypairs,
+    domains, groups, kernels,
     keypairs_concurrency,
     keypair_resource_policies,
     query_allowed_sgroups,

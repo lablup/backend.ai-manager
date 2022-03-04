@@ -48,6 +48,7 @@ def main(username_pattern: str, num_users: int,
     fixture: Mapping[str, List[Dict[str, Any]]] = {
         'users': [],
         'keypairs': [],
+        'keypairs_concurrency': [],
         'association_groups_users': [],
     }
 

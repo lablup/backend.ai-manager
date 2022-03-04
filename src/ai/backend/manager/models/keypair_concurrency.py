@@ -10,10 +10,6 @@ import sqlalchemy as sa
 from sqlalchemy.engine.row import Row
 
 from ai.backend.common import redis
-from ai.backend.common.types import (
-    AccessKey,
-    SecretKey,
-)
 
 if TYPE_CHECKING:
     from .gql import GraphQueryContext
@@ -110,7 +106,6 @@ class KeyPair(graphene.ObjectType):
         *,
         filter: str = None,
     ) -> int:
-        from .user import users
         query = (
             sa.select([sa.func.count(keypairs_concurrency.c.access_key)])
             .select_from(keypairs_concurrency)
