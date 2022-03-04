@@ -211,6 +211,12 @@ async def check_scaling_group(
             )
 
     sgroups = await execute_with_retry(_query)
+    if not sgroups:
+        return PredicateResult(
+            False,
+            "You don't have any scaling groups allowed to use.",
+            permanent=True,
+        )
     target_sgroup_names: List[str] = []
     preferred_sgroup_name = sess_ctx.scaling_group
     if preferred_sgroup_name is not None:
@@ -220,37 +226,34 @@ async def check_scaling_group(
                 if sess_ctx.session_type.value.lower() not in allowed_session_types:
                     return PredicateResult(
                         False,
-                        f"The given preferred scaling group is not allowed to use. "
-                        f"({preferred_sgroup_name})",
+                        f"The scaling group '{preferred_sgroup_name}' does not accept "
+                        f"the session type '{sess_ctx.session_type}'. ",
                         permanent=True,
                     )
                 break
         else:
             return PredicateResult(
                 False,
-                f"The given preferred scaling group is not allowed to use. "
-                f"({preferred_sgroup_name})",
+                f"You don't have access to the scaling group '{preferred_sgroup_name}'.",
                 permanent=True,
             )
         # Consider agents only in the preferred scaling group.
         target_sgroup_names = [preferred_sgroup_name]
     else:
-        # Consider all agents in all allowed scaling groups.
+        # Consider all allowed scaling groups.
+        usable_sgroups = []
         for sgroup in sgroups:
             allowed_session_types = sgroup['scheduler_opts']['allowed_session_types']
             if sess_ctx.session_type.value.lower() in allowed_session_types:
-                break
-        else:
+                usable_sgroups.append(sgroup)
+        if not usable_sgroups:  # If no scaling groups allow the target session type, fail.
             return PredicateResult(
                 False,
-                "Not allowed session type in scaling groups.",
+                f"No scaling groups accept the session type '{sess_ctx.session_type}'.",
+                permanent=True,
             )
-        target_sgroup_names = [sgroup['name'] for sgroup in sgroups]
+        target_sgroup_names = [sgroup['name'] for sgroup in usable_sgroups]
+    assert target_sgroup_names
     log.debug('considered scaling groups: {}', target_sgroup_names)
-    if not target_sgroup_names:
-        return PredicateResult(
-            False,
-            "No available resource in scaling groups.",
-        )
     sess_ctx.target_sgroup_names.extend(target_sgroup_names)
     return PredicateResult(True)
