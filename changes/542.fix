@@ -1,1 +1,1 @@
-Fix 'allowed_session_types' as not empty using trafaret and Prevent stopping without checking all sgroups during the 'allowed_session_types' check process
+Disallow empty values in `allowed_session_types` of scheduler options and fix the predicate check to scan all scaling groups
