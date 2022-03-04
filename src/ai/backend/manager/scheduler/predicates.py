@@ -214,7 +214,7 @@ async def check_scaling_group(
     if not sgroups:
         return PredicateResult(
             False,
-            "You don't have any scaling groups allowed to use.",
+            "You do not have any scaling groups allowed to use.",
             permanent=True,
         )
     target_sgroup_names: List[str] = []
@@ -227,7 +227,7 @@ async def check_scaling_group(
         else:
             return PredicateResult(
                 False,
-                f"You don't have access to the scaling group '{preferred_sgroup_name}'.",
+                f"You do not have access to the scaling group '{preferred_sgroup_name}'.",
                 permanent=True,
             )
         allowed_session_types = sgroup['scheduler_opts']['allowed_session_types']
