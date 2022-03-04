@@ -71,7 +71,7 @@ scaling_groups = sa.Table(
     sa.Column('scheduler_opts', StructuredJSONBColumn(
         t.Dict({
             t.Key('allowed_session_types', default=['interactive', 'batch']):
-                t.List(tx.Enum(SessionTypes)),
+                t.List(tx.Enum(SessionTypes), min_length=1),
         }).allow_extra('*'),
     ), nullable=False, default={}),
 )
