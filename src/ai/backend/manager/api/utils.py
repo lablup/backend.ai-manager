@@ -20,8 +20,8 @@ from typing import (
     Optional, TYPE_CHECKING,
     Tuple,
     Union,
-    cast,
 )
+import uuid
 
 from aiohttp import web
 import trafaret as t
@@ -54,10 +54,11 @@ async def get_access_key_scopes(request: web.Request, params: Any = None) -> Tup
         raise GenericForbidden('Only authorized requests may have access key scopes.')
     root_ctx: RootContext = request.app['_root.context']
     requester_access_key: AccessKey = request['keypair']['access_key']
-    owner_access_key = cast(Optional[AccessKey], request.query.get('owner_access_key', None))
-    if owner_access_key is None and params is not None:
-        owner_access_key = params.get('owner_access_key', None)
-    if owner_access_key is not None and owner_access_key != requester_access_key:
+    if (
+        params is not None and
+        (owner_access_key := params.get('owner_access_key', None)) is not None and
+        owner_access_key != requester_access_key
+    ):
         async with root_ctx.db.begin_readonly() as conn:
             query = (
                 sa.select([users.c.domain_name, users.c.role])
@@ -69,7 +70,7 @@ async def get_access_key_scopes(request: web.Request, params: Any = None) -> Tup
             result = await conn.execute(query)
             row = result.first()
             if row is None:
-                raise InvalidAPIParameters('Unknown or inactive owner access key')
+                raise InvalidAPIParameters("Unknown owner access key")
             owner_domain = row['domain_name']
             owner_role = row['role']
         if request['is_superadmin']:
@@ -77,21 +78,78 @@ async def get_access_key_scopes(request: web.Request, params: Any = None) -> Tup
         elif request['is_admin']:
             if request['user']['domain_name'] != owner_domain:
                 raise GenericForbidden(
-                    'Domain-admins can perform operations on behalf of '
-                    'other users in the same domain only.')
+                    "Domain-admins can perform operations on behalf of "
+                    "other users in the same domain only.",
+                )
             if owner_role == UserRole.SUPERADMIN:
                 raise GenericForbidden(
-                    'Domain-admins cannot perform operations on behalf of super-admins.')
+                    "Domain-admins cannot perform operations on behalf of super-admins.",
+                )
             pass
         else:
             raise GenericForbidden(
-                'Only admins can perform operations on behalf of other users.')
+                "Only admins can perform operations on behalf of other users.",
+            )
         return requester_access_key, owner_access_key
     return requester_access_key, requester_access_key
 
 
-def check_api_params(checker: t.Trafaret, loads: Callable[[str], Any] = None,
-                     query_param_checker: t.Trafaret = None) -> Any:
+async def get_user_scopes(
+    request: web.Request,
+    params: Optional[dict[str, Any]] = None,
+) -> tuple[uuid.UUID, UserRole]:
+    root_ctx: RootContext = request.app['_root.context']
+    if not request['is_authorized']:
+        raise GenericForbidden("Only authorized requests may have user scopes.")
+    if (
+        params is not None and
+        (owner_user_email := params.get('owner_user_email')) is not None
+    ):
+        if not request['is_superadmin']:
+            raise InvalidAPIParameters("Only superadmins may have user scopes.")
+        async with root_ctx.db.begin_readonly() as conn:
+            user_query = (
+                sa.select([users.c.uuid, users.c.role, users.c.domain_name])
+                .select_from(users)
+                .where(
+                    (users.c.email == owner_user_email),
+                )
+            )
+            result = await conn.execute(user_query)
+            row = result.first()
+            if row is None:
+                raise InvalidAPIParameters("Cannot delegate an unknown user")
+            owner_user_uuid = row['uuid']
+            owner_user_role = row['role']
+            owner_user_domain = row['domain_name']
+        if request['is_superadmin']:
+            pass
+        elif request['is_admin']:
+            if request['user']['domain_name'] != owner_user_domain:
+                raise GenericForbidden(
+                    "Domain-admins can perform operations on behalf of "
+                    "other users in the same domain only.",
+                )
+            if owner_user_role == UserRole.SUPERADMIN:
+                raise GenericForbidden(
+                    "Domain-admins cannot perform operations on behalf of super-admins.",
+                )
+            pass
+        else:
+            raise GenericForbidden(
+                "Only admins can perform operations on behalf of other users.",
+            )
+    else:
+        owner_user_uuid = request['user_uuid']
+        owner_user_role = request['user_role']
+    return owner_user_uuid, owner_user_role
+
+
+def check_api_params(
+    checker: t.Trafaret,
+    loads: Callable[[str], Any] = None,
+    query_param_checker: t.Trafaret = None,
+) -> Any:
     # FIXME: replace ... with [web.Request, Any...] in the future mypy
     def wrap(handler: Callable[..., Awaitable[web.Response]]):
 

@@ -61,7 +61,7 @@ from .manager import (
     server_status_required,
 )
 from .resource import get_watcher_info
-from .utils import check_api_params
+from .utils import check_api_params, get_user_scopes
 if TYPE_CHECKING:
     from .context import RootContext
 
@@ -394,7 +394,6 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     access_key = request['keypair']['access_key']
     domain_name = request['user']['domain_name']
-    user_role = request['user']['role']
     user_uuid = request['user']['uuid']
 
     def make_entries(result, user_uuid) -> List[Dict[str, Any]]:
@@ -424,9 +423,12 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
 
     log.info('VFOLDER.LIST (ak:{})', access_key)
     entries: List[Mapping[str, Any]] | Sequence[Mapping[str, Any]]
+    owner_user_uuid, owner_user_role = await get_user_scopes(request, params)
     async with root_ctx.db.begin_readonly() as conn:
         allowed_vfolder_types = await root_ctx.shared_config.get_vfolder_types()
-        if request['is_superadmin'] and params['all']:
+        if params['all']:
+            if not owner_user_role != UserRole.SUPERADMIN:
+                raise InvalidAPIParameters("Only superadmins may query all existing vfolders.")
             # List all folders for superadmin if all is specified
             j = (vfolders.join(users, vfolders.c.user == users.c.uuid, isouter=True)
                          .join(groups, vfolders.c.group == groups.c.id, isouter=True))
@@ -436,36 +438,18 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
             )
             result = await conn.execute(query)
             entries = make_entries(result, user_uuid)
-        elif request['is_superadmin'] and params['owner_user_email']:
-            j = (vfolders.join(users, vfolders.c.user == users.c.uuid, isouter=True)
-                         .join(groups, vfolders.c.group == groups.c.id, isouter=True))
-            query = (
-                sa.select([vfolders, users.c.email, groups.c.name], use_labels=True)
-                .select_from(j)
-                .where(users.c.email == params['owner_user_email'])
-            )
-            result = await conn.execute(query)
-            entries = make_entries(result, user_uuid)
-            j = (vfolders.join(vfolder_invitations, isouter=True)
-                         .join(users, isouter=True)
-                         .join(groups, isouter=True))
-            query = (
-                sa.select([vfolders, users.c.email, groups.c.name], use_labels=True)
-                .select_from(j)
-                .where(vfolder_invitations.c.invitee == params['owner_user_email'])
-            )
-            result = await conn.execute(query)
-            entries.extend(make_entries(result, user_uuid))
         else:
             extra_vf_conds = None
             if params['group_id'] is not None:
                 # Note: user folders should be returned even when group_id is specified.
-                extra_vf_conds = ((vfolders.c.group == params['group_id']) |
-                                  (vfolders.c.user.isnot(None)))
+                extra_vf_conds = (
+                    (vfolders.c.group == params['group_id']) |
+                    (vfolders.c.user.isnot(None))
+                )
             entries = await query_accessible_vfolders(
                 conn,
-                user_uuid,
-                user_role=user_role,
+                owner_user_uuid,
+                user_role=owner_user_role,
                 domain_name=domain_name,
                 allowed_vfolder_types=allowed_vfolder_types,
                 extra_vf_conds=extra_vf_conds,
