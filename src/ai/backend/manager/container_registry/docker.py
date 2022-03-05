@@ -17,6 +17,10 @@ log = BraceStyleAdapter(logging.getLogger(__name__))
 
 class DockerHubRegistry(BaseContainerRegistry):
 
+    # Docker Hub's unauthenticated users can make 100 GET requests of manifests.
+    default_rate_limit = (100, 30)
+    manifest_rate_limit = (100, 6 * 3600)
+
     async def fetch_repositories(
         self,
         sess: aiohttp.ClientSession,
@@ -28,7 +32,10 @@ class DockerHubRegistry(BaseContainerRegistry):
         repo_list_url: Optional[yarl.URL]
         repo_list_url = hub_url / f'v2/repositories/{username}/'
         while repo_list_url is not None:
-            async with sess.get(repo_list_url, params=params) as resp:
+            async with (
+                self.default_rate_limiter,
+                sess.get(repo_list_url, params=params) as resp,
+            ):
                 if resp.status == 200:
                     data = await resp.json()
                     for item in data['results']:
@@ -70,7 +77,10 @@ class DockerRegistry_v2(BaseContainerRegistry):
             {'n': '30'},
         )
         while catalog_url is not None:
-            async with sess.get(catalog_url, **rqst_args) as resp:
+            async with (
+                self.default_rate_limiter,
+                sess.get(catalog_url, **rqst_args) as resp,
+            ):
                 if resp.status == 200:
                     data = json.loads(await resp.read())
                     for item in data['repositories']:

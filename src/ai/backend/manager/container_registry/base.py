@@ -4,9 +4,22 @@ import asyncio
 from contextvars import ContextVar
 import logging
 import json
-from typing import Any, AsyncIterator, Dict, Mapping, Optional, TYPE_CHECKING, cast
+from pathlib import Path
+import pickle
+import tempfile
+from typing import (
+    Any,
+    AsyncIterator,
+    ClassVar,
+    Dict,
+    Mapping,
+    Optional,
+    TYPE_CHECKING,
+    cast,
+)
 
 import aiohttp
+from aiolimiter import AsyncLimiter
 import aiotools
 import yarl
 
@@ -27,8 +40,41 @@ from ..api.utils import chunked
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 
+_limiters: dict[str, AsyncLimiter] = {}
+
+
+def _load_limiter(name: str, default_config: tuple[float, float]) -> AsyncLimiter:
+    if (o := _limiters.get(name)) is not None:
+        return o
+    path = Path(tempfile.gettempdir(), f"bai.container_registry.asynclimiter.{name}")
+    try:
+        with open(path, "rb") as f:
+            o = cast(AsyncLimiter, pickle.load(f))
+            if o.max_rate != default_config[0] or o.time_period != default_config[1]:
+                o = AsyncLimiter(max_rate=default_config[0], time_period=default_config[1])
+                print(f"Recreated async limiter from pickled file: {name}", flush=True)
+            else:
+                print(f"Loaded async limiter from pickled file: {name}", flush=True)
+    except (OSError, pickle.PickleError):
+        o = AsyncLimiter(max_rate=default_config[0], time_period=default_config[1])
+    _limiters[name] = o
+    return o
+
+
+def _save_limiter(name: str, config: AsyncLimiter) -> None:
+    path = Path(tempfile.gettempdir(), f"bai.container_registry.asynclimiter.{name}")
+    try:
+        with open(path, "wb") as f:
+            pickle.dump(config, f)
+        print(f"Saved async limiter to pickled file: {name}", flush=True)
+    except OSError:
+        log.debug("Failed to store async limiter ({}) status in {}", name, path)
+
 
 class BaseContainerRegistry(metaclass=ABCMeta):
+
+    default_rate_limit: ClassVar = (200, 30)
+    manifest_rate_limit: ClassVar = (200, 30)
 
     etcd: AsyncEtcd
     registry_name: str
@@ -65,6 +111,20 @@ class BaseContainerRegistry(metaclass=ABCMeta):
         self.sema = ContextVar('sema')
         self.reporter = ContextVar('reporter', default=None)
         self.all_updates = ContextVar('all_updates')
+        self._limiter_prefix = f"{hash(self.registry_url):x}"
+        # TODO: Use a per-registry global lock to store/load rate limiter states.
+        self.default_rate_limiter = AsyncLimiter(*type(self).default_rate_limit)
+        self.manifest_rate_limiter = AsyncLimiter(*type(self).manifest_rate_limit)
+        # self.default_rate_limiter = _load_limiter(
+        #     f"{self._limiter_prefix}.default",
+        #     type(self).default_rate_limit,
+        # )
+        # self.manifest_rate_limiter = _load_limiter(
+        #     f"{self._limiter_prefix}.manifest",
+        #     type(self).manifest_rate_limit,
+        # )
+        # atexit.register(_save_limiter, f"{self._limiter_prefix}.default", self.default_rate_limiter)
+        # atexit.register(_save_limiter, f"{self._limiter_prefix}.manifest", self.manifest_rate_limiter)
 
     async def rescan_single_registry(
         self,
@@ -118,7 +178,10 @@ class BaseContainerRegistry(metaclass=ABCMeta):
             {'n': '10'},
         )
         while tag_list_url is not None:
-            async with sess.get(tag_list_url, **rqst_args) as resp:
+            async with (
+                self.default_rate_limiter,
+                sess.get(tag_list_url, **rqst_args) as resp,
+            ):
                 data = json.loads(await resp.read())
                 if 'tags' in data:
                     # sometimes there are dangling image names in the hub.
@@ -150,8 +213,13 @@ class BaseContainerRegistry(metaclass=ABCMeta):
         skip_reason = None
         try:
             async with self.sema.get():
-                async with sess.get(self.registry_url / f'v2/{image}/manifests/{tag}',
-                                    **rqst_args) as resp:
+                async with (
+                    self.manifest_rate_limiter,
+                    sess.get(
+                        self.registry_url / f'v2/{image}/manifests/{tag}',
+                        **rqst_args,
+                    ) as resp,
+                ):
                     if resp.status == 404:
                         # ignore missing tags
                         # (may occur after deleting an image from the docker hub)
@@ -163,8 +231,13 @@ class BaseContainerRegistry(metaclass=ABCMeta):
                     size_bytes = (sum(layer['size'] for layer in data['layers']) +
                                     data['config']['size'])
 
-                async with sess.get(self.registry_url / f'v2/{image}/blobs/{config_digest}',
-                                    **rqst_args) as resp:
+                async with (
+                    self.default_rate_limiter,
+                    sess.get(
+                        self.registry_url / f'v2/{image}/blobs/{config_digest}',
+                        **rqst_args,
+                    ) as resp,
+                ):
                     # content-type may not be json...
                     resp.raise_for_status()
                     data = json.loads(await resp.read())
@@ -200,8 +273,10 @@ class BaseContainerRegistry(metaclass=ABCMeta):
                 updates[f'{tag_prefix}/accels'] = accels
 
             res_prefix = 'ai.backend.resource.min.'
-            for k, v in filter(lambda pair: pair[0].startswith(res_prefix),
-                                labels.items()):
+            for k, v in filter(
+                lambda pair: pair[0].startswith(res_prefix),
+                labels.items(),
+            ):
                 res_key = k[len(res_prefix):]
                 updates[f'{tag_prefix}/resource/{res_key}/min'] = v
             self.all_updates.get().update(updates)

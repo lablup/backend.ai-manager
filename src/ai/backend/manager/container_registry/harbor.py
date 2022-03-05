@@ -31,7 +31,12 @@ class HarborRegistry_v1(BaseContainerRegistry):
         )
         project_ids = []
         while project_list_url is not None:
-            async with sess.get(project_list_url, allow_redirects=False, **rqst_args) as resp:
+            async with (
+                self.default_rate_limiter,
+                sess.get(
+                    project_list_url, allow_redirects=False, **rqst_args,
+                ) as resp,
+            ):
                 projects = await resp.json()
                 for item in projects:
                     if item['name'] in registry_projects:
@@ -90,7 +95,10 @@ class HarborRegistry_v2(BaseContainerRegistry):
                 {'page_size': '30'},
             )
             while repo_list_url is not None:
-                async with sess.get(repo_list_url, allow_redirects=False, **rqst_args) as resp:
+                async with (
+                    self.default_rate_limiter,
+                    sess.get(repo_list_url, allow_redirects=False, **rqst_args) as resp,
+                ):
                     items = await resp.json()
                     if isinstance(items, dict) and (errors := items.get('errors', [])):
                         raise RuntimeError(f"failed to fetch repositories in project {project_name}",
