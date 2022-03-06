@@ -5,7 +5,11 @@ from contextvars import ContextVar
 import logging
 import json
 import platform
-from typing import Any, AsyncIterator, Dict, Mapping, Optional, TYPE_CHECKING, Tuple, Union, cast
+from typing import (
+    Any, AsyncIterator, Dict,
+    Mapping, Optional, TYPE_CHECKING, Tuple,
+    cast,
+)
 
 import aiohttp
 import aiotools
@@ -28,7 +32,18 @@ from ..api.utils import chunked
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 
-manager_arch = platform.machine()
+docker_arch_alias = {
+    'aarch64': 'arm64',
+    'arm64': 'arm64',
+    'x86_64': 'amd64',
+    'x64': 'amd64',
+    'amd64': 'amd64',
+    'x86': '386',
+    'x32': '386',
+    'i686': '386',
+    '386': '386',
+}
+manager_arch = docker_arch_alias.get(platform.machine(), platform.machine())
 
 
 class BaseContainerRegistry(metaclass=ABCMeta):
@@ -153,13 +168,13 @@ class BaseContainerRegistry(metaclass=ABCMeta):
     ) -> None:
         skip_reason = None
 
-        async def _load_manifest(_tag: str) -> Union[str, Tuple]:
+        async def _load_manifest(_tag: str) -> Tuple:
             async with sess.get(self.registry_url / f'v2/{image}/manifests/{_tag}',
                                 **rqst_args) as resp:
                 if resp.status == 404:
                     # ignore missing tags
                     # (may occur after deleting an image from the docker hub)
-                    return 'missing/deleted'
+                    raise ValueError('missing/deleted')
                 resp.raise_for_status()
                 data = await resp.json()
 
@@ -171,7 +186,7 @@ class BaseContainerRegistry(metaclass=ABCMeta):
                         if len(data['manifests']) == 1 and self.strict_architecture:
                             return await _load_manifest(data['manifests'][0]['digest'])
                         else:
-                            return 'data declared as manifest list but contains no manifest'
+                            raise ValueError('data declared as manifest list but contains no manifest')
                 else:
                     config_digest = data['config']['digest']
                     size_bytes = (sum(layer['size'] for layer in data['layers']) +
@@ -181,7 +196,7 @@ class BaseContainerRegistry(metaclass=ABCMeta):
                         resp.raise_for_status()
                         data = json.loads(await resp.read())
                         if data['architecture'] != manager_arch and self.strict_architecture:
-                            return 'image with matching architecture not found'
+                            raise ValueError('image with matching architecture not found')
                         labels = {}
                         if 'container_config' in data:
                             raw_labels = data['container_config'].get('Labels')
@@ -199,9 +214,10 @@ class BaseContainerRegistry(metaclass=ABCMeta):
 
         try:
             async with self.sema.get():
-                query_result = await _load_manifest(tag)
-                if isinstance(query_result, str):
-                    skip_reason = query_result
+                try:
+                    query_result = await _load_manifest(tag)
+                except ValueError as e:
+                    skip_reason = str(e)
                     return
                 else:
                     size_bytes, labels, config_digest = query_result
