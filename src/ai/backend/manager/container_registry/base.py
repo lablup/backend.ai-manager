@@ -32,6 +32,7 @@ from ..api.utils import chunked
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 
+# generalize architecture symbols to match docker API's norm
 docker_arch_alias = {
     'aarch64': 'arm64',
     'arm64': 'arm64',
