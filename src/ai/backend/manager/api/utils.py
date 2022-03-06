@@ -26,7 +26,6 @@ from typing import (
 from aiohttp import web
 import trafaret as t
 import sqlalchemy as sa
-from sqlalchemy.sql.expression import true
 import yaml
 
 from ai.backend.common.logging import BraceStyleAdapter
@@ -46,6 +45,7 @@ _rx_sitepkg_path = re.compile(r'^.+/site-packages/')
 def method_placeholder(orig_method):
     async def _handler(request):
         raise web.HTTPMethodNotAllowed(request.method, [orig_method])
+
     return _handler
 
 
@@ -64,10 +64,7 @@ async def get_access_key_scopes(request: web.Request, params: Any = None) -> Tup
                 .select_from(
                     sa.join(keypairs, users,
                             keypairs.c.user == users.c.uuid))
-                .where(
-                    (keypairs.c.access_key == owner_access_key)
-                    & (keypairs.c.is_active == true()),
-                )
+                .where(keypairs.c.access_key == owner_access_key)
             )
             result = await conn.execute(query)
             row = result.first()
@@ -198,7 +195,6 @@ def prettify_traceback(exc):
 
 
 def catch_unexpected(log, reraise_cancellation: bool = True, raven=None):
-
     def _wrap(func):
 
         @functools.wraps(func)
