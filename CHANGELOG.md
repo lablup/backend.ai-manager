@@ -16,6 +16,25 @@ Changes
 
 <!-- towncrier release notes start -->
 
+## 21.09.8 (2022-03-07)
+
+### Features
+* Make an explicit error message upon `IntegrityError` due to missing scaling groups when handling agent heartbeats. ([#443](https://github.com/lablup/backend.ai-manager/issues/443))
+* Check the allowed session types per scaling group as part of scheduler predicate checks and structurize the `scheduler_opts` column by introducing `StructuredJSONBColumn` which applies trafarets on raw/Python value conversion ([#523](https://github.com/lablup/backend.ai-manager/issues/523))
+* Make shielded async functions to spawn inside `aiotools.PersistentTaskGroup` to ensure proper cancellation on shutdown ([#533](https://github.com/lablup/backend.ai-manager/issues/533))
+
+### Fixes
+* Fix get_wsproxy_version API raising GenericNotFound when user's current domain isn't associated with target scaling group ([#517](https://github.com/lablup/backend.ai-manager/issues/517))
+* Allow admins to take actions on behalf of "inactivated" keypairs, such as terminating an RUNNING compute session created by the inactive keypair. ([#530](https://github.com/lablup/backend.ai-manager/issues/530))
+* Upgrade Callosum to resolve installation error on Ubuntu-20.04/aarch64 ([#534](https://github.com/lablup/backend.ai-manager/issues/534))
+* Fix `get_wsproxy_version()` returning 404 when target scaling group is allowed to individual keypair/user group rather than user's associated domain ([#538](https://github.com/lablup/backend.ai-manager/issues/538))
+* Prevent potential blocking of mutating database transactions when vfolder clone operations take too long time, by making clone operation async (background task) with transactions ([#539](https://github.com/lablup/backend.ai-manager/issues/539))
+* Fix a wrong registry name in the sample etcd config ([#540](https://github.com/lablup/backend.ai-manager/issues/540))
+* Handle multi-architecture image manifest properly. ([#543](https://github.com/lablup/backend.ai-manager/issues/543))
+* Correctly skip the legacy kernel images in the Docker Hub registry, prefixed with `kernel-`, while updating the image metadata. ([#545](https://github.com/lablup/backend.ai-manager/issues/545))
+* Fix a bug that retried transactions even for non-serialization failures, causing excessive database overheads ([#547](https://github.com/lablup/backend.ai-manager/issues/547))
+
+
 ## 21.09.7 (2022-02-14)
 
 ### Features
