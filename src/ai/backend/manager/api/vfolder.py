@@ -454,26 +454,26 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
                 allowed_vfolder_types=allowed_vfolder_types,
                 extra_vf_conds=extra_vf_conds,
             )
-    for entry in entries:
-        resp.append({
-            'name': entry['name'],
-            'id': entry['id'].hex,
-            'host': entry['host'],
-            'usage_mode': entry['usage_mode'].value,
-            'created_at': str(entry['created_at']),
-            'is_owner': entry['is_owner'],
-            'permission': entry['permission'].value,
-            'user': str(entry['user']) if entry['user'] else None,
-            'group': str(entry['group']) if entry['group'] else None,
-            'creator': entry['creator'],
-            'user_email': entry['user_email'],
-            'group_name': entry['group_name'],
-            'ownership_type': entry['ownership_type'].value,
-            'type': entry['ownership_type'].value,  # legacy
-            'cloneable': entry['cloneable'],
-            'max_files': entry['max_files'],
-            'max_size': entry['max_size'],
-        })
+        for entry in entries:
+            resp.append({
+                'name': entry['name'],
+                'id': entry['id'].hex,
+                'host': entry['host'],
+                'usage_mode': entry['usage_mode'].value,
+                'created_at': str(entry['created_at']),
+                'is_owner': entry['is_owner'],
+                'permission': entry['permission'].value,
+                'user': str(entry['user']) if entry['user'] else None,
+                'group': str(entry['group']) if entry['group'] else None,
+                'creator': entry['creator'],
+                'user_email': entry['user_email'],
+                'group_name': entry['group_name'],
+                'ownership_type': entry['ownership_type'].value,
+                'type': entry['ownership_type'].value,  # legacy
+                'cloneable': entry['cloneable'],
+                'max_files': entry['max_files'],
+                'max_size': entry['max_size'],
+            })
     return web.json_response(resp, status=200)
 
 

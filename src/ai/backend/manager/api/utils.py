@@ -140,8 +140,8 @@ async def get_user_scopes(
                 "Only admins can perform operations on behalf of other users.",
             )
     else:
-        owner_user_uuid = request['user_uuid']
-        owner_user_role = request['user_role']
+        owner_user_uuid = request['user']['uuid']
+        owner_user_role = request['user']['role']
     return owner_user_uuid, owner_user_role
 
 
