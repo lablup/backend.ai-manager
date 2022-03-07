@@ -19,6 +19,7 @@ from abc import ABCMeta, abstractmethod
 
 from ai.backend.common.docker import (
     login as registry_login,
+    docker_api_arch_aliases,
     MIN_KERNELSPEC, MAX_KERNELSPEC,
 )
 from ai.backend.common.etcd import (
@@ -32,19 +33,7 @@ from ..api.utils import chunked
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 
-# generalize architecture symbols to match docker API's norm
-docker_arch_alias = {
-    'aarch64': 'arm64',
-    'arm64': 'arm64',
-    'x86_64': 'amd64',
-    'x64': 'amd64',
-    'amd64': 'amd64',
-    'x86': '386',
-    'x32': '386',
-    'i686': '386',
-    '386': '386',
-}
-manager_arch = docker_arch_alias.get(platform.machine(), platform.machine())
+manager_arch = docker_api_arch_aliases.get(platform.machine(), platform.machine())
 
 
 class BaseContainerRegistry(metaclass=ABCMeta):
