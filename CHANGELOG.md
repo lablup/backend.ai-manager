@@ -16,6 +16,16 @@ Changes
 
 <!-- towncrier release notes start -->
 
+21.03.31 (2022-03-07)
+---------------------
+
+### Fixes
+* Prevent potential blocking of mutating database transactions when vfolder clone operations take too long time, by making clone operation async (background task) with transactions ([#539](https://github.com/lablup/backend.ai-manager/issues/539))
+* Fix a wrong registry name in the sample etcd config ([#540](https://github.com/lablup/backend.ai-manager/issues/540))
+* Correctly skip the legacy kernel images in the Docker Hub registry, prefixed with `kernel-`, while updating the image metadata. ([#545](https://github.com/lablup/backend.ai-manager/issues/545))
+* Fix a bug that retried transactions even for non-serialization failures, causing excessive database overheads ([#547](https://github.com/lablup/backend.ai-manager/issues/547))
+
+
 21.03.30 (2022-02-14)
 ---------------------
 
