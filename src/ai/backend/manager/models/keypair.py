@@ -252,7 +252,6 @@ class KeyPair(graphene.ObjectType):
         "resource_policy": ("keypairs_resource_policy", None),
         "created_at": ("keypairs_created_at", dtparse),
         "last_used": ("keypairs_last_used", dtparse),
-        "concurrency_limit": ("keypairs_concurrency_limit", None),
         "rate_limit": ("keypairs_rate_limit", None),
         "num_queries": ("keypairs_num_queries", None),
         "ssh_public_key": ("keypairs_ssh_public_key", None),
@@ -267,7 +266,6 @@ class KeyPair(graphene.ObjectType):
         "resource_policy": "keypairs_resource_policy",
         "created_at": "keypairs_created_at",
         "last_used": "keypairs_last_used",
-        "concurrency_limit": "keypairs_concurrency_limit",
         "rate_limit": "keypairs_rate_limit",
         "num_queries": "keypairs_num_queries",
     }

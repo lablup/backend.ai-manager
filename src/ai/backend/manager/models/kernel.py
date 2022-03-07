@@ -61,7 +61,7 @@ from .group import groups
 from .minilang.queryfilter import QueryFilterParser
 from .minilang.ordering import QueryOrderParser
 from .user import users
-from .keypair_concurrency import keypairs_concurrency
+from .keypair_resource_usage import keypair_resource_usages
 if TYPE_CHECKING:
     from .gql import GraphQueryContext
 
@@ -1491,7 +1491,7 @@ class LegacyComputeSessionList(graphene.ObjectType):
 async def recalc_concurrency_used(db_conn: SAConnection, access_key: AccessKey) -> None:
     async with db_conn.begin_nested():
         query = (
-            sa.update(keypairs_concurrency)
+            sa.update(keypair_resource_usages)
             .values(
                 concurrency_used=(
                     sa.select([sa.func.count(kernels.c.id)])
@@ -1503,6 +1503,6 @@ async def recalc_concurrency_used(db_conn: SAConnection, access_key: AccessKey) 
                     .scalar_subquery()
                 ),
             )
-            .where(keypairs_concurrency.c.access_key == access_key)
+            .where(keypair_resource_usages.c.access_key == access_key)
         )
         await db_conn.execute(query)

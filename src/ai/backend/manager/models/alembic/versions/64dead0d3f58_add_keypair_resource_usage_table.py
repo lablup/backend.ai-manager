@@ -1,4 +1,4 @@
-"""add_keypair_concurrency_table
+"""add_keypair_resource_usage_table
 
 Revision ID: 64dead0d3f58
 Revises: 60a1effa77d2
@@ -19,12 +19,15 @@ depends_on = None
 def upgrade():
     op.drop_column('keypairs', 'concurrency_used')
     op.create_table(
-        'keypairs_concurrency',
+        'keypair_resource_usages',
         sa.Column('access_key', sa.String(length=20), nullable=False, primary_key=True),
+        sa.ForeignKeyConstraint(['access_key'], ['keypairs.access_key'],
+                                name=op.f('fk_keypair_resource_usage_for_keypair_access_keys'),
+                                onupdate='CASCADE', ondelete='CASCADE'),
         sa.Column('concurrency_used', sa.Integer),
     )
 
 
 def downgrade():
     op.add_column('keypairs', sa.Column('concurrency_used', sa.Integer, nullable=True))
-    op.drop_table('keypairs_concurrency')
+    op.drop_table('keypair_resource_usages')

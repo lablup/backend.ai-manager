@@ -15,7 +15,7 @@ from ai.backend.common.types import (
 
 from ..models import (
     domains, groups, kernels,
-    keypairs_concurrency,
+    keypair_resource_usages,
     keypair_resource_policies,
     query_allowed_sgroups,
     DefaultForUnspecified,
@@ -69,9 +69,9 @@ async def check_concurrency(
             result = await db_conn.execute(select_query)
             resource_policy = result.first()
             select_query = (
-                sa.select([keypairs_concurrency.c.concurrency_used])
-                .select_from(keypairs_concurrency)
-                .where(keypairs_concurrency.c.access_key == sess_ctx.access_key)
+                sa.select([keypair_resource_usages.c.concurrency_used])
+                .select_from(keypair_resource_usages)
+                .where(keypair_resource_usages.c.access_key == sess_ctx.access_key)
                 .with_for_update()
             )
             concurrency_used = (await db_conn.execute(select_query)).scalar()
@@ -89,9 +89,9 @@ async def check_concurrency(
 
             # Increment concurrency usage of keypair.
             update_query = (
-                sa.update(keypairs_concurrency)
-                .values(concurrency_used=keypairs_concurrency.c.concurrency_used + 1)
-                .where(keypairs_concurrency.c.access_key == sess_ctx.access_key)
+                sa.update(keypair_resource_usages)
+                .values(concurrency_used=keypair_resource_usages.c.concurrency_used + 1)
+                .where(keypair_resource_usages.c.access_key == sess_ctx.access_key)
             )
             await db_conn.execute(update_query)
             return PredicateResult(True)

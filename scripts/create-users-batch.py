@@ -48,7 +48,7 @@ def main(username_pattern: str, num_users: int,
     fixture: Mapping[str, List[Dict[str, Any]]] = {
         'users': [],
         'keypairs': [],
-        'keypairs_concurrency': [],
+        'keypair_resource_usages': [],
         'association_groups_users': [],
     }
 
@@ -101,7 +101,7 @@ def main(username_pattern: str, num_users: int,
             'access_key': ak,
             'concurrency_used': 0,
         }
-        fixture['keypairs_concurrency'].append(kp_conc)
+        fixture['keypair_resource_usages'].append(kp_conc)
         ug = {
             'user_id': user_uuid,
             'group_id': group_uuid,

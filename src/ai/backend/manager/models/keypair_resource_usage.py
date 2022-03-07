@@ -22,21 +22,21 @@ from .base import (
 from .minilang.queryfilter import QueryFilterParser
 
 __all__: Sequence[str] = (
-    'keypairs_concurrency',
-    'KeyPair',
+    'keypair_resource_usages',
+    'KeyPairResourceUsage',
 )
 
 
-keypairs_concurrency = sa.Table(
-    'keypairs_concurrency', metadata,
+keypair_resource_usages = sa.Table(
+    'keypair_resource_usages', metadata,
     sa.Column('access_key', sa.String(length=20),
-              sa.ForeignKey('keypair.access_key', onupdate='CASCADE', ondelete='CASCADE'),
+              sa.ForeignKey('keypairs.access_key', onupdate='CASCADE', ondelete='CASCADE'),
               primary_key=True, nullable=False, index=True),
     sa.Column('concurrency_used', sa.Integer),
 )
 
 
-class KeyPair(graphene.ObjectType):
+class KeyPairResourceUsage(graphene.ObjectType):
 
     class Meta:
         interfaces = (Item, )
@@ -49,7 +49,7 @@ class KeyPair(graphene.ObjectType):
         cls,
         ctx: GraphQueryContext,
         row: Row,
-    ) -> KeyPair:
+    ) -> KeyPairResourceUsage:
         return cls(
             access_key=row['access_key'],
             concurrency_used=row['concurrency_used'],
@@ -81,10 +81,10 @@ class KeyPair(graphene.ObjectType):
         graph_ctx: GraphQueryContext,
         *,
         limit: int = None,
-    ) -> Sequence[KeyPair]:
+    ) -> Sequence[KeyPairResourceUsage]:
         query = (
-            sa.select([keypairs_concurrency])
-            .select_from(keypairs_concurrency)
+            sa.select([keypair_resource_usages])
+            .select_from(keypair_resource_usages)
         )
         if limit is not None:
             query = query.limit(limit)
@@ -96,7 +96,7 @@ class KeyPair(graphene.ObjectType):
 
     _queryfilter_fieldspec = {
         "access_key": ("keypairs_access_key", None),
-        "concurrency_used": ("keypairs_concurrency_used", None),
+        "concurrency_used": ("keypair_resource_usages_used", None),
     }
 
     @classmethod
@@ -107,8 +107,8 @@ class KeyPair(graphene.ObjectType):
         filter: str = None,
     ) -> int:
         query = (
-            sa.select([sa.func.count(keypairs_concurrency.c.access_key)])
-            .select_from(keypairs_concurrency)
+            sa.select([sa.func.count(keypair_resource_usages.c.access_key)])
+            .select_from(keypair_resource_usages)
         )
         if filter is not None:
             qfparser = QueryFilterParser(cls._queryfilter_fieldspec)

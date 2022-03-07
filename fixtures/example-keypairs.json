@@ -168,7 +168,7 @@
             "user": "2e10157d-20ca-4bd0-9806-3f909cbcd0e6"
         }
     ],
-    "keypairs_concurrency": [
+    "keypair_resource_usages": [
         {
             "access_key": "AKIAIOSFODNN7EXAMPLE",
             "concurrency_used": 0
