@@ -394,7 +394,6 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     access_key = request['keypair']['access_key']
     domain_name = request['user']['domain_name']
-    user_uuid = request['user']['uuid']
 
     def make_entries(result, user_uuid) -> List[Dict[str, Any]]:
         entries = []
