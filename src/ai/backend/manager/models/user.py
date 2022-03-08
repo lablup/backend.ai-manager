@@ -537,8 +537,9 @@ class CreateUser(graphene.Mutation):
                 return
             created_user = result.first()
 
-            # Create a default keypair for the user.
+            # Create a default keypair and keypair_resource_usage for the user.
             from .keypair import CreateKeyPair, keypairs
+            from .keypair_resource_usage import keypair_resource_usages
             kp_data = CreateKeyPair.prepare_new_keypair(
                 email,
                 graph_ctx.schema.get_type('KeyPairInput').create_container({
@@ -555,7 +556,15 @@ class CreateUser(graphene.Mutation):
                     user=created_user.uuid,
                 )
             )
-            await conn.execute(kp_insert_query)
+            kp_result = (await conn.execute(kp_insert_query)).first()
+            kp_rsc_usg_insert_query = (
+                sa.insert(keypair_resource_usages)
+                .values({
+                    'access_key': kp_result.access_key,
+                    'concurrency_used': 0,
+                })
+            )
+            await conn.execute(kp_rsc_usg_insert_query)
 
             # Add user to groups if group_ids parameter is provided.
             from .group import association_groups_users, groups

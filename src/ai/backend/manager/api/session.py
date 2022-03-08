@@ -1430,10 +1430,7 @@ async def report_stats(root_ctx: RootContext, interval: float) -> None:
         GAUGE, 'ai.backend.manager.agent_instances', len(all_inst_ids))
 
     async with root_ctx.db.begin_readonly() as conn:
-        query = (
-            sa.select([sa.func.sum(keypair_resource_usages.c.concurrency_used)])
-            .select_from(keypair_resource_usages)
-        )
+        query = sa.select([sa.func.sum(keypair_resource_usages.c.concurrency_used)])
         n = await conn.scalar(query)
         await stats_monitor.report_metric(
             GAUGE, 'ai.backend.manager.active_kernels', n)

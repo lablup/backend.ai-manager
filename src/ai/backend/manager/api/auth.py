@@ -33,6 +33,7 @@ from ai.backend.common.plugin.hook import (
 
 from ..models import (
     keypairs, keypair_resource_policies, users,
+    keypair_resource_usages,
 )
 from ..models.user import UserRole, UserStatus, INACTIVE_USER_STATUSES, check_credential
 from ..models.keypair import generate_keypair as _gen_keypair, generate_ssh_keypair
@@ -755,6 +756,11 @@ async def signup(request: web.Request, params: Any) -> web.Response:
                 'user': user.uuid,
             }
             query = (keypairs.insert().values(kp_data))
+            kp_result = (await conn.execute(query)).first()
+            query = (keypair_resource_usages.insert().values({
+                'access_key': kp_result.access_key,
+                'concurrency_used': 0,
+            }))
             await conn.execute(query)
 
             # Add user to the default group.

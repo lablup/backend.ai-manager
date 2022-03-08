@@ -70,7 +70,6 @@ async def check_concurrency(
             resource_policy = result.first()
             select_query = (
                 sa.select([keypair_resource_usages.c.concurrency_used])
-                .select_from(keypair_resource_usages)
                 .where(keypair_resource_usages.c.access_key == sess_ctx.access_key)
                 .with_for_update()
             )

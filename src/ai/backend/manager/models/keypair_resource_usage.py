@@ -82,10 +82,7 @@ class KeyPairResourceUsage(graphene.ObjectType):
         *,
         limit: int = None,
     ) -> Sequence[KeyPairResourceUsage]:
-        query = (
-            sa.select([keypair_resource_usages])
-            .select_from(keypair_resource_usages)
-        )
+        query = sa.select([keypair_resource_usages])
         if limit is not None:
             query = query.limit(limit)
         async with graph_ctx.db.begin_readonly() as conn:
@@ -106,10 +103,7 @@ class KeyPairResourceUsage(graphene.ObjectType):
         *,
         filter: str = None,
     ) -> int:
-        query = (
-            sa.select([sa.func.count(keypair_resource_usages.c.access_key)])
-            .select_from(keypair_resource_usages)
-        )
+        query = sa.select([sa.func.count(keypair_resource_usages.c.access_key)])
         if filter is not None:
             qfparser = QueryFilterParser(cls._queryfilter_fieldspec)
             query = qfparser.append_filter(query, filter)
