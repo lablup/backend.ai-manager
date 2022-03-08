@@ -1029,20 +1029,23 @@ async def move_file(request: web.Request, params: Any, row: VFolderRow) -> web.R
     log.info('VFOLDER.MOVE_FILE (ak:{}, vf:{}, src:{}, dst:{})',
              access_key, folder_name, params['src'], params['dst'])
     proxy_name, volume_name = root_ctx.storage_manager.split_host(row['host'])
-    try:
-        async with root_ctx.storage_manager.request(
-            proxy_name, 'POST', 'folder/file/move',
-            json={
-                'volume': volume_name,
-                'vfid': str(row['id']),
-                'src_relpath': params['src'],
-                'dst_relpath': params['dst'],
-            },
-            raise_for_status=True,
-        ):
-            pass
-    except aiohttp.ClientResponseError:
-        raise VFolderOperationFailed
+    async with root_ctx.storage_manager.request(
+        proxy_name, 'POST', 'folder/file/move',
+        json={
+            'volume': volume_name,
+            'vfid': str(row['id']),
+            'src_relpath': params['src'],
+            'dst_relpath': params['dst'],
+        },
+    ) as (_, client_resp):
+        if client_resp.status // 100 != 2:
+            try:
+                error_data = await client_resp.json()
+                raise VFolderOperationFailed(extra_data=error_data)
+            except aiohttp.ClientResponseError:
+                raise VFolderOperationFailed(
+                    extra_msg=f"Storage proxy responded with: {client_resp.status} {client_resp.reason}",
+                )
     return web.json_response({}, status=200)
 
 
