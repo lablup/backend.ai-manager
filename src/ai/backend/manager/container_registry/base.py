@@ -4,7 +4,11 @@ import asyncio
 from contextvars import ContextVar
 import logging
 import json
-from typing import Any, AsyncIterator, Dict, Mapping, Optional, TYPE_CHECKING, cast
+from typing import (
+    Any, AsyncIterator, Dict,
+    Mapping, Optional, TYPE_CHECKING,
+    cast,
+)
 
 import aiohttp
 import aiotools
@@ -40,6 +44,7 @@ class BaseContainerRegistry(metaclass=ABCMeta):
     base_hdrs: Dict[str, str]
     credentials: Dict[str, str]
     ssl_verify: bool
+    strict_architecture: bool
 
     sema: ContextVar[asyncio.Semaphore]
     reporter: ContextVar[Optional[ProgressReporter]]
@@ -53,6 +58,7 @@ class BaseContainerRegistry(metaclass=ABCMeta):
         *,
         max_concurrency_per_registry: int = 4,
         ssl_verify: bool = True,
+        strict_architecture: bool = False,
     ) -> None:
         self.db = db
         self.registry_name = registry_name
@@ -64,6 +70,7 @@ class BaseContainerRegistry(metaclass=ABCMeta):
         }
         self.credentials = {}
         self.ssl_verify = ssl_verify
+        self.strict_architecture = strict_architecture
         self.sema = ContextVar('sema')
         self.reporter = ContextVar('reporter', default=None)
         self.all_updates = ContextVar('all_updates')

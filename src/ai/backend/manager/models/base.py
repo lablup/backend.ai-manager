@@ -5,6 +5,7 @@ import collections
 import enum
 import functools
 import logging
+import trafaret as t
 from typing import (
     Any,
     Awaitable,
@@ -194,6 +195,30 @@ class ResourceSlotColumn(TypeDecorator):
 
     def copy(self):
         return ResourceSlotColumn()
+
+
+class StructuredJSONBColumn(TypeDecorator):
+    """
+    A column type check scheduler_opts's validation using trafaret.
+    """
+
+    impl = JSONB
+    cache_ok = True
+
+    def __init__(self, schema: t.Trafaret) -> None:
+        super().__init__()
+        self._schema = schema
+
+    def process_bind_param(self, value, dialect):
+        return self._schema.check(value)
+
+    def process_result_value(self, raw_value, dialect):
+        if raw_value is None:
+            return self._schema.check({})
+        return self._schema.check(raw_value)
+
+    def copy(self):
+        return StructuredJSONBColumn(self._schema)
 
 
 class CurrencyTypes(enum.Enum):

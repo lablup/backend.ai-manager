@@ -257,8 +257,12 @@ def set_image_resource_limit(
 
 @cli.command()
 @click.argument('registry')
+@click.option(
+    '-s', '--strict-architecture', is_flag=True,
+    help='skip importing images with mismatching architecture (when compared to manager machine)',
+)
 @click.pass_obj
-def rescan_images(cli_ctx, registry) -> None:
+def rescan_images(cli_ctx: CLIContext, registry) -> None:
     '''
     Update the kernel image metadata from all configured docker registries.
 

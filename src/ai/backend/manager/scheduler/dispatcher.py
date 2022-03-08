@@ -770,6 +770,7 @@ class SchedulerDispatcher(aobject):
                             sched_ctx,
                             scheduled_session,
                         ))
+
         except DBAPIError as e:
             if getattr(e.orig, 'pgcode', None) == '55P03':
                 log.info("prepare(): cancelled due to advisory lock timeout; "

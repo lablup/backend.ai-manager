@@ -30,6 +30,7 @@ from tenacity import (
     AsyncRetrying,
     RetryError,
     TryAgain,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
 )
@@ -204,6 +205,7 @@ async def execute_with_retry(txn_func: Callable[[], Awaitable[TQueryResult]]) ->
         async for attempt in AsyncRetrying(
             wait=wait_exponential(multiplier=0.02, min=0.02, max=5.0),
             stop=stop_after_attempt(max_attempts),
+            retry=retry_if_exception_type(TryAgain),
         ):
             with attempt:
                 try:
