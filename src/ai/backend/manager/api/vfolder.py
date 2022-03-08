@@ -61,7 +61,7 @@ from .manager import (
     server_status_required,
 )
 from .resource import get_watcher_info
-from .utils import check_api_params
+from .utils import check_api_params, get_user_scopes
 if TYPE_CHECKING:
     from .context import RootContext
 
@@ -386,6 +386,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
     t.Dict({
         t.Key('all', default=False): t.ToBool,
         tx.AliasedKey(['group_id', 'groupId'], default=None): tx.UUID | t.String | t.Null,
+        tx.AliasedKey(['owner_user_email', 'ownerUserEmail'], default=None): t.Email | t.Null,
     }),
 )
 async def list_folders(request: web.Request, params: Any) -> web.Response:
@@ -393,55 +394,51 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     access_key = request['keypair']['access_key']
     domain_name = request['user']['domain_name']
-    user_role = request['user']['role']
-    user_uuid = request['user']['uuid']
+
+    def make_entries(result, user_uuid) -> List[Dict[str, Any]]:
+        entries = []
+        for row in result:
+            entries.append({
+                'name': row.vfolders_name,
+                'id': row.vfolders_id,
+                'host': row.vfolders_host,
+                'usage_mode': row.vfolders_usage_mode,
+                'created_at': row.vfolders_created_at,
+                'is_owner': (row.vfolders_user == user_uuid),
+                'permission': row.vfolders_permission,
+                'user': str(row.vfolders_user) if row.vfolders_user else None,
+                'group': str(row.vfolders_group) if row.vfolders_group else None,
+                'creator': row.vfolders_creator,
+                'user_email': row.users_email,
+                'group_name': row.groups_name,
+                'ownership_type': row.vfolders_ownership_type,
+                'type': row.vfolders_ownership_type,  # legacy
+                'unmanaged_path': row.vfolders_unmanaged_path,
+                'cloneable': row.vfolders_cloneable if row.vfolders_cloneable else False,
+                'max_files': row.vfolders_max_files,
+                'max_size': row.vfolders_max_size,
+            })
+        return entries
 
     log.info('VFOLDER.LIST (ak:{})', access_key)
     entries: List[Mapping[str, Any]] | Sequence[Mapping[str, Any]]
-    async with root_ctx.db.begin() as conn:
+    owner_user_uuid, owner_user_role = await get_user_scopes(request, params)
+    async with root_ctx.db.begin_readonly() as conn:
         allowed_vfolder_types = await root_ctx.shared_config.get_vfolder_types()
-        if request['is_superadmin'] and params['all']:
-            # List all folders for superadmin if all is specified
-            j = (vfolders.join(users, vfolders.c.user == users.c.uuid, isouter=True)
-                         .join(groups, vfolders.c.group == groups.c.id, isouter=True))
-            query = (
-                sa.select([vfolders, users.c.email, groups.c.name], use_labels=True)
-                .select_from(j)
-            )
-            result = await conn.execute(query)
-            entries = []
-            for row in result:
-                is_owner = True if row.vfolders_user == user_uuid else False
-                entries.append({
-                    'name': row.vfolders_name,
-                    'id': row.vfolders_id,
-                    'host': row.vfolders_host,
-                    'usage_mode': row.vfolders_usage_mode,
-                    'created_at': row.vfolders_created_at,
-                    'is_owner': is_owner,
-                    'permission': row.vfolders_permission,
-                    'user': str(row.vfolders_user) if row.vfolders_user else None,
-                    'group': str(row.vfolders_group) if row.vfolders_group else None,
-                    'creator': row.vfolders_creator,
-                    'user_email': row.users_email,
-                    'group_name': row.groups_name,
-                    'ownership_type': row.vfolders_ownership_type,
-                    'type': row.vfolders_ownership_type,  # legacy
-                    'unmanaged_path': row.vfolders_unmanaged_path,
-                    'cloneable': row.vfolders_cloneable if row.vfolders_cloneable else False,
-                    'max_files': row.vfolders_max_files,
-                    'max_size': row.vfolders_max_size,
-                })
+        if params['all']:
+            raise InvalidAPIParameters("Deprecated use of 'all' option")
         else:
             extra_vf_conds = None
             if params['group_id'] is not None:
                 # Note: user folders should be returned even when group_id is specified.
-                extra_vf_conds = ((vfolders.c.group == params['group_id']) |
-                                  (vfolders.c.user.isnot(None)))
+                extra_vf_conds = (
+                    (vfolders.c.group == params['group_id']) |
+                    (vfolders.c.user.isnot(None))
+                )
             entries = await query_accessible_vfolders(
                 conn,
-                user_uuid,
-                user_role=user_role,
+                owner_user_uuid,
+                user_role=owner_user_role,
                 domain_name=domain_name,
                 allowed_vfolder_types=allowed_vfolder_types,
                 extra_vf_conds=extra_vf_conds,
