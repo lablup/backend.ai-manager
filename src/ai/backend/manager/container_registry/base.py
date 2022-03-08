@@ -4,7 +4,12 @@ import asyncio
 from contextvars import ContextVar
 import logging
 import json
-from typing import Any, AsyncIterator, Dict, Mapping, Optional, TYPE_CHECKING, cast
+import platform
+from typing import (
+    Any, AsyncIterator, Dict,
+    Mapping, Optional, TYPE_CHECKING, Tuple,
+    cast,
+)
 
 import aiohttp
 import aiotools
@@ -14,6 +19,7 @@ from abc import ABCMeta, abstractmethod
 
 from ai.backend.common.docker import (
     login as registry_login,
+    docker_api_arch_aliases,
     MIN_KERNELSPEC, MAX_KERNELSPEC,
 )
 from ai.backend.common.etcd import (
@@ -27,6 +33,8 @@ from ..api.utils import chunked
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 
+manager_arch = docker_api_arch_aliases.get(platform.machine(), platform.machine())
+
 
 class BaseContainerRegistry(metaclass=ABCMeta):
 
@@ -38,6 +46,7 @@ class BaseContainerRegistry(metaclass=ABCMeta):
     base_hdrs: Dict[str, str]
     credentials: Dict[str, str]
     ssl_verify: bool
+    strict_architecture: bool
 
     sema: ContextVar[asyncio.Semaphore]
     reporter: ContextVar[Optional[ProgressReporter]]
@@ -51,6 +60,7 @@ class BaseContainerRegistry(metaclass=ABCMeta):
         *,
         max_concurrency_per_registry: int = 4,
         ssl_verify: bool = True,
+        strict_architecture: bool = False,
     ) -> None:
         self.etcd = etcd
         self.registry_name = registry_name
@@ -62,6 +72,7 @@ class BaseContainerRegistry(metaclass=ABCMeta):
         }
         self.credentials = {}
         self.ssl_verify = ssl_verify
+        self.strict_architecture = strict_architecture
         self.sema = ContextVar('sema')
         self.reporter = ContextVar('reporter', default=None)
         self.all_updates = ContextVar('all_updates')
@@ -145,37 +156,61 @@ class BaseContainerRegistry(metaclass=ABCMeta):
         image: str,
         tag: str,
     ) -> None:
-        config_digest = None
-        labels = {}
         skip_reason = None
-        try:
-            async with self.sema.get():
-                async with sess.get(self.registry_url / f'v2/{image}/manifests/{tag}',
-                                    **rqst_args) as resp:
-                    if resp.status == 404:
-                        # ignore missing tags
-                        # (may occur after deleting an image from the docker hub)
-                        skip_reason = "missing/deleted"
-                        return
-                    resp.raise_for_status()
-                    data = await resp.json()
+
+        async def _load_manifest(_tag: str) -> Tuple:
+            async with sess.get(self.registry_url / f'v2/{image}/manifests/{_tag}',
+                                **rqst_args) as resp:
+                if resp.status == 404:
+                    # ignore missing tags
+                    # (may occur after deleting an image from the docker hub)
+                    raise ValueError('missing/deleted')
+                resp.raise_for_status()
+                data = await resp.json()
+
+                if data['mediaType'] == 'application/vnd.docker.distribution.manifest.list.v2+json':
+                    for m in data['manifests']:
+                        if m['platform']['architecture'] == manager_arch:
+                            return await _load_manifest(m['digest'])
+                    else:
+                        if len(data['manifests']) == 1 and self.strict_architecture:
+                            return await _load_manifest(data['manifests'][0]['digest'])
+                        else:
+                            raise ValueError('data declared as manifest list but contains no manifest')
+                else:
                     config_digest = data['config']['digest']
                     size_bytes = (sum(layer['size'] for layer in data['layers']) +
                                     data['config']['size'])
+                    async with sess.get(self.registry_url / f'v2/{image}/blobs/{config_digest}',
+                                        **rqst_args) as resp:
+                        resp.raise_for_status()
+                        data = json.loads(await resp.read())
+                        if data['architecture'] != manager_arch and self.strict_architecture:
+                            raise ValueError('image with matching architecture not found')
+                        labels = {}
+                        if 'container_config' in data:
+                            raw_labels = data['container_config'].get('Labels')
+                            if raw_labels:
+                                labels.update(raw_labels)
+                            else:
+                                log.warn('label not found on image {}:{}', image, _tag)
+                        else:
+                            raw_labels = data['config'].get('Labels')
+                            if raw_labels:
+                                labels.update(raw_labels)
+                            else:
+                                log.warn('label not found on image {}:{}', image, _tag)
+                        return (size_bytes, labels, config_digest)
 
-                async with sess.get(self.registry_url / f'v2/{image}/blobs/{config_digest}',
-                                    **rqst_args) as resp:
-                    # content-type may not be json...
-                    resp.raise_for_status()
-                    data = json.loads(await resp.read())
-                    if 'container_config' in data:
-                        raw_labels = data['container_config']['Labels']
-                        if raw_labels:
-                            labels.update(raw_labels)
-                    else:
-                        raw_labels = data['config']['Labels']
-                        if raw_labels:
-                            labels.update(raw_labels)
+        try:
+            async with self.sema.get():
+                try:
+                    query_result = await _load_manifest(tag)
+                except ValueError as e:
+                    skip_reason = str(e)
+                    return
+                else:
+                    size_bytes, labels, config_digest = query_result
             if 'ai.backend.kernelspec' not in labels:
                 # Skip non-Backend.AI kernel images
                 skip_reason = "missing kernelspec"
