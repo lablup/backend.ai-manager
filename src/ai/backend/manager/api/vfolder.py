@@ -427,17 +427,7 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
     async with root_ctx.db.begin_readonly() as conn:
         allowed_vfolder_types = await root_ctx.shared_config.get_vfolder_types()
         if params['all']:
-            if not owner_user_role != UserRole.SUPERADMIN:
-                raise InvalidAPIParameters("Only superadmins may query all existing vfolders.")
-            # List all folders for superadmin if all is specified
-            j = (vfolders.join(users, vfolders.c.user == users.c.uuid, isouter=True)
-                         .join(groups, vfolders.c.group == groups.c.id, isouter=True))
-            query = (
-                sa.select([vfolders, users.c.email, groups.c.name], use_labels=True)
-                .select_from(j)
-            )
-            result = await conn.execute(query)
-            entries = make_entries(result, user_uuid)
+            raise InvalidAPIParameters("Deprecated use of 'all' option")
         else:
             extra_vf_conds = None
             if params['group_id'] is not None:
