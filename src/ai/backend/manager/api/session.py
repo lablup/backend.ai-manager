@@ -395,6 +395,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
 
     root_ctx: RootContext = request.app['_root.context']
     app_ctx: PrivateContext = request.app['session.context']
+
     resp: MutableMapping[str, Any] = {}
     current_task = asyncio.current_task()
     assert current_task is not None
@@ -494,32 +495,34 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             params['bootstrap_script'] = script
 
     try:
-        kernel_id = await asyncio.shield(root_ctx.registry.enqueue_session(
-            session_creation_id,
-            params['session_name'], owner_access_key,
-            [{
-                'image_ref': requested_image_ref,
-                'cluster_role': DEFAULT_ROLE,
-                'cluster_idx': 1,
-                'cluster_hostname': f"{DEFAULT_ROLE}1",
-                'creation_config': params['config'],
-                'bootstrap_script': params['bootstrap_script'],
-                'startup_command': params['startup_command'],
-            }],
-            params['config']['scaling_group'],
-            params['session_type'],
-            resource_policy,
-            domain_name=params['domain'],  # type: ignore  # params always have it
-            group_id=group_id,
-            user_uuid=owner_uuid,
-            user_role=request['user']['role'],
-            cluster_mode=params['cluster_mode'],
-            cluster_size=params['cluster_size'],
-            startup_command=params['startup_command'],
-            session_tag=params['tag'],
-            starts_at=starts_at,
-            agent_list=params['config']['agent_list'],
-        ))
+        kernel_id = await asyncio.shield(app_ctx.database_ptask_group.create_task(
+            root_ctx.registry.enqueue_session(
+                session_creation_id,
+                params['session_name'], owner_access_key,
+                [{
+                    'image_ref': requested_image_ref,
+                    'cluster_role': DEFAULT_ROLE,
+                    'cluster_idx': 1,
+                    'cluster_hostname': f"{DEFAULT_ROLE}1",
+                    'creation_config': params['config'],
+                    'bootstrap_script': params['bootstrap_script'],
+                    'startup_command': params['startup_command'],
+                }],
+                params['config']['scaling_group'],
+                params['session_type'],
+                resource_policy,
+                domain_name=params['domain'],  # type: ignore  # params always have it
+                group_id=group_id,
+                user_uuid=owner_uuid,
+                user_role=request['user']['role'],
+                cluster_mode=params['cluster_mode'],
+                cluster_size=params['cluster_size'],
+                startup_command=params['startup_command'],
+                session_tag=params['tag'],
+                starts_at=starts_at,
+                agent_list=params['config']['agent_list'],
+            )),
+        )
         resp['sessionId'] = str(kernel_id)  # changed since API v5
         resp['sessionName'] = str(params['session_name'])
         resp['status'] = 'PENDING'
@@ -994,19 +997,21 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
         async with root_ctx.db.begin_readonly() as conn:
             owner_uuid, group_id, resource_policy = await _query_userinfo(request, params, conn)
 
-        session_id = await asyncio.shield(root_ctx.registry.enqueue_session(
-            session_creation_id,
-            params['session_name'],
-            owner_access_key,
-            kernel_configs,
-            params['scaling_group'],
-            params['sess_type'],
-            resource_policy,
-            domain_name=params['domain'],  # type: ignore
-            group_id=group_id,
-            user_uuid=owner_uuid,
-            user_role=request['user']['role'],
-            session_tag=params['tag'],
+        session_id = await asyncio.shield(app_ctx.database_ptask_group.create_task(
+            root_ctx.registry.enqueue_session(
+                session_creation_id,
+                params['session_name'],
+                owner_access_key,
+                kernel_configs,
+                params['scaling_group'],
+                params['sess_type'],
+                resource_policy,
+                domain_name=params['domain'],  # type: ignore
+                group_id=group_id,
+                user_uuid=owner_uuid,
+                user_role=request['user']['role'],
+                session_tag=params['tag'],
+            ),
         ))
         kernel_id = cast(KernelId, session_id)  # the main kernel's ID is the session ID.
         resp['kernelId'] = str(kernel_id)
@@ -1093,12 +1098,15 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
 async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     session_name: str = request.match_info['session_name']
+    app_ctx: PrivateContext = request.app['session.context']
     access_key: AccessKey = request['keypair']['access_key']
     service: str = params['app']
     myself = asyncio.current_task()
     assert myself is not None
     try:
-        kernel = await asyncio.shield(root_ctx.registry.get_session(session_name, access_key))
+        kernel = await asyncio.shield(app_ctx.database_ptask_group.create_task(
+            root_ctx.registry.get_session(session_name, access_key),
+        ))
     except (SessionNotFound, TooManySessionsMatched):
         raise
 
@@ -1137,7 +1145,9 @@ async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.
     else:
         raise AppNotFound(f'{session_name}:{service}')
 
-    await asyncio.shield(root_ctx.registry.increment_session_usage(session_name, access_key))
+    await asyncio.shield(app_ctx.database_ptask_group.create_task(
+        root_ctx.registry.increment_session_usage(session_name, access_key),
+    ))
 
     opts: MutableMapping[str, Union[None, str, List[str]]] = {}
     if params['arguments'] is not None:
@@ -1146,7 +1156,9 @@ async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.
         opts['envs'] = json.loads(params['envs'])
 
     result = await asyncio.shield(
-        root_ctx.registry.start_service(session_name, access_key, service, opts),
+        app_ctx.rpc_ptask_group.create_task(
+            root_ctx.registry.start_service(session_name, access_key, service, opts),
+        ),
     )
     if result['status'] == 'failed':
         raise InternalServerError(
@@ -1405,7 +1417,7 @@ async def handle_kernel_log(
         await redis_conn.close()
 
 
-async def report_stats(root_ctx: RootContext) -> None:
+async def report_stats(root_ctx: RootContext, interval: float) -> None:
     stats_monitor = root_ctx.stats_monitor
     await stats_monitor.report_metric(
         GAUGE, 'ai.backend.manager.coroutines', len(asyncio.all_tasks()))
@@ -1448,21 +1460,6 @@ async def report_stats(root_ctx: RootContext) -> None:
         await stats_monitor.report_metric(
             GAUGE, 'ai.backend.manager.accum_kernels', n)
         """
-
-
-async def stats_report_timer(root_ctx: RootContext):
-    while True:
-        try:
-            await asyncio.shield(report_stats(root_ctx))
-        except asyncio.CancelledError:
-            break
-        except Exception:
-            await root_ctx.error_monitor.capture_exception()
-            log.exception('stats_report_timer: unexpected error')
-        try:
-            await asyncio.sleep(5)
-        except asyncio.CancelledError:
-            break
 
 
 @server_status_required(ALL_ALLOWED)
@@ -2055,13 +2052,16 @@ class PrivateContext:
     pending_waits: Set[asyncio.Task[None]]
     agent_lost_checker: asyncio.Task[None]
     stats_task: asyncio.Task[None]
+    database_ptask_group: aiotools.PersistentTaskGroup
+    rpc_ptask_group: aiotools.PersistentTaskGroup
 
 
 async def init(app: web.Application) -> None:
     root_ctx: RootContext = app['_root.context']
     app_ctx: PrivateContext = app['session.context']
-
     app_ctx.session_creation_tracker = {}
+    app_ctx.database_ptask_group = aiotools.PersistentTaskGroup()
+    app_ctx.rpc_ptask_group = aiotools.PersistentTaskGroup()
 
     # passive events
     evd = root_ctx.event_dispatcher
@@ -2101,16 +2101,20 @@ async def init(app: web.Application) -> None:
     # Scan ALIVE agents
     app_ctx.agent_lost_checker = aiotools.create_timer(
         functools.partial(check_agent_lost, root_ctx), 1.0)
-    app_ctx.stats_task = asyncio.create_task(stats_report_timer(root_ctx))
+    app_ctx.stats_task = aiotools.create_timer(
+        functools.partial(report_stats, root_ctx), 5.0,
+    )
 
 
 async def shutdown(app: web.Application) -> None:
     app_ctx: PrivateContext = app['session.context']
-
     app_ctx.agent_lost_checker.cancel()
     await app_ctx.agent_lost_checker
     app_ctx.stats_task.cancel()
     await app_ctx.stats_task
+
+    await app_ctx.database_ptask_group.shutdown()
+    await app_ctx.rpc_ptask_group.shutdown()
 
     await cancel_tasks(app_ctx.pending_waits)
 

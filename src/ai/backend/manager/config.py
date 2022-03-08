@@ -661,6 +661,7 @@ class SharedConfig(AbstractConfig):
         registry: str = None,
         *,
         reporter: ProgressReporter = None,
+        strict_architecture: bool = False,
     ) -> None:
         registry_config_iv = t.Mapping(t.String, container_registry_iv)
         latest_registry_config = registry_config_iv.check(
@@ -680,7 +681,10 @@ class SharedConfig(AbstractConfig):
             for registry_name, registry_info in registries.items():
                 log.info('Scanning kernel images from the registry "{0}"', registry_name)
                 scanner_cls = get_container_registry(registry_info)
-                scanner = scanner_cls(self.etcd, registry_name, registry_info)
+                scanner = scanner_cls(
+                    self.etcd, registry_name, registry_info,
+                    strict_architecture=strict_architecture,
+                )
                 tg.create_task(scanner.rescan_single_registry(reporter))
         # TODO: delete images removed from registry?
 

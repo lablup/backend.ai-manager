@@ -30,6 +30,7 @@ import trafaret as t
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
 
+from ..background import ProgressReporter
 from ..models import (
     agents,
     kernels,
@@ -60,7 +61,7 @@ from .manager import (
     server_status_required,
 )
 from .resource import get_watcher_info
-from .utils import check_api_params
+from .utils import check_api_params, get_user_scopes
 if TYPE_CHECKING:
     from .context import RootContext
 
@@ -385,6 +386,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
     t.Dict({
         t.Key('all', default=False): t.ToBool,
         tx.AliasedKey(['group_id', 'groupId'], default=None): tx.UUID | t.String | t.Null,
+        tx.AliasedKey(['owner_user_email', 'ownerUserEmail'], default=None): t.Email | t.Null,
     }),
 )
 async def list_folders(request: web.Request, params: Any) -> web.Response:
@@ -392,55 +394,51 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     access_key = request['keypair']['access_key']
     domain_name = request['user']['domain_name']
-    user_role = request['user']['role']
-    user_uuid = request['user']['uuid']
+
+    def make_entries(result, user_uuid) -> List[Dict[str, Any]]:
+        entries = []
+        for row in result:
+            entries.append({
+                'name': row.vfolders_name,
+                'id': row.vfolders_id,
+                'host': row.vfolders_host,
+                'usage_mode': row.vfolders_usage_mode,
+                'created_at': row.vfolders_created_at,
+                'is_owner': (row.vfolders_user == user_uuid),
+                'permission': row.vfolders_permission,
+                'user': str(row.vfolders_user) if row.vfolders_user else None,
+                'group': str(row.vfolders_group) if row.vfolders_group else None,
+                'creator': row.vfolders_creator,
+                'user_email': row.users_email,
+                'group_name': row.groups_name,
+                'ownership_type': row.vfolders_ownership_type,
+                'type': row.vfolders_ownership_type,  # legacy
+                'unmanaged_path': row.vfolders_unmanaged_path,
+                'cloneable': row.vfolders_cloneable if row.vfolders_cloneable else False,
+                'max_files': row.vfolders_max_files,
+                'max_size': row.vfolders_max_size,
+            })
+        return entries
 
     log.info('VFOLDER.LIST (ak:{})', access_key)
     entries: List[Mapping[str, Any]] | Sequence[Mapping[str, Any]]
-    async with root_ctx.db.begin() as conn:
+    owner_user_uuid, owner_user_role = await get_user_scopes(request, params)
+    async with root_ctx.db.begin_readonly() as conn:
         allowed_vfolder_types = await root_ctx.shared_config.get_vfolder_types()
-        if request['is_superadmin'] and params['all']:
-            # List all folders for superadmin if all is specified
-            j = (vfolders.join(users, vfolders.c.user == users.c.uuid, isouter=True)
-                         .join(groups, vfolders.c.group == groups.c.id, isouter=True))
-            query = (
-                sa.select([vfolders, users.c.email, groups.c.name], use_labels=True)
-                .select_from(j)
-            )
-            result = await conn.execute(query)
-            entries = []
-            for row in result:
-                is_owner = True if row.vfolders_user == user_uuid else False
-                entries.append({
-                    'name': row.vfolders_name,
-                    'id': row.vfolders_id,
-                    'host': row.vfolders_host,
-                    'usage_mode': row.vfolders_usage_mode,
-                    'created_at': row.vfolders_created_at,
-                    'is_owner': is_owner,
-                    'permission': row.vfolders_permission,
-                    'user': str(row.vfolders_user) if row.vfolders_user else None,
-                    'group': str(row.vfolders_group) if row.vfolders_group else None,
-                    'creator': row.vfolders_creator,
-                    'user_email': row.users_email,
-                    'group_name': row.groups_name,
-                    'ownership_type': row.vfolders_ownership_type,
-                    'type': row.vfolders_ownership_type,  # legacy
-                    'unmanaged_path': row.vfolders_unmanaged_path,
-                    'cloneable': row.vfolders_cloneable if row.vfolders_cloneable else False,
-                    'max_files': row.vfolders_max_files,
-                    'max_size': row.vfolders_max_size,
-                })
+        if params['all']:
+            raise InvalidAPIParameters("Deprecated use of 'all' option")
         else:
             extra_vf_conds = None
             if params['group_id'] is not None:
                 # Note: user folders should be returned even when group_id is specified.
-                extra_vf_conds = ((vfolders.c.group == params['group_id']) |
-                                  (vfolders.c.user.isnot(None)))
+                extra_vf_conds = (
+                    (vfolders.c.group == params['group_id']) |
+                    (vfolders.c.user.isnot(None))
+                )
             entries = await query_accessible_vfolders(
                 conn,
-                user_uuid,
-                user_role=user_role,
+                owner_user_uuid,
+                user_role=owner_user_role,
                 domain_name=domain_name,
                 allowed_vfolder_types=allowed_vfolder_types,
                 extra_vf_conds=extra_vf_conds,
@@ -1714,6 +1712,8 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
              params['usage_mode'].value, params['permission'].value)
     source_folder_host = row['host']
     target_folder_host = params['folder_host']
+    source_proxy_name, source_volume_name = root_ctx.storage_manager.split_host(source_folder_host)
+    target_proxy_name, target_volume_name = root_ctx.storage_manager.split_host(target_folder_host)
 
     # check if the source vfolder is allowed to be cloned
     if not row['cloneable']:
@@ -1737,9 +1737,13 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
     if not verify_vfolder_name(params['target_name']):
         raise InvalidAPIParameters(f'{params["target_name"]} is reserved for internal operations.')
 
+    if source_proxy_name != target_proxy_name:
+        raise InvalidAPIParameters('proxy name of source and target vfolders must be equal.')
+
     async with root_ctx.db.begin() as conn:
-        allowed_hosts = await get_allowed_vfolder_hosts_by_user(conn, resource_policy,
-                                                                domain_name, user_uuid)
+        allowed_hosts = await get_allowed_vfolder_hosts_by_user(
+            conn, resource_policy, domain_name, user_uuid,
+        )
         # TODO: handle legacy host lists assuming that volume names don't overlap?
         if target_folder_host not in allowed_hosts:
             raise InvalidAPIParameters('You are not allowed to use this vfolder host.')
@@ -1774,33 +1778,37 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
         if 'user' not in allowed_vfolder_types:
             raise InvalidAPIParameters('user vfolder cannot be created in this host')
 
-        source_proxy_name, source_volume_name = root_ctx.storage_manager.split_host(source_folder_host)
-        target_proxy_name, target_volume_name = root_ctx.storage_manager.split_host(target_folder_host)
-        if source_proxy_name != target_proxy_name:
-            raise InvalidAPIParameters('proxy name of source and target vfolders must be equal.')
+        # Generate the ID of the destination vfolder.
+        # TODO: If we refactor to use ORM, the folder ID will be created from the database by inserting
+        #       the actual object (with RETURNING clause).  In that case, we need to temporarily
+        #       mark the object to be "unusable-yet" until the storage proxy craetes the destination
+        #       vfolder.  After done, we need to make another transaction to clear the unusable state.
+        folder_id = uuid.uuid4()
 
-        # TODO: accept quota as input parameter and pass as argument options
+        # Create the destination vfolder.
+        # (assuming that this operation finishes quickly!)
         try:
-            folder_id = uuid.uuid4()
+            # TODO: copy vfolder options
             async with root_ctx.storage_manager.request(
-                source_folder_host, 'POST', 'folder/clone',
+                target_folder_host, 'POST', 'folder/create',
                 json={
-                    'src_volume': source_volume_name,
-                    'src_vfid': str(row['id']),
-                    'dst_volume': target_volume_name,
-                    'dst_vfid': str(folder_id),
+                    'volume': target_volume_name,
+                    'vfid': str(folder_id),
+                    # 'options': {'quota': params['quota']},
                 },
                 raise_for_status=True,
             ):
                 pass
         except aiohttp.ClientResponseError:
+            # TODO: pass exception info
             raise VFolderOperationFailed
 
+        # Insert the row for the destination vfolder.
         user_uuid = str(user_uuid)
         group_uuid = None
         ownership_type = 'user'
         insert_values = {
-            'id': folder_id.hex,
+            'id': folder_id,
             'name': params['target_name'],
             'usage_mode': params['usage_mode'],
             'permission': params['permission'],
@@ -1813,24 +1821,47 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
             'unmanaged_path': '',
             'cloneable': params['cloneable'],
         }
-        resp = {
-            'id': folder_id.hex,
-            'name': params['target_name'],
-            'host': target_folder_host,
-            'usage_mode': params['usage_mode'].value,
-            'permission': params['permission'].value,
-            'creator': request['user']['email'],
-            'ownership_type': ownership_type,
-            'user': user_uuid,
-            'group': group_uuid,
-            'cloneable': params['cloneable'],
-        }
-        query = (sa.insert(vfolders, insert_values))
+        insert_query = sa.insert(vfolders, insert_values)
         try:
-            result = await conn.execute(query)
+            result = await conn.execute(insert_query)
         except sa.exc.DataError:
+            # TODO: pass exception info
             raise InvalidAPIParameters
-        assert result.rowcount == 1
+
+    # Start the clone operation as a background task.
+    async def _clone_bgtask(reporter: ProgressReporter) -> None:
+        try:
+            async with root_ctx.storage_manager.request(
+                source_folder_host, 'POST', 'folder/clone',
+                json={
+                    'src_volume': source_volume_name,
+                    'src_vfid': str(row['id']),
+                    'dst_volume': target_volume_name,
+                    'dst_vfid': str(folder_id),
+                },
+                raise_for_status=True,
+            ):
+                pass
+        except aiohttp.ClientResponseError:
+            # TODO: pass exception info
+            raise VFolderOperationFailed
+
+    task_id = await root_ctx.background_task_manager.start(_clone_bgtask)
+
+    # Return the information about the destination vfolder.
+    resp = {
+        'id': folder_id.hex,
+        'name': params['target_name'],
+        'host': target_folder_host,
+        'usage_mode': params['usage_mode'].value,
+        'permission': params['permission'].value,
+        'creator': request['user']['email'],
+        'ownership_type': ownership_type,
+        'user': user_uuid,
+        'group': group_uuid,
+        'cloneable': params['cloneable'],
+        'bgtask_id': str(task_id),
+    }
     return web.json_response(resp, status=201)
 
 

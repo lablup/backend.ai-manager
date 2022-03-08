@@ -2420,7 +2420,8 @@ class AgentRegistry:
             try:
                 await execute_with_retry(_update)
             except sa.exc.IntegrityError:
-                log.error(f'Scaling group named [{sgroup}] does not exist.')
+                log.error("Scaling group named [{}] does not exist.", sgroup)
+                return
 
             if instance_rejoin:
                 await self.event_producer.produce_event(

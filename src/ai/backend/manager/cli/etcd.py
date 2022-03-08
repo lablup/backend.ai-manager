@@ -280,8 +280,12 @@ def set_image_resource_limit(cli_ctx: CLIContext, reference, slot_type, range_va
 
 @cli.command()
 @click.argument('registry')
+@click.option(
+    '-s', '--strict-architecture', is_flag=True,
+    help='skip importing images with mismatching architecture (when compared to manager machine)',
+)
 @click.pass_obj
-def rescan_images(cli_ctx: CLIContext, registry) -> None:
+def rescan_images(cli_ctx: CLIContext, registry, strict_architecture) -> None:
     '''
     Update the kernel image metadata from all configured docker registries.
 
@@ -290,7 +294,7 @@ def rescan_images(cli_ctx: CLIContext, registry) -> None:
     async def _impl():
         async with config_ctx(cli_ctx) as shared_config:
             try:
-                await shared_config.rescan_images(registry)
+                await shared_config.rescan_images(registry, strict_architecture=strict_architecture)
             except Exception:
                 log.exception('An error occurred.')
     with cli_ctx.logger:
