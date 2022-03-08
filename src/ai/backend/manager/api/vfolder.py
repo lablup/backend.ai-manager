@@ -52,7 +52,7 @@ from ..models import (
 )
 from .auth import admin_required, auth_required, superadmin_required
 from .exceptions import (
-    VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists, VFolderOperationFailed,
+    VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
     GenericForbidden, GenericNotFound, InvalidAPIParameters, ServerMisconfiguredError,
     BackendAgentError, InternalServerError, GroupNotFound,
 )
