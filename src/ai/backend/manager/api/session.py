@@ -1428,20 +1428,20 @@ async def report_stats(root_ctx: RootContext, interval: float) -> None:
     await stats_monitor.report_metric(
         GAUGE, 'ai.backend.manager.agent_instances', len(all_inst_ids))
 
-    async with root_ctx.db.begin_readonly() as conn:
-        async def _sum_kp_conc(r: aioredis.Redis):
-            result = 0
-            cons = await r.hvals('keypair.concurrency')
-            for con in cons:
-                result += int(con)
-            return result
-        n = await redis.execute(
-            root_ctx.redis_stat,
-            _sum_kp_conc,
-        )
-        await stats_monitor.report_metric(
-            GAUGE, 'ai.backend.manager.active_kernels', n)
+    async def _sum_kp_rsc_usg(r: aioredis.Redis):
+        result = 0
+        usgs = await r.hvals('keypair.rsc_usages')
+        for usg in usgs:
+            result += int(usg) if int(usg) > 0 else 0
+        return result
+    n = await redis.execute(
+        root_ctx.redis_stat,
+        _sum_kp_rsc_usg,
+    )
+    await stats_monitor.report_metric(
+        GAUGE, 'ai.backend.manager.active_kernels', n)
 
+    async with root_ctx.db.begin_readonly() as conn:
         subquery = (
             sa.select([sa.func.count()])
             .select_from(keypairs)

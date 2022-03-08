@@ -1492,6 +1492,8 @@ async def recalc_concurrency_used(
     redis_stat: RedisConnectionInfo,
     access_key: AccessKey,
 ) -> None:
+
+    concurrency_used: int
     async with db_conn.begin_nested():
         query = (
             sa.select([sa.func.count(kernels.c.id)])
@@ -1501,11 +1503,12 @@ async def recalc_concurrency_used(
                 (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
             )
         )
-        concurrency_used = await db_conn.execute(query)
+        result = await db_conn.execute(query)
+        concurrency_used = result.first()[0]
 
     await redis.execute(
         redis_stat,
         lambda r: r.hset(
-            'keypair.concurrency', access_key, concurrency_used,
+            'keypair.rsc_usages', access_key, concurrency_used,
         ),
     )

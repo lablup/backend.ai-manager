@@ -60,7 +60,8 @@ async def check_concurrency(
     sess_ctx: PendingSession,
 ) -> PredicateResult:
 
-    async def _check() -> PredicateResult:
+    max_concurrent_sessions: int
+    async def _get_max_conc_sess() -> int:
         async with db_conn.begin_nested():
             select_query = (
                 sa.select([keypair_resource_policies])
@@ -68,42 +69,44 @@ async def check_concurrency(
                 .where(keypair_resource_policies.c.name == sess_ctx.resource_policy)
             )
             result = await db_conn.execute(select_query)
-            resource_policy = result.first()
+        return result.first()['max_concurrent_sessions']
 
-            async def _getset_kpcon(r: aioredis.Redis):
-                key = 'keypair.concurrency'
-                if conc := await r.hget(key, sess_ctx.access_key):
-                    return int(conc)
-                await r.hset(key, sess_ctx.access_key, 0)
-                return 0
-            concurrency_used = await redis.execute(
-                sched_ctx.registry.redis_stat,
-                _getset_kpcon,
+    async def _check() -> PredicateResult:
+        async def _getset_kp_rsc_usg(r: aioredis.Redis) -> int:
+            key = 'keypair.rsc_usages'
+            if conc := await r.hget(key, sess_ctx.access_key):
+                return int(conc)
+            await r.hset(key, sess_ctx.access_key, 0)
+            return 0
+        concurrency_used = await redis.execute(
+            sched_ctx.registry.redis_stat,
+            _getset_kp_rsc_usg,
+        )
+        log.debug(
+            'access_key: {0} ({1} / {2})',
+            sess_ctx.access_key, concurrency_used,
+            max_concurrent_sessions,
+        )
+        if concurrency_used >= max_concurrent_sessions:
+            return PredicateResult(
+                False,
+                "You cannot run more than "
+                f"{max_concurrent_sessions} concurrent sessions",
             )
-            log.debug(
-                'access_key: {0} ({1} / {2})',
-                sess_ctx.access_key, concurrency_used,
-                resource_policy['max_concurrent_sessions'],
-            )
-            if concurrency_used >= resource_policy['max_concurrent_sessions']:
-                return PredicateResult(
-                    False,
-                    "You cannot run more than "
-                    f"{resource_policy['max_concurrent_sessions']} concurrent sessions",
-                )
 
-            # Increment concurrency usage of keypair.
-            await redis.execute(
-                sched_ctx.registry.redis_stat,
-                lambda r: r.hincrby(
-                    'keypair.concurrency',
-                    sess_ctx.access_key,
-                    1,
-                ),
-            )
-            return PredicateResult(True)
+        # Increment concurrency usage of keypair.
+        await redis.execute(
+            sched_ctx.registry.redis_stat,
+            lambda r: r.hincrby(
+                'keypair.rsc_usages',
+                sess_ctx.access_key,
+                1,
+            ),
+        )
+        return PredicateResult(True)
 
-    return await execute_with_retry(_check)
+    max_concurrent_sessions = await execute_with_retry(_get_max_conc_sess)
+    return await _check()
 
 
 async def check_dependencies(

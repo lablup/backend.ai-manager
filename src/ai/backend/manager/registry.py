@@ -1614,36 +1614,6 @@ class AgentRegistry:
                 async for row in (await conn.stream(query)):
                     concurrency_used_per_key[row.access_key] += 1
 
-                if len(concurrency_used_per_key) > 0:
-                    # Update concurrency_used for keypairs with running containers.
-                    async def _pipe_builder(r: aioredis.Redis):
-                        pipe = r.pipeline()
-                        kp_key = 'keypair.concurrency'
-                        keys = await r.hkeys(kp_key)
-                        for ak in keys:
-                            if ak in concurrency_used_per_key:
-                                pipe.hset(
-                                    kp_key,
-                                    ak,
-                                    concurrency_used_per_key[ak],
-                                )
-                            else:
-                                pipe.hset(kp_key, ak, 0)
-                    await redis.execute(
-                        self.redis_stat,
-                        _pipe_builder,
-                    )
-                else:
-                    async def _pipe_builder(r: aioredis.Redis):
-                        pipe = r.pipeline()
-                        keys = await r.hkeys('keypair.concurrency')
-                        for ak in keys:
-                            pipe.set(ak, 0)
-                    await redis.execute(
-                        self.redis_stat,
-                        _pipe_builder,
-                    )
-
                 if len(occupied_slots_per_agent) > 0:
                     # Update occupied_slots for agents with running containers.
                     for aid, slots in occupied_slots_per_agent.items():
@@ -1668,8 +1638,23 @@ class AgentRegistry:
                         .where(agents.c.status == AgentStatus.ALIVE)
                     )
                     await conn.execute(query)
+        
+        async def _update_keypair_rsc_usg() -> None:
+            # Update keypair resource usage for keypairs with running containers.
+            async def _pipe_builder(r: aioredis.Redis):
+                pipe = r.pipeline()
+                kp_key = 'keypair.rsc_usages'
+                keys = await r.hkeys(kp_key)
+                for ak in keys:
+                    usage = concurrency_used_per_key.get(ak, 0)
+                    pipe.hset(kp_key, ak, usage)
+            await redis.execute(
+                self.redis_stat,
+                _pipe_builder,
+            )
 
         await execute_with_retry(_recalc)
+        await _update_keypair_rsc_usg()
 
     async def destroy_session_lowlevel(
         self,
@@ -1821,17 +1806,6 @@ class AgentRegistry:
 
                         async def _update() -> None:
                             async with self.db.begin() as conn:
-                                if kernel['cluster_role'] == DEFAULT_ROLE:
-                                    # The main session is terminated;
-                                    # decrement the user's concurrency counter
-                                    await redis.execute(
-                                        self.redis_stat,
-                                        lambda r: r.hincrby(
-                                            "keypair.concurrency",
-                                            kernel['access_key'],
-                                            -1,
-                                        ),
-                                    )
                                 await conn.execute(
                                     sa.update(kernels)
                                     .values({
@@ -1843,6 +1817,18 @@ class AgentRegistry:
                                     .where(kernels.c.id == kernel['id']),
                                 )
 
+                        if kernel['cluster_role'] == DEFAULT_ROLE:
+                            # The main session is terminated;
+                            # decrement the user's concurrency counter
+                            await redis.execute(
+                                self.redis_stat,
+                                lambda r: r.hincrby(
+                                    'keypair.rsc_usages',
+                                    kernel['access_key'],
+                                    -1
+                                ),
+                            )
+
                         await execute_with_retry(_update)
                         await self.event_producer.produce_event(
                             KernelTerminatedEvent(kernel['id'], reason),
@@ -1851,17 +1837,6 @@ class AgentRegistry:
 
                         async def _update() -> None:
                             async with self.db.begin() as conn:
-                                if kernel['cluster_role'] == DEFAULT_ROLE:
-                                    # The main session is terminated;
-                                    # decrement the user's concurrency counter
-                                    await redis.execute(
-                                        self.redis_stat,
-                                        lambda r: r.hincrby(
-                                            "keypair.concurrency",
-                                            kernel['access_key'],
-                                            -1,
-                                        ),
-                                    )
                                 await conn.execute(
                                     sa.update(kernels)
                                     .values({
@@ -1875,6 +1850,18 @@ class AgentRegistry:
                                     })
                                     .where(kernels.c.id == kernel['id']),
                                 )
+                        
+                        if kernel['cluster_role'] == DEFAULT_ROLE:
+                            # The main session is terminated;
+                            # decrement the user's concurrency counter
+                            await redis.execute(
+                                self.redis_stat,
+                                lambda r: r.hincrby(
+                                    'keypair.rsc_usages',
+                                    kernel['access_key'],
+                                    -1
+                                ),
+                            )
 
                         await execute_with_retry(_update)
                         await self.event_producer.produce_event(
