@@ -988,7 +988,7 @@ async def create_upload_session(request: web.Request, params: Any, row: VFolderR
     t.Dict({
         t.Key('target_path'): t.String,
         t.Key('new_name'): t.String,
-        t.Key('is_dir'): t.ToBool,
+        t.Key('is_dir', default=False): t.ToBool,  # ignored since 22.03
     }))
 async def rename_file(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
@@ -1005,7 +1005,38 @@ async def rename_file(request: web.Request, params: Any, row: VFolderRow) -> web
                 'vfid': str(row['id']),
                 'relpath': params['target_path'],
                 'new_name': params['new_name'],
-                'is_dir': params['is_dir'],
+            },
+            raise_for_status=True,
+        ):
+            pass
+    except aiohttp.ClientResponseError:
+        raise VFolderOperationFailed
+    return web.json_response({}, status=200)
+
+
+@auth_required
+@server_status_required(READ_ALLOWED)
+@vfolder_permission_required(VFolderPermission.READ_WRITE)
+@check_api_params(
+    t.Dict({
+        t.Key('src'): t.String,
+        t.Key('dst'): t.String,
+    }))
+async def move_file(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
+    root_ctx: RootContext = request.app['_root.context']
+    folder_name = request.match_info['name']
+    access_key = request['keypair']['access_key']
+    log.info('VFOLDER.MOVE_FILE (ak:{}, vf:{}, src:{}, dst:{})',
+             access_key, folder_name, params['src'], params['dst'])
+    proxy_name, volume_name = root_ctx.storage_manager.split_host(row['host'])
+    try:
+        async with root_ctx.storage_manager.request(
+            proxy_name, 'POST', 'folder/file/move',
+            json={
+                'volume': volume_name,
+                'vfid': str(row['id']),
+                'src_relpath': params['src'],
+                'dst_relpath': params['dst'],
             },
             raise_for_status=True,
         ):
@@ -2376,6 +2407,7 @@ def create_app(default_cors_options):
     cors.add(add_route('POST',   r'/{name}/mkdir', mkdir))
     cors.add(add_route('POST',   r'/{name}/request-upload', create_upload_session))
     cors.add(add_route('POST',   r'/{name}/request-download', create_download_session))
+    cors.add(add_route('POST',   r'/{name}/move-file', move_file))
     cors.add(add_route('POST',   r'/{name}/rename-file', rename_file))
     cors.add(add_route('DELETE', r'/{name}/delete-files', delete_files))
     cors.add(add_route('POST',   r'/{name}/rename_file', rename_file))    # legacy underbar
