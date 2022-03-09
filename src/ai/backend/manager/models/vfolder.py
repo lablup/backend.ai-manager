@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import enum
+import os.path
 import uuid
 from pathlib import PurePosixPath
 from typing import (
@@ -23,7 +24,7 @@ import trafaret as t
 
 from ai.backend.common.types import VFolderMount
 
-from ..api.exceptions import VFolderNotFound
+from ..api.exceptions import InvalidAPIParameters, VFolderNotFound
 from ..defs import RESERVED_VFOLDER_PATTERNS, RESERVED_VFOLDERS
 from ..types import UserScope
 from .base import (
@@ -472,27 +473,40 @@ async def prepare_vfolder_mounts(
     if not requested_mounts:
         return []
 
-    requested_vfolder_names: set[str] = set()
+    requested_vfolder_names: dict[str, str] = {}
     requested_vfolder_subpaths: dict[str, str] = {}
     requested_vfolder_dstpaths: dict[str, str] = {}
-    matched_vfolder_names: set[str] = set()
     matched_vfolder_mounts: list[VFolderMount] = []
 
     # Split the vfolder name and subpaths
-    for item in requested_mounts:
-        name, _, subpath = item.partition("/")
-        requested_vfolder_names.add(name)
-        requested_vfolder_subpaths[name] = subpath
+    for key in requested_mounts:
+        name, _, subpath = key.partition("/")
+        if not PurePosixPath(os.path.normpath(key)).is_relative_to(name):
+            raise InvalidAPIParameters(
+                f"The subpath '{subpath}' should designate "
+                f"a subdirectory of the vfolder '{name}'.",
+            )
+        requested_vfolder_names[key] = name
+        requested_vfolder_subpaths[key] = os.path.normpath(subpath)
     for key, value in requested_mount_map.items():
-        name, _, _ = key.partition("/")
-        requested_vfolder_dstpaths[name] = value
+        requested_vfolder_dstpaths[key] = value
+
+    # Check if there are overlapping mount sources
+    for p1 in requested_mounts:
+        for p2 in requested_mounts:
+            if p1 == p2:
+                continue
+            if PurePosixPath(p1).is_relative_to(PurePosixPath(p2)):
+                raise InvalidAPIParameters(
+                    f"VFolder source path '{p1}' overlaps with '{p2}'",
+                )
 
     # Query the accessible vfolders that satisfy either:
     # - the name matches with the requested vfolder name, or
     # - the name starts with a dot (dot-prefixed vfolder) for automatic mounting.
     if requested_vfolder_names:
         extra_vf_conds = (
-            vfolders.c.name.in_(requested_vfolder_names) |
+            vfolders.c.name.in_(requested_vfolder_names.values()) |
             vfolders.c.name.startswith('.')
         )
     else:
@@ -505,7 +519,13 @@ async def prepare_vfolder_mounts(
         extra_vf_conds=extra_vf_conds,
     )
 
-    for vfolder in accessible_vfolders:
+    # for vfolder in accessible_vfolders:
+    for key, vfolder_name in requested_vfolder_names.items():
+        for vfolder in accessible_vfolders:
+            if vfolder['name'] == requested_vfolder_names[key]:
+                break
+        else:
+            raise VFolderNotFound(f"VFolder {vfolder_name} is not found or accessible.")
         if vfolder['group'] is not None and vfolder['group'] != str(user_scope.group_id):
             # User's accessible group vfolders should not be mounted
             # if not belong to the execution kernel.
@@ -525,7 +545,6 @@ async def prepare_vfolder_mounts(
                 },
             ):
                 pass
-            matched_vfolder_names.add(vfolder['name'])
             # Mount the per-user subdirectory as the ".local" vfolder.
             matched_vfolder_mounts.append(VFolderMount(
                 name=vfolder['name'],
@@ -535,7 +554,6 @@ async def prepare_vfolder_mounts(
             ))
         else:
             # Normal vfolders
-            matched_vfolder_names.add(vfolder['name'])
             kernel_path_raw = requested_vfolder_dstpaths.get(vfolder['name'])
             if kernel_path_raw is None:
                 kernel_path = PurePosixPath(f"/home/work/{vfolder['name']}")
@@ -550,11 +568,16 @@ async def prepare_vfolder_mounts(
                 mount_perm=vfolder['permission'],
             ))
 
-    # Peport failure if there are missing requested vfolders.
-    # Note that determined_mounts may have additional vfolders which are auto-mounted,
-    # such as dot-prefixed vfolders.
-    if requested_vfolder_names > matched_vfolder_names:
-        raise VFolderNotFound(extra_data=[*(requested_vfolder_names - matched_vfolder_names)])
+    # Check if there are overlapping mount targets
+    for vf1 in matched_vfolder_mounts:
+        for vf2 in matched_vfolder_mounts:
+            if vf1.name == vf2.name:
+                continue
+            if vf1.kernel_path.is_relative_to(vf2.kernel_path):
+                raise InvalidAPIParameters(
+                    f"VFolder mount path {vf1.kernel_path} overlaps with {vf2.kernel_path}",
+                )
+
     return matched_vfolder_mounts
 
 
