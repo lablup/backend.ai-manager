@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
+from dateutil.parser import parse as dtparse
+from dateutil.tz import tzutc
 import secrets
 from typing import (
     Any,
@@ -13,7 +16,6 @@ from uuid import uuid4, UUID
 from pprint import pprint
 
 import attr
-from dateutil.parser import parse as dtparse
 import pytest
 
 from ai.backend.common.docker import ImageRef
@@ -227,6 +229,9 @@ pending_session_kernel_ids = [
             KernelId(UUID('251907d9-1290-4126-bc6c-000000000301')),
             KernelId(UUID('251907d9-1290-4126-bc6c-000000000302')),
         ]),
+    SessionKernelIdPair(
+        session_id=UUID('251907d9-1290-4126-bc6c-000000000400'),
+        kernel_ids=[KernelId(UUID('251907d9-1290-4126-bc6c-000000000400'))]),
 ]
 
 existing_session_kernel_ids = [
@@ -314,7 +319,7 @@ def example_pending_sessions():
             }),
             target_sgroup_names=[],
             **_common_dummy_for_pending_session,
-            created_at=dtparse('2022-01-24T00:00:59+00:00'),
+            created_at=dtparse('2021-12-28T23:59:59+00:00'),
         ),
         PendingSession(  # cuda
             kernels=[
@@ -359,7 +364,7 @@ def example_pending_sessions():
             }),
             target_sgroup_names=[],
             **_common_dummy_for_pending_session,
-            created_at=dtparse('2022-01-01T23:59:59+00:00'),
+            created_at=dtparse('2022-02-01T23:59:59+00:00'),
         ),
         PendingSession(  # cpu-only
             kernels=[
@@ -403,7 +408,7 @@ def example_pending_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
-                    created_at=dtparse('2020-06-29T00:00:00+00:00'),
+                    created_at=dtparse('2021-12-01T23:59:59+00:00'),
                 ),
                 KernelInfo(
                     kernel_id=pending_session_kernel_ids[2].kernel_ids[2],
@@ -424,7 +429,7 @@ def example_pending_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
-                    created_at=dtparse('2022-01-16T00:00:00+00:00'),
+                    created_at=dtparse('2021-12-01T23:59:59+00:00'),
                 ),
             ],
             access_key=AccessKey('user03'),
@@ -446,7 +451,52 @@ def example_pending_sessions():
             }),
             target_sgroup_names=[],
             **_common_dummy_for_pending_session,
-            created_at=dtparse('2021-11-29T00:00:00+00:00'),
+            created_at=dtparse('2021-12-01T23:59:59+00:00'),
+        ),
+        PendingSession(  # pending timeout session
+            kernels=[
+                KernelInfo(
+                    kernel_id=pending_session_kernel_ids[3].kernel_ids[0],
+                    session_id=pending_session_kernel_ids[3].session_id,
+                    access_key='dummy-access-key',
+                    agent_id=None,
+                    agent_addr=None,
+                    cluster_role=DEFAULT_ROLE,
+                    cluster_idx=1,
+                    cluster_hostname=f"{DEFAULT_ROLE}0",
+                    image_ref=common_image_ref,
+                    resource_opts={},
+                    requested_slots=ResourceSlot({
+                        'cpu': Decimal('1.0'),
+                        'mem': Decimal('2048'),
+                        'cuda.shares': Decimal('0'),
+                        'rocm.devices': Decimal('0'),
+                    }),
+                    bootstrap_script=None,
+                    startup_command=None,
+                    created_at=datetime.now(tzutc())-30,
+                ),
+            ],
+            access_key=AccessKey('user04'),
+            agent_id=None,
+            agent_addr=None,
+            status_data={},
+            session_id=pending_session_kernel_ids[3].session_id,
+            session_creation_id='aaa103',
+            session_name='es01',
+            session_type=SessionTypes.BATCH,
+            cluster_mode='single-node',
+            cluster_size=1,
+            scaling_group='sg01',
+            requested_slots=ResourceSlot({
+                'cpu': Decimal('1.0'),
+                'mem': Decimal('2048'),
+                'cuda.shares': Decimal('0.5'),
+                'rocm.devices': Decimal('0'),
+            }),
+            target_sgroup_names=[],
+            **_common_dummy_for_pending_session,
+            created_at=datetime.now(tzutc())-30,
         ),
     ]
 
@@ -496,7 +546,7 @@ def example_existing_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
-                    created_at=dtparse('2021-12-31T00:00:00+00:00'),
+                    created_at=dtparse('2022-02-05T00:00:00+00:00'),
                 ),
             ],
             access_key=AccessKey('user01'),
