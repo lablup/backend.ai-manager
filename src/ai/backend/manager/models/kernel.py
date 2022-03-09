@@ -185,8 +185,8 @@ kernels = sa.Table(
     sa.Column('occupied_slots', ResourceSlotColumn(), nullable=False),
     sa.Column('occupied_shares', pgsql.JSONB(), nullable=False, default={}),  # legacy
     sa.Column('environ', sa.ARRAY(sa.String), nullable=True),
-    sa.Column('mounts', sa.ARRAY(sa.String), nullable=True),  # list of list; legacy sicne 22.03
-    sa.Column('mount_map', pgsql.JSONB(), nullable=True, default={}),  # legacy sicne 22.03
+    sa.Column('mounts', sa.ARRAY(sa.String), nullable=True),  # list of list; legacy since 22.03
+    sa.Column('mount_map', pgsql.JSONB(), nullable=True, default={}),  # legacy since 22.03
     sa.Column('vfolder_mounts', StructuredJSONObjectListColumn(VFolderMount), nullable=True),
     sa.Column('attached_devices', pgsql.JSONB(), nullable=True, default={}),
     sa.Column('resource_opts', pgsql.JSONB(), nullable=True, default={}),
