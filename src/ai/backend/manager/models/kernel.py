@@ -28,7 +28,6 @@ import sqlalchemy as sa
 from sqlalchemy.engine.row import Row
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 from sqlalchemy.dialects import postgresql as pgsql
-import trafaret as t
 
 from ai.backend.common import msgpack, redis
 from ai.backend.common.types import (
