@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from datetime import timedelta
 from decimal import Decimal
 from dateutil.parser import parse as dtparse
 from dateutil.tz import tzutc
@@ -474,7 +475,7 @@ def example_pending_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
-                    created_at=datetime.now(tzutc()) - datetime.timedelta(seconds=30),
+                    created_at=datetime.now(tzutc()) - timedelta(seconds=30),
                 ),
             ],
             access_key=AccessKey('user04'),
@@ -496,7 +497,7 @@ def example_pending_sessions():
             }),
             target_sgroup_names=[],
             **_common_dummy_for_pending_session,
-            created_at=datetime.now(tzutc()) - datetime.timedelta(seconds=30),
+            created_at=datetime.now(tzutc()) - timedelta(seconds=30),
         ),
     ]
 
