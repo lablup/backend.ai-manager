@@ -30,6 +30,7 @@ import yarl
 from .base import (
     Item, PaginatedList,
 )
+from ..api.exceptions import VFolderOperationFailed
 from ..exceptions import InvalidArgument
 if TYPE_CHECKING:
     from .gql import GraphQueryContext
@@ -153,6 +154,16 @@ class StorageSessionManager:
             headers=headers,
             **kwargs,
         ) as client_resp:
+            if client_resp.status // 100 != 2:
+                try:
+                    error_data = await client_resp.json()
+                    raise VFolderOperationFailed(extra_data=error_data)
+                except aiohttp.ClientResponseError:
+                    # when the response body is not JSON, just raise with status info.
+                    raise VFolderOperationFailed(
+                        extra_msg=f"Storage proxy responded with "
+                                  f"{client_resp.status} {client_resp.reason}",
+                    )
             yield proxy_info.client_api_url, client_resp
 
 
