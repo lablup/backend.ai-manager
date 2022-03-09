@@ -474,7 +474,7 @@ def example_pending_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
-                    created_at=datetime.now(tzutc()) - 30,
+                    created_at=datetime.now(tzutc()) - datetime.timedelta(seconds=30),
                 ),
             ],
             access_key=AccessKey('user04'),
@@ -496,7 +496,7 @@ def example_pending_sessions():
             }),
             target_sgroup_names=[],
             **_common_dummy_for_pending_session,
-            created_at=datetime.now(tzutc()) - 30,
+            created_at=datetime.now(tzutc()) - datetime.timedelta(seconds=30),
         ),
     ]
 
