@@ -554,7 +554,7 @@ async def prepare_vfolder_mounts(
             ))
         else:
             # Normal vfolders
-            kernel_path_raw = requested_vfolder_dstpaths.get(vfolder['name'])
+            kernel_path_raw = requested_vfolder_dstpaths.get(key)
             if kernel_path_raw is None:
                 kernel_path = PurePosixPath(f"/home/work/{vfolder['name']}")
             else:
@@ -563,7 +563,7 @@ async def prepare_vfolder_mounts(
                     kernel_path = PurePosixPath("/home/work", kernel_path_raw)
             matched_vfolder_mounts.append(VFolderMount(
                 name=vfolder['name'],
-                host_path=mount_base_path / requested_vfolder_subpaths[vfolder['name']],
+                host_path=mount_base_path / requested_vfolder_subpaths[key],
                 kernel_path=kernel_path,
                 mount_perm=vfolder['permission'],
             ))
