@@ -193,9 +193,9 @@ class ResourceSlotColumn(TypeDecorator):
         return ResourceSlotColumn()
 
 
-class StructuredJSONBColumn(TypeDecorator):
+class StructuredJSONColumn(TypeDecorator):
     """
-    A column type check scheduler_opts's validation using trafaret.
+    A column type to convert JSON values back and forth using a Trafaret.
     """
 
     impl = JSONB
@@ -214,12 +214,12 @@ class StructuredJSONBColumn(TypeDecorator):
         return self._schema.check(raw_value)
 
     def copy(self):
-        return StructuredJSONBColumn(self._schema)
+        return StructuredJSONColumn(self._schema)
 
 
 class StructuredJSONObjectColumn(TypeDecorator):
     """
-    A column type check scheduler_opts's validation using trafaret.
+    A column type to convert JSON values back and forth using JSONSerializableMixin.
     """
 
     impl = JSONB
@@ -241,7 +241,8 @@ class StructuredJSONObjectColumn(TypeDecorator):
 
 class StructuredJSONObjectListColumn(TypeDecorator):
     """
-    A column type check scheduler_opts's validation using trafaret.
+    A column type to convert JSON values back and forth using JSONSerializableMixin,
+    but store and load a list of the objects.
     """
 
     impl = JSONB
