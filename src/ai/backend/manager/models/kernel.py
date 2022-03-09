@@ -28,6 +28,7 @@ import sqlalchemy as sa
 from sqlalchemy.engine.row import Row
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 from sqlalchemy.dialects import postgresql as pgsql
+import trafaret as t
 
 from ai.backend.common import msgpack, redis
 from ai.backend.common.types import (
@@ -41,6 +42,7 @@ from ai.backend.common.types import (
     SlotName,
     RedisConnectionInfo,
     ResourceSlot,
+    VFolderMount,
 )
 
 from ..defs import DEFAULT_ROLE
@@ -53,6 +55,7 @@ from .base import (
     PaginatedList,
     ResourceSlotColumn,
     SessionIDColumnType,
+    StructuredJSONObjectListColumn,
     batch_result,
     batch_multiresult,
     metadata,
@@ -65,7 +68,7 @@ from .keypair import keypairs
 if TYPE_CHECKING:
     from .gql import GraphQueryContext
 
-__all__: Sequence[str] = (
+__all__ = (
     'kernels',
     'session_dependencies',
     'KernelStatus',
@@ -183,8 +186,9 @@ kernels = sa.Table(
     sa.Column('occupied_slots', ResourceSlotColumn(), nullable=False),
     sa.Column('occupied_shares', pgsql.JSONB(), nullable=False, default={}),  # legacy
     sa.Column('environ', sa.ARRAY(sa.String), nullable=True),
-    sa.Column('mounts', sa.ARRAY(sa.String), nullable=True),  # list of list
-    sa.Column('mount_map', pgsql.JSONB(), nullable=True, default={}),
+    sa.Column('mounts', sa.ARRAY(sa.String), nullable=True),  # list of list; legacy sicne 22.03
+    sa.Column('mount_map', pgsql.JSONB(), nullable=True, default={}),  # legacy sicne 22.03
+    sa.Column('vfolder_mounts', StructuredJSONObjectListColumn(VFolderMount), nullable=True),
     sa.Column('attached_devices', pgsql.JSONB(), nullable=True, default={}),
     sa.Column('resource_opts', pgsql.JSONB(), nullable=True, default={}),
     sa.Column('bootstrap_script', sa.String(length=16 * 1024), nullable=True),
@@ -1292,7 +1296,7 @@ class LegacyComputeSession(graphene.ObjectType):
             'result': row['result'].name,
             'service_ports': row['service_ports'],
             'occupied_slots': row['occupied_slots'].to_json(),
-            'mounts': row['mounts'],
+            'vfolder_mounts': row['vfolder_mounts'],
             'resource_opts': row['resource_opts'],
             'num_queries': row['num_queries'],
             # optionally hidden

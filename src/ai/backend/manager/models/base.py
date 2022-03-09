@@ -55,6 +55,7 @@ from ai.backend.common.types import (
     KernelId,
     ResourceSlot,
     SessionId,
+    JSONSerializableMixin,
 )
 
 from ai.backend.manager.models.utils import execute_with_retry
@@ -214,6 +215,52 @@ class StructuredJSONBColumn(TypeDecorator):
 
     def copy(self):
         return StructuredJSONBColumn(self._schema)
+
+
+class StructuredJSONObjectColumn(TypeDecorator):
+    """
+    A column type check scheduler_opts's validation using trafaret.
+    """
+
+    impl = JSONB
+    cache_ok = True
+
+    def __init__(self, attr_cls: Type[JSONSerializableMixin]) -> None:
+        super().__init__()
+        self._attr_cls = attr_cls
+
+    def process_bind_param(self, value, dialect):
+        return self._attr_cls.to_json(value)
+
+    def process_result_value(self, raw_value, dialect):
+        return self._attr_cls.from_json(raw_value)
+
+    def copy(self):
+        return StructuredJSONObjectColumn(self._attr_cls)
+
+
+class StructuredJSONObjectListColumn(TypeDecorator):
+    """
+    A column type check scheduler_opts's validation using trafaret.
+    """
+
+    impl = JSONB
+    cache_ok = True
+
+    def __init__(self, attr_cls: Type[JSONSerializableMixin]) -> None:
+        super().__init__()
+        self._attr_cls = attr_cls
+
+    def process_bind_param(self, value, dialect):
+        return [self._attr_cls.to_json(item) for item in value]
+
+    def process_result_value(self, raw_value, dialect):
+        if raw_value is None:
+            return []
+        return [self._attr_cls.from_json(item) for item in raw_value]
+
+    def copy(self):
+        return StructuredJSONObjectListColumn(self._attr_cls)
 
 
 class CurrencyTypes(enum.Enum):
