@@ -45,14 +45,14 @@ async def virtual_image_db():
             'index.docker.io/lablup/test-python:latest', 'x86_64',
             'index.docker.io', 'lablup/test-python', 'latest',
             'sha256:2d577a600afe2d1b38d78bc2ee5abe3bd350890d0652e48096249694e074f9c3',
-            123123123, '', {}, {},
+            123123123, 'COMPUTE', '', {}, {},
         )
         image_1.id = uuid.uuid4()
         image_2 = ImageRow(
             'index.docker.io/lablup/test-python:3.6-debian', 'aarch64',
             'index.docker.io', 'lablup/test-python', '3.6-debian',
             'sha256:2d577a600afe2d1b38d78bc2ee5abe3bd350890d0652e48096249694e074f9c3',
-            123123123, '', {}, {},
+            123123123, 'COMPUTE', '', {}, {},
         )
         image_2.id = uuid.uuid4()
         session.add(image_1)

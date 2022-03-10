@@ -209,7 +209,15 @@ class StructuredJSONBColumn(TypeDecorator):
         super().__init__()
         self._schema = schema
 
+    def load_dialect_impl(self, dialect):
+        if dialect.name == 'sqlite':
+            return dialect.type_descriptor(sa.JSON)
+        else:
+            return super().load_dialect_impl(dialect)
+
     def process_bind_param(self, value, dialect):
+        if value is None:
+            return self._schema.check({})
         return self._schema.check(value)
 
     def process_result_value(self, raw_value, dialect):
