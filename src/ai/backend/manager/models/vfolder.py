@@ -531,7 +531,11 @@ async def prepare_vfolder_mounts(
             # if not belong to the execution kernel.
             continue
         mount_base_path = PurePosixPath(
-            await storage_manager.get_mount_path(vfolder['host'], vfolder['id']),
+            await storage_manager.get_mount_path(
+                vfolder['host'],
+                vfolder['id'],
+                PurePosixPath(requested_vfolder_subpaths[key]),
+            ),
         )
         if vfolder['name'] == '.local' and vfolder['group'] is not None:
             # Auto-create per-user subdirectory inside the group-owned ".local" vfolder.

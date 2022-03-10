@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager as actxmgr
 from contextvars import ContextVar
 import itertools
 import logging
+from pathlib import PurePosixPath
 from typing import (
     Any,
     AsyncIterator,
@@ -120,12 +121,18 @@ class StorageSessionManager:
         _ctx_volumes_cache.set(results)
         return results
 
-    async def get_mount_path(self, vfolder_host: str, vfolder_id: UUID) -> str:
+    async def get_mount_path(
+        self,
+        vfolder_host: str,
+        vfolder_id: UUID,
+        subpath: PurePosixPath = PurePosixPath("."),
+    ) -> str:
         async with self.request(
             vfolder_host, 'GET', 'folder/mount',
             json={
                 'volume': self.split_host(vfolder_host)[1],
                 'vfid': str(vfolder_id),
+                'subpath': str(subpath),
             },
         ) as (_, resp):
             reply = await resp.json()
