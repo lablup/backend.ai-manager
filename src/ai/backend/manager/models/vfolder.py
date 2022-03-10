@@ -24,7 +24,7 @@ import trafaret as t
 
 from ai.backend.common.types import VFolderMount
 
-from ..api.exceptions import InvalidAPIParameters, VFolderNotFound
+from ..api.exceptions import InvalidAPIParameters, VFolderNotFound, VFolderOperationFailed
 from ..defs import RESERVED_VFOLDER_PATTERNS, RESERVED_VFOLDERS
 from ..types import UserScope
 from .base import (
@@ -530,13 +530,16 @@ async def prepare_vfolder_mounts(
             # User's accessible group vfolders should not be mounted
             # if not belong to the execution kernel.
             continue
-        mount_base_path = PurePosixPath(
-            await storage_manager.get_mount_path(
-                vfolder['host'],
-                vfolder['id'],
-                PurePosixPath(requested_vfolder_subpaths[key]),
-            ),
-        )
+        try:
+            mount_base_path = PurePosixPath(
+                await storage_manager.get_mount_path(
+                    vfolder['host'],
+                    vfolder['id'],
+                    PurePosixPath(requested_vfolder_subpaths[key]),
+                ),
+            )
+        except VFolderOperationFailed as e:
+            raise InvalidAPIParameters(e.extra_msg, e.extra_data) from None
         if vfolder['name'] == '.local' and vfolder['group'] is not None:
             # Auto-create per-user subdirectory inside the group-owned ".local" vfolder.
             async with storage_manager.request(

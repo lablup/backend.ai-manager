@@ -164,7 +164,10 @@ class StorageSessionManager:
             if client_resp.status // 100 != 2:
                 try:
                     error_data = await client_resp.json()
-                    raise VFolderOperationFailed(extra_data=error_data)
+                    raise VFolderOperationFailed(
+                        extra_msg=error_data.pop("msg"),
+                        extra_data=error_data,
+                    )
                 except aiohttp.ClientResponseError:
                     # when the response body is not JSON, just raise with status info.
                     raise VFolderOperationFailed(
