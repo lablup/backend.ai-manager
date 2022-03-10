@@ -1638,7 +1638,7 @@ class AgentRegistry:
                         .where(agents.c.status == AgentStatus.ALIVE)
                     )
                     await conn.execute(query)
-        
+
         async def _update_keypair_rsc_usg() -> None:
             # Update keypair resource usage for keypairs with running containers.
             async def _pipe_builder(r: aioredis.Redis):
@@ -1825,7 +1825,7 @@ class AgentRegistry:
                                 lambda r: r.hincrby(
                                     'keypair.rsc_usages',
                                     kernel['access_key'],
-                                    -1
+                                    -1,
                                 ),
                             )
 
@@ -1850,7 +1850,7 @@ class AgentRegistry:
                                     })
                                     .where(kernels.c.id == kernel['id']),
                                 )
-                        
+
                         if kernel['cluster_role'] == DEFAULT_ROLE:
                             # The main session is terminated;
                             # decrement the user's concurrency counter
@@ -1859,7 +1859,7 @@ class AgentRegistry:
                                 lambda r: r.hincrby(
                                     'keypair.rsc_usages',
                                     kernel['access_key'],
-                                    -1
+                                    -1,
                                 ),
                             )
 

@@ -61,6 +61,7 @@ async def check_concurrency(
 ) -> PredicateResult:
 
     max_concurrent_sessions: int
+
     async def _get_max_conc_sess() -> int:
         async with db_conn.begin_nested():
             select_query = (
