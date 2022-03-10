@@ -32,7 +32,6 @@ import uuid
 import weakref
 
 import aiodocker
-import aiohttp
 import aioredis
 import aiotools
 from async_timeout import timeout as _timeout
@@ -97,7 +96,6 @@ from .api.exceptions import (
     KernelCreationFailed, KernelDestructionFailed,
     KernelExecutionFailed, KernelRestartFailed,
     ScalingGroupNotFound,
-    VFolderNotFound,
     AgentError,
     GenericForbidden,
     QuotaExceeded,
@@ -105,13 +103,14 @@ from .api.exceptions import (
 from .config import SharedConfig
 from .exceptions import MultiAgentError
 from .defs import DEFAULT_ROLE, INTRINSIC_SLOTS
-from .types import SessionGetter
+from .types import SessionGetter, UserScope
 from .models import (
-    agents, kernels, keypairs, vfolders,
-    query_group_dotfiles, query_domain_dotfiles,
+    agents, kernels, keypairs,
     keypair_resource_policies,
     AgentStatus, KernelStatus,
-    query_accessible_vfolders, query_allowed_sgroups,
+    prepare_dotfiles,
+    prepare_vfolder_mounts,
+    query_allowed_sgroups,
     recalc_agent_resource_occupancy,
     recalc_concurrency_used,
     AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
@@ -762,21 +761,15 @@ class AgentRegistry:
         session_type: SessionTypes,
         resource_policy: dict,
         *,
-        domain_name: str,
-        group_id: uuid.UUID,
-        user_uuid: uuid.UUID,
-        user_role: str,
+        user_scope: UserScope,
         cluster_mode: ClusterMode = ClusterMode.SINGLE_NODE,
         cluster_size: int = 1,
-        startup_command: str = None,
         session_tag: str = None,
         internal_data: dict = None,
         starts_at: datetime = None,
         agent_list: Sequence[str] = None,
     ) -> SessionId:
 
-        mounts = kernel_enqueue_configs[0]['creation_config'].get('mounts') or []
-        mount_map = kernel_enqueue_configs[0]['creation_config'].get('mount_map') or {}
         session_id = SessionId(uuid.uuid4())
 
         # Check keypair resource limit
@@ -786,11 +779,13 @@ class AgentRegistry:
                 f"{resource_policy['max_containers_per_session']} containers.",
             )
 
-        # Check scaling group availability if scaling_group parameter is given.
-        # If scaling_group is not provided, it will be selected as the first one among
-        # the list of allowed scaling groups.
         async with self.db.begin_readonly() as conn:
-            sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
+            # Check scaling group availability if scaling_group parameter is given.
+            # If scaling_group is not provided, it will be selected as the first one among
+            # the list of allowed scaling groups.
+            sgroups = await query_allowed_sgroups(
+                conn, user_scope.domain_name, user_scope.group_id, access_key,
+            )
             if not sgroups:
                 raise ScalingGroupNotFound("You have no scaling groups allowed to use.")
             if scaling_group is None:
@@ -806,67 +801,28 @@ class AgentRegistry:
                         break
                 else:
                     raise ScalingGroupNotFound(f"The scaling group {scaling_group} does not exist.")
-        assert scaling_group is not None
+            assert scaling_group is not None
 
-        # sanity check for vfolders
-        allowed_vfolder_types = ['user', 'group']
-        # allowed_vfolder_types = await root_ctx.shared_config.etcd.get('path-to-vfolder-type')
-        determined_mounts = []
-        matched_mounts = set()
-        async with self.db.begin_readonly() as conn:
-            if mounts:
-                extra_vf_conds = (
-                    vfolders.c.name.in_(mounts) |
-                    vfolders.c.name.startswith('.')
-                )
-            else:
-                extra_vf_conds = vfolders.c.name.startswith('.')
-            matched_vfolders = await query_accessible_vfolders(
-                conn, user_uuid,
-                user_role=user_role, domain_name=domain_name,
-                allowed_vfolder_types=allowed_vfolder_types,
-                extra_vf_conds=extra_vf_conds)
+            # Translate mounts/mount_map into vfolder mounts
+            requested_mounts = kernel_enqueue_configs[0]['creation_config'].get('mounts') or []
+            requested_mount_map = kernel_enqueue_configs[0]['creation_config'].get('mount_map') or {}
+            allowed_vfolder_types = await self.shared_config.get_vfolder_types()
+            vfolder_mounts = await prepare_vfolder_mounts(
+                conn,
+                self.storage_manager,
+                allowed_vfolder_types,
+                user_scope,
+                requested_mounts,
+                requested_mount_map,
+            )
 
-        for item in matched_vfolders:
-            if item['group'] is not None and item['group'] != str(group_id):
-                # User's accessible group vfolders should not be mounted
-                # if not belong to the execution kernel.
-                continue
-            mount_path = await self.storage_manager.get_mount_path(item['host'], item['id'])
-            if item['name'] == '.local' and item['group'] is not None:
-                try:
-                    async with self.storage_manager.request(
-                        item['host'], 'POST', 'folder/file/mkdir',
-                        params={
-                            'volume': self.storage_manager.split_host(item['host'])[1],
-                            'vfid': item['id'],
-                            'relpath': str(user_uuid.hex),
-                        },
-                    ):
-                        pass
-                except aiohttp.ClientResponseError:
-                    # the server may respond with error if the directory already exists
-                    pass
-                matched_mounts.add(item['name'])
-                determined_mounts.append((
-                    item['name'],
-                    item['host'],
-                    f"{mount_path}/{user_uuid.hex}",
-                    item['permission'].value,
-                    '',
-                ))
-            else:
-                matched_mounts.add(item['name'])
-                determined_mounts.append((
-                    item['name'],
-                    item['host'],
-                    mount_path,
-                    item['permission'].value,
-                    item['unmanaged_path'] if item['unmanaged_path'] else '',
-                ))
-        if mounts and set(mounts) > matched_mounts:
-            raise VFolderNotFound(extra_data=[*(set(mounts) - matched_mounts)])
-        mounts = determined_mounts
+            # Prepare internal data for common dotfiles.
+            dotfile_data = await prepare_dotfiles(
+                conn,
+                user_scope,
+                access_key,
+                vfolder_mounts,
+            )
 
         ids = []
         is_multicontainer = cluster_size > 1
@@ -898,6 +854,10 @@ class AgentRegistry:
             else:
                 raise InvalidAPIParameters("Missing kernel configurations")
 
+        # Prepare internal data.
+        internal_data = {} if internal_data is None else internal_data
+        internal_data.update(dotfile_data)
+
         hook_result = await self.hook_plugin_ctx.dispatch(
             'PRE_ENQUEUE_SESSION',
             (session_id, session_name, access_key),
@@ -916,7 +876,7 @@ class AgentRegistry:
             image_ref = kernel['image_ref']
             resource_opts = creation_config.get('resource_opts') or {}
 
-            creation_config['mounts'] = mounts
+            creation_config['mounts'] = [vfmount.to_json() for vfmount in vfolder_mounts]
             # TODO: merge into a single call
             image_info = await self.shared_config.inspect_image(image_ref)
             image_min_slots, image_max_slots = \
@@ -1020,59 +980,6 @@ class AgentRegistry:
             environ = kernel_enqueue_configs[0]['creation_config'].get('environ') or {}
 
             # Create kernel object in PENDING state.
-            async with self.db.begin_readonly() as conn:
-                # Feed SSH keypair and dotfiles if exists.
-                query = (sa.select([keypairs.c.ssh_public_key,
-                                    keypairs.c.ssh_private_key,
-                                    keypairs.c.dotfiles])
-                           .select_from(keypairs)
-                           .where(keypairs.c.access_key == access_key))
-                result = await conn.execute(query)
-                row = result.first()
-                dotfiles = msgpack.unpackb(row['dotfiles'])
-                internal_data = {} if internal_data is None else internal_data
-                internal_data.update({'dotfiles': dotfiles})
-                if row['ssh_public_key'] and row['ssh_private_key']:
-                    internal_data['ssh_keypair'] = {
-                        'public_key': row['ssh_public_key'],
-                        'private_key': row['ssh_private_key'],
-                    }
-                # use dotfiles in the priority of keypair > group > domain
-                dotfile_paths = set(map(lambda x: x['path'], dotfiles))
-                # add keypair dotfiles
-                internal_data.update({'dotfiles': list(dotfiles)})
-                # add group dotfiles
-                dotfiles, _ = await query_group_dotfiles(conn, group_id)
-                for dotfile in dotfiles:
-                    if dotfile['path'] not in dotfile_paths:
-                        internal_data['dotfiles'].append(dotfile)
-                        dotfile_paths.add(dotfile['path'])
-                # add domain dotfiles
-                dotfiles, _ = await query_domain_dotfiles(conn, domain_name)
-                for dotfile in dotfiles:
-                    if dotfile['path'] not in dotfile_paths:
-                        internal_data['dotfiles'].append(dotfile)
-                        dotfile_paths.add(dotfile['path'])
-                # reverse the dotfiles list so that higher priority can overwrite
-                # in case the actual path is the same
-                internal_data['dotfiles'].reverse()
-
-                # check if there is no name conflict of dotfile and vfolder
-                for dotfile in internal_data.get('dotfiles', []):
-                    if dotfile['path'].startswith('/'):
-                        if dotfile['path'].startswith('/home/'):
-                            path_arr = dotfile['path'].split('/')
-                            # check if there is a dotfile whose path equals /home/work/vfolder_name
-                            if len(path_arr) >= 3 and path_arr[2] == 'work' and \
-                                    path_arr[3] in matched_mounts:
-                                raise BackendError(
-                                    f'There is a vfolder whose name conflicts with '
-                                    f'dotfile {path_arr[3]} with path "{dotfile["path"]}"')
-                    else:
-                        if dotfile['path'] in matched_mounts:
-                            raise BackendError(
-                                f'There is a vfolder whose name conflicts with '
-                                f'dotfile {dotfile["path"]}')
             mapped_agent = None
             if not agent_list:
                 pass
@@ -1096,9 +1003,9 @@ class AgentRegistry:
                             'cluster_idx': kernel['cluster_idx'],
                             'cluster_hostname': f"{kernel['cluster_role']}{kernel['cluster_idx']}",
                             'scaling_group': scaling_group,
-                            'domain_name': domain_name,
-                            'group_id': group_id,
-                            'user_uuid': user_uuid,
+                            'domain_name': user_scope.domain_name,
+                            'group_id': user_scope.group_id,
+                            'user_uuid': user_scope.user_uuid,
                             'access_key': access_key,
                             'image': image_ref.canonical,
                             'registry': image_ref.registry,
@@ -1110,8 +1017,10 @@ class AgentRegistry:
                             'occupied_shares': {},
                             'resource_opts': resource_opts,
                             'environ': [f'{k}={v}' for k, v in environ.items()],
-                            'mounts': [list(mount) for mount in mounts],  # postgres save tuple as str
-                            'mount_map': mount_map,
+                            'mounts': [  # TODO: keep for legacy?
+                                mount.name for mount in vfolder_mounts
+                            ],
+                            'vfolder_mounts': vfolder_mounts,
                             'bootstrap_script': kernel.get('bootstrap_script'),
                             'repl_in_port': 0,
                             'repl_out_port': 0,
@@ -1429,8 +1338,7 @@ class AgentRegistry:
                             'cluster_idx': binding.kernel.cluster_idx,
                             'cluster_hostname': binding.kernel.cluster_hostname,
                             'idle_timeout': resource_policy['idle_timeout'],
-                            'mounts': scheduled_session.mounts,
-                            'mount_map': scheduled_session.mount_map,
+                            'mounts': [item.to_json() for item in scheduled_session.vfolder_mounts],
                             'environ': {
                                 # inherit per-session environment variables
                                 **scheduled_session.environ,

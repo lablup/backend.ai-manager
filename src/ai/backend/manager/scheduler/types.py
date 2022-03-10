@@ -37,6 +37,7 @@ from ai.backend.common.types import (
     ResourceSlot,
     SlotName,
     SlotTypes,
+    VFolderMount,
 )
 
 from ..defs import DEFAULT_ROLE
@@ -194,8 +195,7 @@ class PendingSession:
     requested_slots: ResourceSlot
     target_sgroup_names: MutableSequence[str]
     environ: MutableMapping[str, str]
-    mounts: Sequence[str]
-    mount_map: Mapping[str, str]
+    vfolder_mounts: Sequence[VFolderMount]
     bootstrap_script: Optional[str]
     startup_command: Optional[str]
     internal_data: Optional[MutableMapping[str, Any]]
@@ -230,8 +230,7 @@ class PendingSession:
             kernels.c.internal_data,
             kernels.c.resource_opts,
             kernels.c.environ,
-            kernels.c.mounts,
-            kernels.c.mount_map,
+            kernels.c.vfolder_mounts,
             kernels.c.bootstrap_script,
             kernels.c.startup_command,
             kernels.c.preopen_ports,
@@ -276,8 +275,7 @@ class PendingSession:
                 k: v for k, v
                 in map(lambda s: s.split('=', maxsplit=1), row['environ'])
             },
-            mounts=row['mounts'],
-            mount_map=row['mount_map'],
+            vfolder_mounts=row['vfolder_mounts'],
             bootstrap_script=row['bootstrap_script'],
             startup_command=row['startup_command'],
             preopen_ports=row['preopen_ports'],

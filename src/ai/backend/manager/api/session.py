@@ -89,6 +89,7 @@ from ai.backend.common.plugin.monitor import GAUGE
 
 from ..config import DEFAULT_CHUNK_SIZE
 from ..defs import DEFAULT_ROLE, REDIS_STREAM_DB
+from ..types import UserScope
 from ..models import (
     domains,
     association_groups_users as agus, groups,
@@ -511,13 +512,14 @@ async def _create(request: web.Request, params: Any) -> web.Response:
                 params['config']['scaling_group'],
                 params['session_type'],
                 resource_policy,
-                domain_name=params['domain'],  # type: ignore  # params always have it
-                group_id=group_id,
-                user_uuid=owner_uuid,
-                user_role=request['user']['role'],
+                user_scope=UserScope(
+                    domain_name=params['domain'],  # type: ignore  # params always have it
+                    group_id=group_id,
+                    user_uuid=owner_uuid,
+                    user_role=request['user']['role'],
+                ),
                 cluster_mode=params['cluster_mode'],
                 cluster_size=params['cluster_size'],
-                startup_command=params['startup_command'],
                 session_tag=params['tag'],
                 starts_at=starts_at,
                 agent_list=params['config']['agent_list'],
@@ -1006,10 +1008,12 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
                 params['scaling_group'],
                 params['sess_type'],
                 resource_policy,
-                domain_name=params['domain'],  # type: ignore
-                group_id=group_id,
-                user_uuid=owner_uuid,
-                user_role=request['user']['role'],
+                user_scope=UserScope(
+                    domain_name=params['domain'],  # type: ignore
+                    group_id=group_id,
+                    user_uuid=owner_uuid,
+                    user_role=request['user']['role'],
+                ),
                 session_tag=params['tag'],
             ),
         ))
