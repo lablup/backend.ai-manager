@@ -1,5 +1,6 @@
 from __future__ import annotations
 from decimal import Decimal
+import enum
 import functools
 
 import logging
@@ -46,7 +47,7 @@ from ai.backend.manager.defs import DEFAULT_IMAGE_ARCH
 
 from .base import (
     BigInt, ForeignKeyIDColumn, IDColumn,
-    KVPair, ResourceLimit, Base,
+    KVPair, ResourceLimit, Base, StructuredJSONBColumn,
 )
 from .user import UserRole
 from .utils import ExtendedAsyncSAEngine
@@ -62,6 +63,7 @@ log = BraceStyleAdapter(logging.getLogger(__name__))
 __all__ = (
     'rescan_images',
     'update_aliases_from_file',
+    'ImageType',
     'ImageAliasRow',
     'ImageRow',
     'Image',
@@ -71,34 +73,6 @@ __all__ = (
     'AliasImage',
     'DealiasImage',
 )
-
-
-# images = sa.Table(
-#     'images',
-#     metadata,
-#     IDColumn('id'),
-#     sa.Column('name', sa.String, nullable=False),
-#     sa.Column('image', sa.String, nullable=False),
-#     sa.Column(
-#         'created_at', sa.DateTime(timezone=True),
-#         server_default=sa.func.now(), index=True),
-#     sa.Column('tag', sa.TEXT),
-#     sa.Column('registry', sa.String, nullable=False),
-#     sa.Column('architecture', sa.String, nullable=False, default='amd64'),
-#     sa.Column('config_digest', sa.CHAR(length=72), nullable=False),
-#     sa.Column('size_bytes', sa.Integer, nullable=False),
-#     sa.Column('accelerators', sa.String, nullable=False),
-#     sa.Column('labels', sa.JSON, nullable=False),
-#     sa.Column('resources', sa.JSON, nullable=False),
-#     sa.Column('installed', sa.Boolean, nullable=False, default=False),
-# )
-
-# image_aliases = sa.Table(
-#     'image_aliases',
-#     metadata,
-#     sa.Column('alias', sa.String(128), primary_key=True),
-#     ForeignKeyIDColumn('image', 'images.id', nullable=False),
-# )
 
 
 async def rescan_images(
@@ -169,23 +143,38 @@ async def update_aliases_from_file(session: AsyncSession, file: Path) -> List[Im
     return ret
 
 
+class ImageType(enum.Enum):
+    COMPUTE = 'compute'
+    SYSTEM = 'system'
+    SERVICE = 'service'
+
+
 class ImageRow(Base):
     __tablename__ = 'images'
     id = IDColumn('id')
-    name = sa.Column('name', sa.String, nullable=False)
-    image = sa.Column('image', sa.String, nullable=False)
+    name = sa.Column('name', sa.String, nullable=False, index=True)
+    image = sa.Column('image', sa.String, nullable=False, index=True)
     created_at = sa.Column(
         'created_at', sa.DateTime(timezone=True),
         server_default=sa.func.now(), index=True,
     )
     tag = sa.Column('tag', sa.TEXT)
-    registry = sa.Column('registry', sa.String, nullable=False)
-    architecture = sa.Column('architecture', sa.String, nullable=False, default='x86_64')
+    registry = sa.Column('registry', sa.String, nullable=False, index=True)
+    architecture = sa.Column('architecture', sa.String, nullable=False, index=True, default='x86_64')
     config_digest = sa.Column('config_digest', sa.CHAR(length=72), nullable=False)
     size_bytes = sa.Column('size_bytes', sa.BigInteger, nullable=False)
+    type = sa.Column('type', sa.Enum(ImageType), nullable=False)
     accelerators = sa.Column('accelerators', sa.String)
     labels = sa.Column('labels', sa.JSON, nullable=False)
-    resources = sa.Column('resources', sa.JSON, nullable=False)
+    resources = sa.Column('resources', StructuredJSONBColumn(
+        t.Mapping(
+            t.String,
+            t.Dict({
+                t.Key('min'): t.String,
+                t.Key('max', default=None): t.Null | t.String,
+            }),
+        ),
+    ), nullable=False)
     aliases: relationship
 
     def __init__(
@@ -197,6 +186,7 @@ class ImageRow(Base):
         tag=None,
         config_digest=None,
         size_bytes=None,
+        type=None,
         accelerators=None,
         labels=None,
         resources=None,
@@ -208,6 +198,7 @@ class ImageRow(Base):
         self.architecture = architecture
         self.config_digest = config_digest
         self.size_bytes = size_bytes
+        self.type = type
         self.accelerators = accelerators
         self.labels = labels
         self.resources = resources
@@ -422,7 +413,7 @@ class ImageRow(Base):
 class ImageAliasRow(Base):
     __tablename__ = 'image_aliases'
     id = IDColumn('id')
-    alias = sa.Column('alias', sa.String, unique=True)
+    alias = sa.Column('alias', sa.String, unique=True, index=True)
     image_id = ForeignKeyIDColumn('image', 'images.id', nullable=False)
     image: relationship
 

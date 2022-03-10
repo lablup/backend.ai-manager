@@ -344,7 +344,6 @@ class KernelInfo:
 
     @classmethod
     def from_row(cls, row: Row) -> KernelInfo:
-        log.debug('architecture: ({})', row['architecture'])
         return cls(
             kernel_id=row['id'],
             session_id=row['session_id'],

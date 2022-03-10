@@ -21,6 +21,8 @@ from ai.backend.manager.models import (
     ImageRow,
 )
 from ai.backend.manager.models.base import metadata as old_metadata
+from ai.backend.manager.models.utils import regenerate_table
+
 column_keys = ['nullable', 'index', 'unique', 'primary_key']
 
 
@@ -30,25 +32,8 @@ async def virtual_image_db():
     base = declarative_base()
     metadata = base.metadata
 
-    def _generate_column(column: sa.Column):
-        column_attrs = dict(column.__dict__)
-        name = column_attrs.pop('name')
-        return sa.Column(name, column.type, **{k: column_attrs[k] for k in column_keys})
-
-    sa.Table(
-        'images', metadata,
-        *[
-            _generate_column(column)
-            for column in old_metadata.tables['images'].columns
-        ],
-    )
-    sa.Table(
-        'image_aliases', metadata,
-        *[
-            _generate_column(column)
-            for column in old_metadata.tables['image_aliases'].columns
-        ],
-    )
+    regenerate_table(old_metadata.tables['images'], metadata)
+    regenerate_table(old_metadata.tables['image_aliases'], metadata)
     ImageAliasRow.metadata = metadata
     ImageRow.metadata = metadata
     async_session = sessionmaker(engine, class_=AsyncSession, autoflush=False)

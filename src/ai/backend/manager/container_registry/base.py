@@ -25,7 +25,7 @@ from ai.backend.common.docker import (
 )
 from ai.backend.common.logging import BraceStyleAdapter
 
-from ai.backend.manager.models.image import ImageRow
+from ai.backend.manager.models.image import ImageRow, ImageType
 from ai.backend.manager.models.utils import ExtendedAsyncSAEngine
 
 if TYPE_CHECKING:
@@ -140,6 +140,7 @@ class BaseContainerRegistry(metaclass=ABCMeta):
                         architecture=k.architecture,
                         config_digest=v['config_digest'],
                         size_bytes=v['size_bytes'],
+                        type=ImageType.COMPUTE,
                         accelerators=v.get('accels'),
                         labels=v['labels'],
                         resources=v['resources'],
