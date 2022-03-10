@@ -556,7 +556,7 @@ async def prepare_vfolder_mounts(
             matched_vfolder_mounts.append(VFolderMount(
                 name=vfolder['name'],
                 vfid=vfolder['id'],
-                vfsubpath=user_scope.user_uuid.hex,
+                vfsubpath=PurePosixPath(user_scope.user_uuid.hex),
                 host_path=mount_base_path / user_scope.user_uuid.hex,
                 kernel_path=PurePosixPath("/home/work/.local"),
                 mount_perm=vfolder['permission'],
@@ -573,7 +573,7 @@ async def prepare_vfolder_mounts(
             matched_vfolder_mounts.append(VFolderMount(
                 name=vfolder['name'],
                 vfid=vfolder['id'],
-                vfsubpath=requested_vfolder_subpaths[key],
+                vfsubpath=PurePosixPath(requested_vfolder_subpaths[key]),
                 host_path=mount_base_path / requested_vfolder_subpaths[key],
                 kernel_path=kernel_path,
                 mount_perm=vfolder['permission'],
