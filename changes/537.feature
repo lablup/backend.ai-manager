@@ -1,1 +1,1 @@
-Add path parse feature for subdirectory mount by slash(/) and save detailed mount information for each subdirectory after existence verification.
+Allow mounting subpath of vfolders if specified as relative paths appended to vfolder names and improve storage error propagation.  Also introduce `StructuredJSONObjectColumn` and `StructuredJSONObjectListColumn` to define database columns based on `common.types.JSONSerializableMixin`.
