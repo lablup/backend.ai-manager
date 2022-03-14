@@ -27,6 +27,7 @@ from ..models import (
     domains, groups, query_allowed_sgroups,
     association_groups_users as agus,
 )
+from ..types import UserScope
 from .auth import admin_required
 from .exceptions import InvalidAPIParameters
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
@@ -430,10 +431,12 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
         None,
         SessionTypes.BATCH,
         resource_policy,
-        domain_name=request['user']['domain_name'],
-        group_id=group_id,
-        user_uuid=request['user']['uuid'],
-        user_role=request['user']['role'],
+        user_scope=UserScope(
+            domain_name=request['user']['domain_name'],
+            group_id=group_id,
+            user_uuid=request['user']['uuid'],
+            user_role=request['user']['role'],
+        ),
         internal_data={
             'domain_socket_proxies': ['/var/run/docker.sock'],
             'docker_credentials': docker_creds,

@@ -58,6 +58,7 @@ from ai.backend.common.types import (
     KernelId,
     ResourceSlot,
     SessionId,
+    JSONSerializableMixin,
 )
 
 from ai.backend.manager.models.utils import execute_with_retry
@@ -197,9 +198,9 @@ class ResourceSlotColumn(TypeDecorator):
         return ResourceSlotColumn()
 
 
-class StructuredJSONBColumn(TypeDecorator):
+class StructuredJSONColumn(TypeDecorator):
     """
-    A column type check scheduler_opts's validation using trafaret.
+    A column type to convert JSON values back and forth using a Trafaret.
     """
 
     impl = JSONB
@@ -226,7 +227,54 @@ class StructuredJSONBColumn(TypeDecorator):
         return self._schema.check(raw_value)
 
     def copy(self):
-        return StructuredJSONBColumn(self._schema)
+        return StructuredJSONColumn(self._schema)
+
+
+class StructuredJSONObjectColumn(TypeDecorator):
+    """
+    A column type to convert JSON values back and forth using JSONSerializableMixin.
+    """
+
+    impl = JSONB
+    cache_ok = True
+
+    def __init__(self, attr_cls: Type[JSONSerializableMixin]) -> None:
+        super().__init__()
+        self._attr_cls = attr_cls
+
+    def process_bind_param(self, value, dialect):
+        return self._attr_cls.to_json(value)
+
+    def process_result_value(self, raw_value, dialect):
+        return self._attr_cls.from_json(raw_value)
+
+    def copy(self):
+        return StructuredJSONObjectColumn(self._attr_cls)
+
+
+class StructuredJSONObjectListColumn(TypeDecorator):
+    """
+    A column type to convert JSON values back and forth using JSONSerializableMixin,
+    but store and load a list of the objects.
+    """
+
+    impl = JSONB
+    cache_ok = True
+
+    def __init__(self, attr_cls: Type[JSONSerializableMixin]) -> None:
+        super().__init__()
+        self._attr_cls = attr_cls
+
+    def process_bind_param(self, value, dialect):
+        return [self._attr_cls.to_json(item) for item in value]
+
+    def process_result_value(self, raw_value, dialect):
+        if raw_value is None:
+            return []
+        return [self._attr_cls.from_json(item) for item in raw_value]
+
+    def copy(self):
+        return StructuredJSONObjectListColumn(self._attr_cls)
 
 
 class CurrencyTypes(enum.Enum):
