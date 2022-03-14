@@ -190,5 +190,10 @@ def gql():
     '''Command set for GraphQL schema.'''
 
 
+@main.group(cls=LazyGroup, import_name='ai.backend.manager.cli.image:cli')
+def image():
+    '''Command set for managing images.'''
+
+
 if __name__ == '__main__':
     main()

@@ -108,9 +108,10 @@ from .models import (
     agents, kernels, keypairs,
     keypair_resource_policies,
     AgentStatus, KernelStatus,
+    ImageRow,
+    query_allowed_sgroups,
     prepare_dotfiles,
     prepare_vfolder_mounts,
-    query_allowed_sgroups,
     recalc_agent_resource_occupancy,
     recalc_concurrency_used,
     AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
@@ -118,7 +119,11 @@ from .models import (
     DEAD_KERNEL_STATUSES,
 )
 from .models.kernel import match_session_ids, get_all_kernels, get_main_kernels
-from .models.utils import ExtendedAsyncSAEngine, reenter_txn, execute_with_retry, sql_json_merge
+from .models.utils import (
+    ExtendedAsyncSAEngine,
+    execute_with_retry,
+    reenter_txn, sql_json_merge,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import (
@@ -246,7 +251,7 @@ class AgentRegistry:
         redis_image: RedisConnectionInfo,
         event_dispatcher: EventDispatcher,
         event_producer: EventProducer,
-        storage_manager:  StorageSessionManager,
+        storage_manager: StorageSessionManager,
         hook_plugin_ctx: HookPluginContext,
     ) -> None:
         self.shared_config = shared_config
@@ -878,13 +883,15 @@ class AgentRegistry:
 
             creation_config['mounts'] = [vfmount.to_json() for vfmount in vfolder_mounts]
             # TODO: merge into a single call
-            image_info = await self.shared_config.inspect_image(image_ref)
-            image_min_slots, image_max_slots = \
-                await self.shared_config.get_image_slot_ranges(image_ref)
+            async with self.db.begin_readonly_session() as session:
+                log.debug('enqueue_session(): image ref => {} ({})', image_ref, image_ref.architecture)
+                image_row = await ImageRow.resolve(session, [image_ref])
+            image_min_slots, image_max_slots = await image_row.get_slot_ranges(self.shared_config)
             known_slot_types = await self.shared_config.get_resource_slots()
 
+            labels = image_row.labels
             # Parse service ports to check for port errors
-            parse_service_ports(image_info['labels'].get('ai.backend.service-ports', ''), BackendError)
+            parse_service_ports(labels.get('ai.backend.service-ports', ''), BackendError)
 
             # Shared memory.
             # We need to subtract the amount of shared memory from the memory limit of
@@ -892,7 +899,7 @@ class AgentRegistry:
             # and cgroup's memory limit does not apply.
             shmem = resource_opts.get('shmem', None)
             if shmem is None:
-                shmem = image_info['labels'].get('ai.backend.resource.preferred.shmem', '64m')
+                shmem = labels.get('ai.backend.resource.preferred.shmem', '64m')
             shmem = BinarySize.from_str(shmem)
             resource_opts['shmem'] = shmem
             image_min_slots = copy.deepcopy(image_min_slots)
@@ -1008,6 +1015,7 @@ class AgentRegistry:
                             'user_uuid': user_scope.user_uuid,
                             'access_key': access_key,
                             'image': image_ref.canonical,
+                            'architecture': image_ref.architecture,
                             'registry': image_ref.registry,
                             'tag': session_tag,
                             'starts_at': starts_at,
@@ -1091,12 +1099,14 @@ class AgentRegistry:
         # Aggregate image registry information
         keyfunc = lambda item: item.kernel.image_ref
         image_infos = {}
-        for image_ref, _ in itertools.groupby(
-            sorted(kernel_agent_bindings, key=keyfunc), key=keyfunc,
-        ):
-            image_infos[image_ref] = await self.shared_config.inspect_image(image_ref)
-            registry_url, registry_creds = \
-                await get_registry_info(self.shared_config.etcd, image_ref.registry)
+        async with self.db.begin_readonly_session() as session:
+            for image_ref, _ in itertools.groupby(
+                sorted(kernel_agent_bindings, key=keyfunc), key=keyfunc,
+            ):
+                log.debug('start_session(): image ref => {} ({})', image_ref, image_ref.architecture)
+                image_infos[image_ref] = await ImageRow.resolve(session, [image_ref])
+                registry_url, registry_creds = \
+                    await get_registry_info(self.shared_config.etcd, image_ref.registry)
         image_info = {
             'image_infos': image_infos,
             'registry_url': registry_url,
@@ -1328,10 +1338,11 @@ class AgentRegistry:
                                     'url': str(registry_url),
                                     **registry_creds,   # type: ignore
                                 },
-                                'digest': image_infos[binding.kernel.image_ref]['digest'],
+                                'digest': image_infos[binding.kernel.image_ref].config_digest,
                                 'repo_digest': None,
                                 'canonical': binding.kernel.image_ref.canonical,
-                                'labels': image_infos[binding.kernel.image_ref]['labels'],
+                                'architecture': binding.kernel.image_ref.architecture,
+                                'labels': image_infos[binding.kernel.image_ref].labels,
                             },
                             'session_type': scheduled_session.session_type.value,
                             'cluster_role': binding.kernel.cluster_role,
@@ -2243,6 +2254,7 @@ class AgentRegistry:
                             agents.c.available_slots,
                             agents.c.version,
                             agents.c.compute_plugins,
+                            agents.c.architecture,
                         ])
                         .select_from(agents)
                         .where(agents.c.id == agent_id)
@@ -2267,6 +2279,7 @@ class AgentRegistry:
                             'lost_at': sa.null(),
                             'version': agent_info['version'],
                             'compute_plugins': agent_info['compute_plugins'],
+                            'architecture': agent_info.get('architecture', 'x86_64'),
                         })
                         result = await conn.execute(insert_query)
                         assert result.rowcount == 1
@@ -2282,6 +2295,8 @@ class AgentRegistry:
                             updates['version'] = agent_info['version']
                         if row['compute_plugins'] != agent_info['compute_plugins']:
                             updates['compute_plugins'] = agent_info['compute_plugins']
+                        if row['architecture'] != agent_info['architecture']:
+                            updates['architecture'] = agent_info['architecture']
                         # occupied_slots are updated when kernels starts/terminates
                         if updates:
                             await self.shared_config.update_resource_slots(slot_key_and_units)
@@ -2305,6 +2320,7 @@ class AgentRegistry:
                                 'available_slots': available_slots,
                                 'version': agent_info['version'],
                                 'compute_plugins': agent_info['compute_plugins'],
+                                'architecture': agent_info['architecture'],
                             })
                             .where(agents.c.id == agent_id)
                         )
@@ -2326,12 +2342,12 @@ class AgentRegistry:
 
             # Update the mapping of kernel images to agents.
             known_registries = await get_known_registries(self.shared_config.etcd)
-            images = msgpack.unpackb(snappy.decompress(agent_info['images']))
+            loaded_images = msgpack.unpackb(snappy.decompress(agent_info['images']))
 
             def _pipe_builder(r: aioredis.Redis):
                 pipe = r.pipeline()
-                for image in images:
-                    image_ref = ImageRef(image[0], known_registries)
+                for image in loaded_images:
+                    image_ref = ImageRef(image[0], known_registries, agent_info['architecture'])
                     pipe.sadd(image_ref.canonical, agent_id)
                 return pipe
             await redis.execute(self.redis_image, _pipe_builder)
