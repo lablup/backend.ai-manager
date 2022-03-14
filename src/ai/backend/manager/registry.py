@@ -1263,6 +1263,7 @@ class AgentRegistry:
                             'stdin_port': created_info['stdin_port'],
                             'stdout_port': created_info['stdout_port'],
                             'service_ports': service_ports,
+                            'occupied_slots': created_info['resource_spec']['allocations'],
                         })
                         .where(kernels.c.id == created_info['id']))
                     await conn.execute(query)
