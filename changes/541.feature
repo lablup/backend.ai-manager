@@ -1,1 +1,0 @@
-Add support for multi-architecture images, allowing heterogeneous agents in a single cluster with scheduler updates to match architectures of images and agents.  Also migrate the manager's image database from etcd to the PostgreSQL database.
