@@ -42,6 +42,9 @@ from sqlalchemy.ext.asyncio import (
     AsyncConnection as SAConnection,
     AsyncEngine as SAEngine,
 )
+from sqlalchemy.orm import (
+    registry,
+)
 from sqlalchemy.types import (
     SchemaType,
     TypeDecorator,
@@ -84,6 +87,8 @@ convention = {
     "pk": "pk_%(table_name)s",
 }
 metadata = sa.MetaData(naming_convention=convention)
+mapper_registry = registry(metadata=metadata)
+Base: Any = mapper_registry.generate_base()  # TODO: remove Any after #422 is merged
 
 pgsql_connect_opts = {
     'server_settings': {
@@ -205,7 +210,15 @@ class StructuredJSONColumn(TypeDecorator):
         super().__init__()
         self._schema = schema
 
+    def load_dialect_impl(self, dialect):
+        if dialect.name == 'sqlite':
+            return dialect.type_descriptor(sa.JSON)
+        else:
+            return super().load_dialect_impl(dialect)
+
     def process_bind_param(self, value, dialect):
+        if value is None:
+            return self._schema.check({})
         return self._schema.check(value)
 
     def process_result_value(self, raw_value, dialect):
@@ -310,7 +323,10 @@ class GUID(TypeDecorator, Generic[UUID_SubType]):
             return value
         else:
             cls = type(self)
-            return cast(UUID_SubType, cls.uuid_subtype_func(uuid.UUID(value)))
+            if isinstance(value, bytes):
+                return cast(UUID_SubType, cls.uuid_subtype_func(uuid.UUID(bytes=value)))
+            else:
+                return cast(UUID_SubType, cls.uuid_subtype_func(uuid.UUID(value)))
 
 
 class SessionIDColumnType(GUID[SessionId]):

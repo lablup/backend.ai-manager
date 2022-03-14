@@ -11,6 +11,7 @@ import pytest
 import snappy
 from sqlalchemy.sql.dml import Insert, Update
 
+from ai.backend.manager.defs import DEFAULT_IMAGE_ARCH
 from ai.backend.manager.registry import AgentRegistry
 from ai.backend.manager.models import AgentStatus
 from ai.backend.common import msgpack
@@ -91,6 +92,7 @@ async def test_handle_heartbeat(mocker) -> None:
             'resource_slots': {'cpu': ('count', _1), 'mem': ('bytes', _1g)},
             'region': 'ap-northeast-2',
             'addr': '10.0.0.5',
+            'architecture': DEFAULT_IMAGE_ARCH,
             'version': '19.12.0',
             'compute_plugins': [],
             'images': image_data,
@@ -105,6 +107,7 @@ async def test_handle_heartbeat(mocker) -> None:
         mock_dbresult.first = MagicMock(return_value={
             'status': AgentStatus.ALIVE,
             'addr': '10.0.0.5',
+            'architecture': DEFAULT_IMAGE_ARCH,
             'scaling_group': 'sg-testing',
             'available_slots': ResourceSlot({'cpu': _1, 'mem': _1g}),
             'version': '19.12.0',
@@ -115,6 +118,7 @@ async def test_handle_heartbeat(mocker) -> None:
             'resource_slots': {'cpu': ('count', _1), 'mem': ('bytes', _2g)},
             'region': 'ap-northeast-2',
             'addr': '10.0.0.6',
+            'architecture': DEFAULT_IMAGE_ARCH,
             'version': '19.12.0',
             'compute_plugins': [],
             'images': image_data,
@@ -133,6 +137,7 @@ async def test_handle_heartbeat(mocker) -> None:
         mock_dbresult.first = MagicMock(return_value={
             'status': AgentStatus.LOST,
             'addr': '10.0.0.5',
+            'architecture': DEFAULT_IMAGE_ARCH,
             'scaling_group': 'sg-testing',
             'available_slots': ResourceSlot({'cpu': _1, 'mem': _1g}),
             'version': '19.12.0',
@@ -143,6 +148,7 @@ async def test_handle_heartbeat(mocker) -> None:
             'resource_slots': {'cpu': ('count', _4), 'mem': ('bytes', _2g)},
             'region': 'ap-northeast-2',
             'addr': '10.0.0.6',
+            'architecture': DEFAULT_IMAGE_ARCH,
             'version': '19.12.0',
             'compute_plugins': [],
             'images': image_data,

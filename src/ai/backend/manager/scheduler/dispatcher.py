@@ -48,7 +48,7 @@ from ai.backend.common.types import (
     ResourceSlot,
 )
 
-from ..api.exceptions import InstanceNotAvailable
+from ..api.exceptions import GenericBadRequest, InstanceNotAvailable
 from ..distributed import GlobalTimer
 from ..defs import (
     AdvisoryLock,
@@ -299,6 +299,15 @@ class SchedulerDispatcher(aobject):
                 # no matching entry for picked session?
                 raise RuntimeError('should not reach here')
             sess_ctx = pending_sessions.pop(picked_idx)
+            requested_architectures = set([
+                x.image_ref.architecture for x in sess_ctx.kernels
+            ])
+            candidate_agents = list(
+                filter(
+                    lambda x: x.architecture in requested_architectures,
+                    candidate_agents,
+                ),
+            )
 
             log_fmt = 'schedule(s:{}, type:{}, name:{}, ak:{}, cluster_mode:{}): '
             log_args = (
@@ -423,6 +432,19 @@ class SchedulerDispatcher(aobject):
                 await execute_with_retry(_update)
 
             if sess_ctx.cluster_mode == ClusterMode.SINGLE_NODE:
+                # Single node session can't have multiple containers with different arch
+                if len(requested_architectures) > 1:
+                    raise GenericBadRequest(
+                        'Cannot assign multiple kernels with different architecture'
+                        'on single node session',
+                    )
+                requested_architecture = requested_architectures.pop()
+                candidate_agents = list(
+                    filter(
+                        lambda x: x.architecture == requested_architecture,
+                        candidate_agents,
+                    ),
+                )
                 await self._schedule_single_node_session(
                     sched_ctx,
                     scheduler,
@@ -575,6 +597,13 @@ class SchedulerDispatcher(aobject):
                     if kernel.agent_id is not None:
                         agent_id = kernel.agent_id
                     else:
+                        # limit agent candidates with requested image architecture
+                        candidate_agents = list(
+                            filter(
+                                lambda x: x.architecture == kernel.image_ref.architecture,
+                                candidate_agents,
+                            ),
+                        )
                         agent_id = scheduler.assign_agent_for_kernel(candidate_agents, kernel)
                     assert agent_id is not None
 
@@ -859,6 +888,7 @@ async def _list_agents_by_sgroup(
     query = (
         sa.select([
             agents.c.id,
+            agents.c.architecture,
             agents.c.addr,
             agents.c.scaling_group,
             agents.c.available_slots,
@@ -876,6 +906,7 @@ async def _list_agents_by_sgroup(
         item = AgentContext(
             row['id'],
             row['addr'],
+            row['architecture'],
             row['scaling_group'],
             row['available_slots'],
             row['occupied_slots'],
