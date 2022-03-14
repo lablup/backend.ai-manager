@@ -47,7 +47,7 @@ from ai.backend.manager.defs import DEFAULT_IMAGE_ARCH
 
 from .base import (
     BigInt, ForeignKeyIDColumn, IDColumn,
-    KVPair, ResourceLimit, Base, StructuredJSONBColumn,
+    KVPair, ResourceLimit, Base, StructuredJSONColumn,
 )
 from .user import UserRole
 from .utils import ExtendedAsyncSAEngine
@@ -166,7 +166,7 @@ class ImageRow(Base):
     type = sa.Column('type', sa.Enum(ImageType), nullable=False)
     accelerators = sa.Column('accelerators', sa.String)
     labels = sa.Column('labels', sa.JSON, nullable=False)
-    resources = sa.Column('resources', StructuredJSONBColumn(
+    resources = sa.Column('resources', StructuredJSONColumn(
         t.Mapping(
             t.String,
             t.Dict({
