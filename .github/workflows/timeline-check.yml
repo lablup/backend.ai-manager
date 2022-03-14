@@ -20,8 +20,7 @@ jobs:
         key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements/*.txt') }}
     - name: Install dependencies
       run: |
-        sudo apt-get install libsnappy-dev
-        python -m pip install -U pip setuptools
+        python -m pip install -U pip setuptools wheel
         python -m pip install -U towncrier
     - name: Check existence of news fragment
       run: |

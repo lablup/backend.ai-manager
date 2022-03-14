@@ -20,7 +20,7 @@ jobs:
         REQUIREMENTS_FILE: lint
       run: |
         sudo apt-get install libsnappy-dev
-        python -m pip install -U pip setuptools
+        python -m pip install -U pip setuptools wheel
         if [ -n "$GITHUB_HEAD_REF" ]; then
           export GHBRANCH="${GITHUB_HEAD_REF#refs/heads/}"
         else
@@ -65,7 +65,7 @@ jobs:
         REQUIREMENTS_FILE: typecheck
       run: |
         sudo apt-get install libsnappy-dev
-        python -m pip install -U pip setuptools
+        python -m pip install -U pip setuptools wheel
         if [ -n "$GITHUB_HEAD_REF" ]; then
           export GHBRANCH="${GITHUB_HEAD_REF#refs/heads/}"
         else
@@ -130,7 +130,7 @@ jobs:
         REQUIREMENTS_FILE: test
       run: |
         sudo apt-get install libsnappy-dev
-        python -m pip install -U pip setuptools
+        python -m pip install -U pip setuptools wheel
         if [ -n "$GITHUB_HEAD_REF" ]; then
           export GHBRANCH="${GITHUB_HEAD_REF#refs/heads/}"
         else
@@ -201,7 +201,7 @@ jobs:
         REQUIREMENTS_FILE: build
       run: |
         sudo apt-get install libsnappy-dev
-        python -m pip install -U pip setuptools
+        python -m pip install -U pip setuptools wheel
         if [ -n "$GITHUB_HEAD_REF" ]; then
           export GHBRANCH="${GITHUB_HEAD_REF#refs/heads/}"
         else
