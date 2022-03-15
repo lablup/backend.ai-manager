@@ -559,7 +559,7 @@ class Image(graphene.ObjectType):
         is_operation: bool = None,
     ) -> Sequence[Image]:
         async with ctx.db.begin_readonly_session() as session:
-            rows = await ImageRow.list(session)
+            rows = await ImageRow.list(session, load_aliases=True)
         items: List[Image] = []
         # Convert to GQL objects
         for r in rows:
@@ -739,7 +739,7 @@ class AliasImage(graphene.Mutation):
         ctx: GraphQueryContext = info.context
         try:
             async with ctx.db.begin() as conn:
-                image_row = await ImageRow.from_image_ref(conn, image_ref)
+                image_row = await ImageRow.from_image_ref(conn, image_ref, load_aliases=True)
                 if image_row is not None:
                     await image_row.alias(conn, alias)
                 else:
