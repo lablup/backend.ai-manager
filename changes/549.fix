@@ -1,1 +1,0 @@
-Fix alembic migration script to correctly create or drop a new index, `ix_keypairs_resource_policy`, during DB upgrade or downgrade, repectively.

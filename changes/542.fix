@@ -1,1 +1,0 @@
-Disallow empty values in `allowed_session_types` of scheduler options and fix the predicate check to scan all scaling groups

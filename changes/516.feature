@@ -1,1 +1,0 @@
-Allow vfolder mounting to arbitrary path, excluding pre-existing folders of '/' like '/bin'.

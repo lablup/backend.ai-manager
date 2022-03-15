@@ -1,1 +1,0 @@
-Allow mounting subpath of vfolders if specified as relative paths appended to vfolder names and improve storage error propagation.  Also introduce `StructuredJSONObjectColumn` and `StructuredJSONObjectListColumn` to define database columns based on `common.types.JSONSerializableMixin`.
