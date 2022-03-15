@@ -1254,14 +1254,13 @@ class AgentRegistry:
 
             async def _finialize_running() -> None:
                 # Record kernel access information
-                async with self.db.begin() as conn:
-                    agent_host = URL(agent_alloc_ctx.agent_addr).host
-                    kernel_host = created_info.get('kernel_host', agent_host)
-                    service_ports = created_info.get('service_ports', [])
-                    # NOTE: created_info contains resource_spec
-                    query = (
-                        kernels.update()
-                        .values({
+                try:
+                    async with self.db.begin() as conn:
+                        agent_host = URL(agent_alloc_ctx.agent_addr).host
+                        kernel_host = created_info.get('kernel_host', agent_host)
+                        service_ports = created_info.get('service_ports', [])
+                        # NOTE: created_info contains resource_spec
+                        values = {
                             'scaling_group': agent_alloc_ctx.scaling_group,
                             'status': KernelStatus.RUNNING,
                             'container_id': created_info['container_id'],
@@ -1273,11 +1272,44 @@ class AgentRegistry:
                             'stdin_port': created_info['stdin_port'],
                             'stdout_port': created_info['stdout_port'],
                             'service_ports': service_ports,
-                            'occupied_slots': created_info['resource_spec']['allocations'],
-                        })
-                        .where(kernels.c.id == created_info['id']))
-                    await conn.execute(query)
-
+                        }
+                        if actual_allocs := created_info.get('allocations'):
+                            values['occupied_slots'] = actual_allocs
+                            query = (
+                                sa.select([kernels.c.occupied_slots])
+                                .select_from(kernels)
+                                .where(kernels.c.id == created_info['id'])
+                            )
+                            requested_slots = await conn.scalar(query)
+                            query = (
+                                sa.select([agents.c.occupied_slots])
+                                .select_from(agents)
+                                .where(agents.c.id == agent_alloc_ctx.agent_id)
+                            )
+                            agent_occupied_slots = await conn.scalar(query)
+                            alloc_diffs = {
+                                k: Decimal(requested_slots[k]) - Decimal(v) 
+                                for k, v in actual_allocs.items()
+                            }
+                            if any([v != 0 for v in alloc_diffs.values()]):
+                                agent_actual_allocated_slots = {
+                                    k: str(Decimal(agent_occupied_slots[k]) - v)
+                                    for k, v in alloc_diffs.items()
+                                }
+                                query = (
+                                    agents.update()
+                                    .values({'occupied_slots': agent_actual_allocated_slots})
+                                    .where(agents.c.id == agent_alloc_ctx.agent_id)
+                                )
+                                await conn.execute(query)
+                        query = (
+                            kernels.update()
+                            .values(values)
+                            .where(kernels.c.id == created_info['id']))
+                        await conn.execute(query)
+                except Exception as e:
+                    log.exception('error while executing _finalize_running', exc_info=e)
+                    raise e
             await execute_with_retry(_finialize_running)
         finally:
             try:

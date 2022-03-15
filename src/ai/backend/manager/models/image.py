@@ -243,14 +243,12 @@ class ImageRow(Base):
         with respect to requested canonical, this function will
         return that row regardless of actual architecture.
         """
-        log.debug('from_image_ref(): {} ({})', ref.canonical, ref.architecture)
         query = sa.select(ImageRow).where(ImageRow.name == ref.canonical)
         if load_aliases:
             query = query.options(selectinload(ImageRow.aliases))
 
         result = await session.execute(query)
         candidates: List[ImageRow] = result.scalars().all()
-        log.debug('rows: {}', candidates)
 
         if len(candidates) == 0:
             raise UnknownImageReference
@@ -559,12 +557,9 @@ class Image(graphene.ObjectType):
         is_operation: bool = None,
     ) -> Sequence[Image]:
         async with ctx.db.begin_readonly_session() as session:
-            rows = await ImageRow.list(session)
-        items: List[Image] = []
-        # Convert to GQL objects
-        for r in rows:
-            item = await cls.from_row(ctx, r)
-            items.append(item)
+            rows = await ImageRow.list(session, load_aliases=True)
+            # Convert to GQL objects
+        items: List[Image] = [await cls.from_row(ctx, r) for r in rows]
         if is_installed is not None:
             items = [*filter(lambda item: item.installed == is_installed, items)]
         if is_operation is not None:
