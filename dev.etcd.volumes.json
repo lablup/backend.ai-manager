@@ -1,0 +1,15 @@
+{
+  "_types": {
+    "group": "",
+    "user": ""
+  },
+  "default_host": "local:volume1",
+  "proxies": {
+    "local": {
+      "client_api": "http://client-accessible-hostname:6021",
+      "manager_api": "https://127.0.0.1:6022",
+      "secret": "18826ea8aef48c7a9353ce17f906236e5153bf03e75e092923ead053ab29c115",
+      "ssl_verify": "false"
+    }
+  }
+}
