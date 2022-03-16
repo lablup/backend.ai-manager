@@ -669,6 +669,12 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
         keypair = result.first()
     if keypair is None:
         raise AuthorizationFailed('No API keypairs found.')
+    # [Hooking point for POST_AUTHORIZE as one-way notification]
+    # The hook handlers should accept a tuple of the request, user, and keypair objects.
+    await root_ctx.hook_plugin_ctx.notify(
+        'POST_AUTHORIZE',
+        (request, user, keypair),
+    )
     return web.json_response({
         'data': {
             'access_key': keypair['access_key'],
