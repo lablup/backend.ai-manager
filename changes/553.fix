@@ -1,1 +1,1 @@
-Change `sqlalchemy.core.Connection` to `sqlalchemy.orm.Session` for querying ORM mapped objects.
+Change `sqlalchemy.engine.Connection` to `sqlalchemy.orm.Session` for querying ORM mapped objects.
