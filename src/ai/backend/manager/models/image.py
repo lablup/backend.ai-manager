@@ -490,7 +490,7 @@ class Image(graphene.ObjectType):
             labels=[
                 KVPair(key=k, value=v)
                 for k, v in row.labels.items()],
-            aliases=[alias.alias for alias in row.aliases],
+            aliases=[alias_row.alias for alias_row in row.aliases],
             size_bytes=row.size_bytes,
             resource_limits=[
                 ResourceLimit(
