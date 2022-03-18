@@ -1276,8 +1276,13 @@ class AgentRegistry:
                         actual_allocs: MutableMapping[str, str] = {}
                         for alloc_map in created_info['resource_spec']['allocations'].values():
                             for slot_name, allocations in alloc_map.items():
-                                total_allocs = sum([Decimal(x) for x in allocations.values()])
-                                actual_allocs[slot_name] = str(total_allocs)
+                                total_allocs: List[Decimal] = []
+                                for allocation in allocations.values():
+                                    if BinarySize.suffix_map.get(allocation[-1].lower()) is not None:
+                                        total_allocs.append(Decimal(BinarySize.from_str(allocation)))
+                                    else:
+                                        total_allocs.append(Decimal(allocation))
+                                actual_allocs[slot_name] = str(sum(total_allocs))
 
                         values['occupied_slots'] = actual_allocs
                         query = (
