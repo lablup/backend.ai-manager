@@ -1273,35 +1273,40 @@ class AgentRegistry:
                             'stdout_port': created_info['stdout_port'],
                             'service_ports': service_ports,
                         }
-                        if actual_allocs := created_info.get('allocations'):
-                            values['occupied_slots'] = actual_allocs
+                        actual_allocs: MutableMapping[str, str] = {}
+                        for alloc_map in created_info['resource_spec']['allocations'].values():
+                            for slot_name, allocations in alloc_map.items():
+                                total_allocs = sum([Decimal(x) for x in allocations.values()])
+                                actual_allocs[slot_name] = str(total_allocs)
+
+                        values['occupied_slots'] = actual_allocs
+                        query = (
+                            sa.select([kernels.c.occupied_slots])
+                            .select_from(kernels)
+                            .where(kernels.c.id == created_info['id'])
+                        )
+                        requested_slots = await conn.scalar(query)
+                        query = (
+                            sa.select([agents.c.occupied_slots])
+                            .select_from(agents)
+                            .where(agents.c.id == agent_alloc_ctx.agent_id)
+                        )
+                        agent_occupied_slots = await conn.scalar(query)
+                        alloc_diffs = {
+                            k: Decimal(requested_slots[k]) - Decimal(v)
+                            for k, v in actual_allocs.items()
+                        }
+                        if any([v != 0 for v in alloc_diffs.values()]):
+                            agent_actual_allocated_slots = {
+                                k: str(Decimal(agent_occupied_slots[k]) - v)
+                                for k, v in alloc_diffs.items()
+                            }
                             query = (
-                                sa.select([kernels.c.occupied_slots])
-                                .select_from(kernels)
-                                .where(kernels.c.id == created_info['id'])
-                            )
-                            requested_slots = await conn.scalar(query)
-                            query = (
-                                sa.select([agents.c.occupied_slots])
-                                .select_from(agents)
+                                agents.update()
+                                .values({'occupied_slots': agent_actual_allocated_slots})
                                 .where(agents.c.id == agent_alloc_ctx.agent_id)
                             )
-                            agent_occupied_slots = await conn.scalar(query)
-                            alloc_diffs = {
-                                k: Decimal(requested_slots[k]) - Decimal(v) 
-                                for k, v in actual_allocs.items()
-                            }
-                            if any([v != 0 for v in alloc_diffs.values()]):
-                                agent_actual_allocated_slots = {
-                                    k: str(Decimal(agent_occupied_slots[k]) - v)
-                                    for k, v in alloc_diffs.items()
-                                }
-                                query = (
-                                    agents.update()
-                                    .values({'occupied_slots': agent_actual_allocated_slots})
-                                    .where(agents.c.id == agent_alloc_ctx.agent_id)
-                                )
-                                await conn.execute(query)
+                            await conn.execute(query)
                         query = (
                             kernels.update()
                             .values(values)
