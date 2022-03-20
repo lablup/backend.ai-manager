@@ -107,6 +107,10 @@ VALID_VERSIONS: Final = frozenset([
     # added "filter" and "order" arg to all paginated GQL queries with their own expression mini-langs
     # removed "order_key" and "order_asc" arguments from all paginated GQL queries (never used!)
     'v6.20210815',
+
+    # added session dependencies and state callback URLs configs when creating sessions
+    # added architecture option when making image aliases
+    'v6.20220315',
 ])
 LATEST_REV_DATES: Final = {
     1: '20160915',
@@ -115,8 +119,9 @@ LATEST_REV_DATES: Final = {
     4: '20190615',
     5: '20191215',
     6: '20210815',
+    6: '20220315',
 }
-LATEST_API_VERSION: Final = 'v6.20210815'
+LATEST_API_VERSION: Final = 'v6.20220315'
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 
