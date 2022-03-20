@@ -506,33 +506,35 @@ async def _create(request: web.Request, params: dict[str, Any]) -> web.Response:
 
     try:
         kernel_id = await asyncio.shield(app_ctx.database_ptask_group.create_task(
-            session_creation_id,
-            params['session_name'], owner_access_key,
-            [{
-                'image_ref': requested_image_ref,
-                'cluster_role': DEFAULT_ROLE,
-                'cluster_idx': 1,
-                'cluster_hostname': f"{DEFAULT_ROLE}1",
-                'creation_config': params['config'],
-                'bootstrap_script': params['bootstrap_script'],
-                'startup_command': params['startup_command'],
-            }],
-            params['config']['scaling_group'],
-            params['session_type'],
-            resource_policy,
-            user_scope=UserScope(
-                domain_name=params['domain'],  # type: ignore  # params always have it
-                group_id=group_id,
-                user_uuid=owner_uuid,
-                user_role=request['user']['role'],
-            ),
-            cluster_mode=params['cluster_mode'],
-            cluster_size=params['cluster_size'],
-            session_tag=params['tag'],
-            starts_at=starts_at,
-            agent_list=params['config']['agent_list'],
-            dependency_sessions=params['dependencies'],
-        ))
+            root_ctx.registry.enqueue_session(
+                session_creation_id,
+                params['session_name'], owner_access_key,
+                [{
+                    'image_ref': requested_image_ref,
+                    'cluster_role': DEFAULT_ROLE,
+                    'cluster_idx': 1,
+                    'cluster_hostname': f"{DEFAULT_ROLE}1",
+                    'creation_config': params['config'],
+                    'bootstrap_script': params['bootstrap_script'],
+                    'startup_command': params['startup_command'],
+                }],
+                params['config']['scaling_group'],
+                params['session_type'],
+                resource_policy,
+                user_scope=UserScope(
+                    domain_name=params['domain'],  # type: ignore  # params always have it
+                    group_id=group_id,
+                    user_uuid=owner_uuid,
+                    user_role=request['user']['role'],
+                ),
+                cluster_mode=params['cluster_mode'],
+                cluster_size=params['cluster_size'],
+                session_tag=params['tag'],
+                starts_at=starts_at,
+                agent_list=params['config']['agent_list'],
+                dependency_sessions=params['dependencies'],
+            )),
+        )
         resp['sessionId'] = str(kernel_id)  # changed since API v5
         resp['sessionName'] = str(params['session_name'])
         resp['status'] = 'PENDING'
