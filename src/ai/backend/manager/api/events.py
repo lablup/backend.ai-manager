@@ -104,7 +104,7 @@ async def push_session_events(
     if group_name == '*':
         group_id = '*'
     else:
-        async with root_ctx.db.begin() as conn:
+        async with root_ctx.db.begin_readonly() as conn:
             query = (
                 sa.select([groups.c.id])
                 .select_from(groups)

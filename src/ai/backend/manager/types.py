@@ -1,4 +1,6 @@
+import attr
 import enum
+import uuid
 from typing import (
     Protocol,
 )
@@ -23,3 +25,11 @@ class SessionGetter(Protocol):
 
 class Sentinel(enum.Enum):
     token = 0
+
+
+@attr.define(slots=True)
+class UserScope:
+    domain_name: str
+    group_id: uuid.UUID
+    user_uuid: uuid.UUID
+    user_role: str

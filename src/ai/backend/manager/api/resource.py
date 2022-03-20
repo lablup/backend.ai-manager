@@ -507,7 +507,7 @@ async def get_time_binned_monthly_stats(request: web.Request, user_uuid=None):
     now = datetime.now(tzutc())
     start_date = now - timedelta(days=30)
     root_ctx: RootContext = request.app['_root.context']
-    async with root_ctx.db.begin() as conn:
+    async with root_ctx.db.begin_readonly() as conn:
         query = (
             sa.select([kernels])
             .select_from(kernels)

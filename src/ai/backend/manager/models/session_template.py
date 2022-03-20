@@ -63,6 +63,7 @@ task_template_v1 = t.Dict({
                       default='interactive') >> 'session_type': tx.Enum(SessionTypes),
         t.Key('kernel'): t.Dict({
             t.Key('image'): t.String,
+            t.Key('architecture', default='x86_64'): t.Null | t.String,
             t.Key('environ', default={}): t.Null | t.Mapping(t.String, t.String),
             t.Key('run', default=None): t.Null | t.Dict({
                 t.Key('bootstrap', default=None): t.Null | t.String,
@@ -96,9 +97,9 @@ def check_task_template(raw_data: Mapping[str, Any]) -> Mapping[str, Any]:
         for p in mounts.values():
             if p is None:
                 continue
-            if not p.startswith('/home/work/'):
-                raise InvalidArgument(f'Path {p} should start with /home/work/')
-            if not verify_vfolder_name(p.replace('/home/work/', '')):
+            if p.startswith("/home/work/"):
+                p = p.replace("/home/work/", "")
+            if not verify_vfolder_name(p):
                 raise InvalidArgument(f'Path {p} is reserved for internal operations.')
     return data
 

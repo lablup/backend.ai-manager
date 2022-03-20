@@ -6,6 +6,8 @@ import uuid
 import attr
 import graphene
 
+from ai.backend.manager.defs import DEFAULT_IMAGE_ARCH
+
 if TYPE_CHECKING:
     from graphql.execution.executors.asyncio import AsyncioExecutor
 
@@ -270,6 +272,7 @@ class Queries(graphene.ObjectType):
     image = graphene.Field(
         Image,
         reference=graphene.String(required=True),
+        architecture=graphene.String(default_value=DEFAULT_IMAGE_ARCH),
     )
 
     images = graphene.List(
@@ -679,11 +682,12 @@ class Queries(graphene.ObjectType):
         executor: AsyncioExecutor,
         info: graphene.ResolveInfo,
         reference: str,
+        architecture: str,
     ) -> Image:
         ctx: GraphQueryContext = info.context
         client_role = ctx.user['role']
         client_domain = ctx.user['domain_name']
-        item = await Image.load_item(info.context, reference)
+        item = await Image.load_item(info.context, reference, architecture)
         if client_role == UserRole.SUPERADMIN:
             pass
         elif client_role in (UserRole.ADMIN, UserRole.USER):
