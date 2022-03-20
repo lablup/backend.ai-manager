@@ -1042,6 +1042,7 @@ class AgentRegistry:
                 'cluster_idx': kernel['cluster_idx'],
                 'cluster_hostname': f"{kernel['cluster_role']}{kernel['cluster_idx']}",
                 'image': image_ref.canonical,
+                'architecture': image_ref.architecture,
                 'registry': image_ref.registry,
                 'startup_command': kernel.get('startup_command'),
                 'occupied_slots': requested_slots,
