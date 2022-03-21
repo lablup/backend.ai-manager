@@ -1,1 +1,0 @@
-Check the allowed session types per scaling group as part of scheduler predicate checks and structurize the `scheduler_opts` column by introducing `StructuredJSONBColumn` which applies trafarets on raw/Python value conversion

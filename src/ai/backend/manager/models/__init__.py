@@ -8,6 +8,7 @@ from . import kernel as _kernel
 from . import keypair as _keypair
 from . import user as _user
 from . import vfolder as _vfolder
+from . import dotfile as _dotfile
 from . import resource_policy as _rpolicy
 from . import resource_preset as _rpreset
 from . import scaling_group as _sgroup
@@ -25,6 +26,7 @@ __all__ = (
     *_keypair.__all__,
     *_user.__all__,
     *_vfolder.__all__,
+    *_dotfile.__all__,
     *_rpolicy.__all__,
     *_rpreset.__all__,
     *_sgroup.__all__,
@@ -41,6 +43,7 @@ from .kernel import *  # noqa
 from .keypair import *  # noqa
 from .user import *  # noqa
 from .vfolder import *  # noqa
+from .dotfile import *  # noqa
 from .resource_policy import *  # noqa
 from .resource_preset import *  # noqa
 from .scaling_group import *  # noqa

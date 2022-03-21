@@ -63,6 +63,7 @@ task_template_v1 = t.Dict({
                       default='interactive') >> 'session_type': tx.Enum(SessionTypes),
         t.Key('kernel'): t.Dict({
             t.Key('image'): t.String,
+            t.Key('architecture', default='x86_64'): t.Null | t.String,
             t.Key('environ', default={}): t.Null | t.Mapping(t.String, t.String),
             t.Key('run', default=None): t.Null | t.Dict({
                 t.Key('bootstrap', default=None): t.Null | t.String,

@@ -7,21 +7,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
-    - name: Set up Python 3.9
-      uses: actions/setup-python@v2
+    - name: Set up Python
+      uses: actions/setup-python@v3
       with:
-        python-version: 3.9
-    - name: Cache pip packages
-      uses: actions/cache@v2
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements/*.txt') }}
+        python-version: "3.10"
+        cache: "pip"
+        cache-dependency-path: |
+          requirements/lint.txt
+          setup.cfg
     - name: Install dependencies
       env:
         REQUIREMENTS_FILE: lint
       run: |
         sudo apt-get install libsnappy-dev
-        python -m pip install -U pip setuptools
+        python -m pip install -U pip setuptools wheel
         if [ -n "$GITHUB_HEAD_REF" ]; then
           export GHBRANCH="${GITHUB_HEAD_REF#refs/heads/}"
         else
@@ -53,21 +52,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
-    - name: Set up Python 3.9
-      uses: actions/setup-python@v2
+    - name: Set up Python
+      uses: actions/setup-python@v3
       with:
-        python-version: 3.9
-    - name: Cache pip packages
-      uses: actions/cache@v2
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements/*.txt') }}
+        python-version: "3.10"
+        cache: "pip"
+        cache-dependency-path: |
+          requirements/typecheck.txt
+          setup.cfg
     - name: Install dependencies
       env:
         REQUIREMENTS_FILE: typecheck
       run: |
         sudo apt-get install libsnappy-dev
-        python -m pip install -U pip setuptools
+        python -m pip install -U pip setuptools wheel
         if [ -n "$GITHUB_HEAD_REF" ]; then
           export GHBRANCH="${GITHUB_HEAD_REF#refs/heads/}"
         else
@@ -119,21 +117,20 @@ jobs:
           - 6379:6379
     steps:
     - uses: actions/checkout@v2
-    - name: Set up Python 3.9
-      uses: actions/setup-python@v2
+    - name: Set up Python
+      uses: actions/setup-python@v3
       with:
-        python-version: 3.9
-    - name: Cache pip packages
-      uses: actions/cache@v2
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements/*.txt') }}
+        python-version: "~3.10.2"
+        cache: "pip"
+        cache-dependency-path: |
+          requirements/test.txt
+          setup.cfg
     - name: Install dependencies
       env:
         REQUIREMENTS_FILE: test
       run: |
         sudo apt-get install libsnappy-dev
-        python -m pip install -U pip setuptools
+        python -m pip install -U pip setuptools wheel
         if [ -n "$GITHUB_HEAD_REF" ]; then
           export GHBRANCH="${GITHUB_HEAD_REF#refs/heads/}"
         else
@@ -191,16 +188,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
-    - name: Set up Python 3.9
-      uses: actions/setup-python@v2
+    - name: Set up Python
+      uses: actions/setup-python@v3
       with:
-        python-version: 3.9
+        python-version: "3.10"
+        cache: "pip"
+        cache-dependency-path: |
+          requirements/build.txt
+          setup.cfg
     - name: Install dependencies
       env:
         REQUIREMENTS_FILE: build
       run: |
         sudo apt-get install libsnappy-dev
-        python -m pip install -U pip setuptools
+        python -m pip install -U pip setuptools wheel
         if [ -n "$GITHUB_HEAD_REF" ]; then
           export GHBRANCH="${GITHUB_HEAD_REF#refs/heads/}"
         else

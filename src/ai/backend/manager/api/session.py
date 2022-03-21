@@ -45,6 +45,8 @@ import sqlalchemy as sa
 from sqlalchemy.sql.expression import true, null
 import trafaret as t
 
+from ai.backend.manager.models.image import ImageRow
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
@@ -88,7 +90,8 @@ from ai.backend.common.types import (
 from ai.backend.common.plugin.monitor import GAUGE
 
 from ..config import DEFAULT_CHUNK_SIZE
-from ..defs import DEFAULT_ROLE, REDIS_STREAM_DB
+from ..defs import DEFAULT_IMAGE_ARCH, DEFAULT_ROLE, REDIS_STREAM_DB
+from ..types import UserScope
 from ..models import (
     domains,
     association_groups_users as agus, groups,
@@ -424,8 +427,12 @@ async def _create(request: web.Request, params: Any) -> web.Response:
 
     # Resolve the image reference.
     try:
-        requested_image_ref = \
-            await ImageRef.resolve_alias(params['image'], root_ctx.shared_config.etcd)
+        async with root_ctx.db.begin_readonly_session() as session:
+            image_row = await ImageRow.resolve(session, [
+                ImageRef(params['image'], ['*'], params['architecture']),
+                params['image'],
+            ])
+        requested_image_ref = image_row.image_ref
         async with root_ctx.db.begin_readonly() as conn:
             query = (
                 sa.select([domains.c.allowed_docker_registries])
@@ -443,7 +450,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
         # NOTE: We can reuse the session IDs of TERMINATED sessions only.
         # NOTE: Reusing a session in the PENDING status returns an empty value in service_ports.
         kern = await root_ctx.registry.get_session(params['session_name'], owner_access_key)
-        running_image_ref = ImageRef(kern['image'], [kern['registry']])
+        running_image_ref = ImageRef(kern['image'], [kern['registry']], kern['architecture'])
         if running_image_ref != requested_image_ref:
             # The image must be same if get_or_create() called multiple times
             # against an existing (non-terminated) session
@@ -511,13 +518,14 @@ async def _create(request: web.Request, params: Any) -> web.Response:
                 params['config']['scaling_group'],
                 params['session_type'],
                 resource_policy,
-                domain_name=params['domain'],  # type: ignore  # params always have it
-                group_id=group_id,
-                user_uuid=owner_uuid,
-                user_role=request['user']['role'],
+                user_scope=UserScope(
+                    domain_name=params['domain'],  # type: ignore  # params always have it
+                    group_id=group_id,
+                    user_uuid=owner_uuid,
+                    user_role=request['user']['role'],
+                ),
                 cluster_mode=params['cluster_mode'],
                 cluster_size=params['cluster_size'],
-                startup_command=params['startup_command'],
                 session_tag=params['tag'],
                 starts_at=starts_at,
                 agent_list=params['config']['agent_list'],
@@ -595,6 +603,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
         tx.AliasedKey(['name', 'clientSessionToken'], default=undefined) >> 'session_name':
             UndefChecker | t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
         tx.AliasedKey(['image', 'lang'], default=undefined): UndefChecker | t.Null | t.String,
+        tx.AliasedKey(['arch', 'architecture'], default=DEFAULT_IMAGE_ARCH) >> 'architecture': t.String,
         tx.AliasedKey(['type', 'sessionType'], default='interactive') >> 'session_type':
             tx.Enum(SessionTypes),
         tx.AliasedKey(['group', 'groupName', 'group_name'], default=undefined):
@@ -670,6 +679,7 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
 
     param_from_template = {
         'image': template['spec']['kernel']['image'],
+        'architecture': template['spec']['kernel'].get('architecture', DEFAULT_IMAGE_ARCH),
     }
     if 'domain_name' in template_info:
         param_from_template['domain'] = template_info['domain_name']
@@ -768,6 +778,7 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
         tx.AliasedKey(['name', 'clientSessionToken']) >> 'session_name':
             t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
         tx.AliasedKey(['image', 'lang']): t.String,
+        tx.AliasedKey(['arch', 'architecture'], default=DEFAULT_IMAGE_ARCH) >> 'architecture': t.String,
         tx.AliasedKey(['type', 'sessionType'], default='interactive') >> 'session_type':
             tx.Enum(SessionTypes),
         tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
@@ -909,7 +920,8 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
     for node in template['spec']['nodes']:
         # Resolve session template.
         kernel_config = {
-            'image_ref': template['spec']['kernel']['image'],
+            'image': template['spec']['kernel']['image'],
+            'architecture': template['spec']['kernel'].get('architecture', DEFAULT_IMAGE_ARCH),
             'cluster_role': node['cluster_role'],
             'creation_config': {
                 'mount': mounts,
@@ -963,9 +975,12 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
 
         # Resolve the image reference.
         try:
-            requested_image_ref = \
-                await ImageRef.resolve_alias(kernel_config['image_ref'],
-                                                root_ctx.shared_config.etcd)
+            async with root_ctx.db.begin_readonly_session() as session:
+                image_row = await ImageRow.resolve(session, [
+                    ImageRef(kernel_config['image'], ['*'], kernel_config['architecture']),
+                    kernel_config['image'],
+                ])
+            requested_image_ref = image_row.image_ref
             async with root_ctx.db.begin_readonly() as conn:
                 query = (
                     sa.select([domains.c.allowed_docker_registries])
@@ -1006,10 +1021,12 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
                 params['scaling_group'],
                 params['sess_type'],
                 resource_policy,
-                domain_name=params['domain'],  # type: ignore
-                group_id=group_id,
-                user_uuid=owner_uuid,
-                user_role=request['user']['role'],
+                user_scope=UserScope(
+                    domain_name=params['domain'],  # type: ignore
+                    group_id=group_id,
+                    user_uuid=owner_uuid,
+                    user_role=request['user']['role'],
+                ),
                 session_tag=params['tag'],
             ),
         ))
@@ -1587,6 +1604,7 @@ async def get_info(request: web.Request) -> web.Response:
         resp['userId'] = str(kern['user_uuid'])
         resp['lang'] = kern['image']  # legacy
         resp['image'] = kern['image']
+        resp['architecture'] = kern['architecture']
         resp['registry'] = kern['registry']
         resp['tag'] = kern['tag']
 

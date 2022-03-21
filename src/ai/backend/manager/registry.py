@@ -32,7 +32,6 @@ import uuid
 import weakref
 
 import aiodocker
-import aiohttp
 import aioredis
 import aiotools
 from async_timeout import timeout as _timeout
@@ -97,7 +96,6 @@ from .api.exceptions import (
     KernelCreationFailed, KernelDestructionFailed,
     KernelExecutionFailed, KernelRestartFailed,
     ScalingGroupNotFound,
-    VFolderNotFound,
     AgentError,
     GenericForbidden,
     QuotaExceeded,
@@ -105,13 +103,15 @@ from .api.exceptions import (
 from .config import SharedConfig
 from .exceptions import MultiAgentError
 from .defs import DEFAULT_ROLE, INTRINSIC_SLOTS
-from .types import SessionGetter
+from .types import SessionGetter, UserScope
 from .models import (
-    agents, kernels, keypairs, vfolders,
-    query_group_dotfiles, query_domain_dotfiles,
+    agents, kernels, keypairs,
     keypair_resource_policies,
     AgentStatus, KernelStatus,
-    query_accessible_vfolders, query_allowed_sgroups,
+    ImageRow,
+    query_allowed_sgroups,
+    prepare_dotfiles,
+    prepare_vfolder_mounts,
     recalc_agent_resource_occupancy,
     recalc_concurrency_used,
     AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
@@ -119,7 +119,11 @@ from .models import (
     DEAD_KERNEL_STATUSES,
 )
 from .models.kernel import match_session_ids, get_all_kernels, get_main_kernels
-from .models.utils import ExtendedAsyncSAEngine, reenter_txn, execute_with_retry, sql_json_merge
+from .models.utils import (
+    ExtendedAsyncSAEngine,
+    execute_with_retry,
+    reenter_txn, sql_json_merge,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import (
@@ -247,7 +251,7 @@ class AgentRegistry:
         redis_image: RedisConnectionInfo,
         event_dispatcher: EventDispatcher,
         event_producer: EventProducer,
-        storage_manager:  StorageSessionManager,
+        storage_manager: StorageSessionManager,
         hook_plugin_ctx: HookPluginContext,
     ) -> None:
         self.shared_config = shared_config
@@ -762,21 +766,15 @@ class AgentRegistry:
         session_type: SessionTypes,
         resource_policy: dict,
         *,
-        domain_name: str,
-        group_id: uuid.UUID,
-        user_uuid: uuid.UUID,
-        user_role: str,
+        user_scope: UserScope,
         cluster_mode: ClusterMode = ClusterMode.SINGLE_NODE,
         cluster_size: int = 1,
-        startup_command: str = None,
         session_tag: str = None,
         internal_data: dict = None,
         starts_at: datetime = None,
         agent_list: Sequence[str] = None,
     ) -> SessionId:
 
-        mounts = kernel_enqueue_configs[0]['creation_config'].get('mounts') or []
-        mount_map = kernel_enqueue_configs[0]['creation_config'].get('mount_map') or {}
         session_id = SessionId(uuid.uuid4())
 
         # Check keypair resource limit
@@ -786,11 +784,13 @@ class AgentRegistry:
                 f"{resource_policy['max_containers_per_session']} containers.",
             )
 
-        # Check scaling group availability if scaling_group parameter is given.
-        # If scaling_group is not provided, it will be selected as the first one among
-        # the list of allowed scaling groups.
         async with self.db.begin_readonly() as conn:
-            sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
+            # Check scaling group availability if scaling_group parameter is given.
+            # If scaling_group is not provided, it will be selected as the first one among
+            # the list of allowed scaling groups.
+            sgroups = await query_allowed_sgroups(
+                conn, user_scope.domain_name, user_scope.group_id, access_key,
+            )
             if not sgroups:
                 raise ScalingGroupNotFound("You have no scaling groups allowed to use.")
             if scaling_group is None:
@@ -806,67 +806,28 @@ class AgentRegistry:
                         break
                 else:
                     raise ScalingGroupNotFound(f"The scaling group {scaling_group} does not exist.")
-        assert scaling_group is not None
+            assert scaling_group is not None
 
-        # sanity check for vfolders
-        allowed_vfolder_types = ['user', 'group']
-        # allowed_vfolder_types = await root_ctx.shared_config.etcd.get('path-to-vfolder-type')
-        determined_mounts = []
-        matched_mounts = set()
-        async with self.db.begin_readonly() as conn:
-            if mounts:
-                extra_vf_conds = (
-                    vfolders.c.name.in_(mounts) |
-                    vfolders.c.name.startswith('.')
-                )
-            else:
-                extra_vf_conds = vfolders.c.name.startswith('.')
-            matched_vfolders = await query_accessible_vfolders(
-                conn, user_uuid,
-                user_role=user_role, domain_name=domain_name,
-                allowed_vfolder_types=allowed_vfolder_types,
-                extra_vf_conds=extra_vf_conds)
+            # Translate mounts/mount_map into vfolder mounts
+            requested_mounts = kernel_enqueue_configs[0]['creation_config'].get('mounts') or []
+            requested_mount_map = kernel_enqueue_configs[0]['creation_config'].get('mount_map') or {}
+            allowed_vfolder_types = await self.shared_config.get_vfolder_types()
+            vfolder_mounts = await prepare_vfolder_mounts(
+                conn,
+                self.storage_manager,
+                allowed_vfolder_types,
+                user_scope,
+                requested_mounts,
+                requested_mount_map,
+            )
 
-        for item in matched_vfolders:
-            if item['group'] is not None and item['group'] != str(group_id):
-                # User's accessible group vfolders should not be mounted
-                # if not belong to the execution kernel.
-                continue
-            mount_path = await self.storage_manager.get_mount_path(item['host'], item['id'])
-            if item['name'] == '.local' and item['group'] is not None:
-                try:
-                    async with self.storage_manager.request(
-                        item['host'], 'POST', 'folder/file/mkdir',
-                        params={
-                            'volume': self.storage_manager.split_host(item['host'])[1],
-                            'vfid': item['id'],
-                            'relpath': str(user_uuid.hex),
-                        },
-                    ):
-                        pass
-                except aiohttp.ClientResponseError:
-                    # the server may respond with error if the directory already exists
-                    pass
-                matched_mounts.add(item['name'])
-                determined_mounts.append((
-                    item['name'],
-                    item['host'],
-                    f"{mount_path}/{user_uuid.hex}",
-                    item['permission'].value,
-                    '',
-                ))
-            else:
-                matched_mounts.add(item['name'])
-                determined_mounts.append((
-                    item['name'],
-                    item['host'],
-                    mount_path,
-                    item['permission'].value,
-                    item['unmanaged_path'] if item['unmanaged_path'] else '',
-                ))
-        if mounts and set(mounts) > matched_mounts:
-            raise VFolderNotFound(extra_data=[*(set(mounts) - matched_mounts)])
-        mounts = determined_mounts
+            # Prepare internal data for common dotfiles.
+            dotfile_data = await prepare_dotfiles(
+                conn,
+                user_scope,
+                access_key,
+                vfolder_mounts,
+            )
 
         ids = []
         is_multicontainer = cluster_size > 1
@@ -898,6 +859,10 @@ class AgentRegistry:
             else:
                 raise InvalidAPIParameters("Missing kernel configurations")
 
+        # Prepare internal data.
+        internal_data = {} if internal_data is None else internal_data
+        internal_data.update(dotfile_data)
+
         hook_result = await self.hook_plugin_ctx.dispatch(
             'PRE_ENQUEUE_SESSION',
             (session_id, session_name, access_key),
@@ -916,15 +881,17 @@ class AgentRegistry:
             image_ref = kernel['image_ref']
             resource_opts = creation_config.get('resource_opts') or {}
 
-            creation_config['mounts'] = mounts
+            creation_config['mounts'] = [vfmount.to_json() for vfmount in vfolder_mounts]
             # TODO: merge into a single call
-            image_info = await self.shared_config.inspect_image(image_ref)
-            image_min_slots, image_max_slots = \
-                await self.shared_config.get_image_slot_ranges(image_ref)
+            async with self.db.begin_readonly_session() as session:
+                log.debug('enqueue_session(): image ref => {} ({})', image_ref, image_ref.architecture)
+                image_row = await ImageRow.resolve(session, [image_ref])
+            image_min_slots, image_max_slots = await image_row.get_slot_ranges(self.shared_config)
             known_slot_types = await self.shared_config.get_resource_slots()
 
+            labels = image_row.labels
             # Parse service ports to check for port errors
-            parse_service_ports(image_info['labels'].get('ai.backend.service-ports', ''), BackendError)
+            parse_service_ports(labels.get('ai.backend.service-ports', ''), BackendError)
 
             # Shared memory.
             # We need to subtract the amount of shared memory from the memory limit of
@@ -932,7 +899,7 @@ class AgentRegistry:
             # and cgroup's memory limit does not apply.
             shmem = resource_opts.get('shmem', None)
             if shmem is None:
-                shmem = image_info['labels'].get('ai.backend.resource.preferred.shmem', '64m')
+                shmem = labels.get('ai.backend.resource.preferred.shmem', '64m')
             shmem = BinarySize.from_str(shmem)
             resource_opts['shmem'] = shmem
             image_min_slots = copy.deepcopy(image_min_slots)
@@ -1020,59 +987,6 @@ class AgentRegistry:
             environ = kernel_enqueue_configs[0]['creation_config'].get('environ') or {}
 
             # Create kernel object in PENDING state.
-            async with self.db.begin_readonly() as conn:
-                # Feed SSH keypair and dotfiles if exists.
-                query = (sa.select([keypairs.c.ssh_public_key,
-                                    keypairs.c.ssh_private_key,
-                                    keypairs.c.dotfiles])
-                           .select_from(keypairs)
-                           .where(keypairs.c.access_key == access_key))
-                result = await conn.execute(query)
-                row = result.first()
-                dotfiles = msgpack.unpackb(row['dotfiles'])
-                internal_data = {} if internal_data is None else internal_data
-                internal_data.update({'dotfiles': dotfiles})
-                if row['ssh_public_key'] and row['ssh_private_key']:
-                    internal_data['ssh_keypair'] = {
-                        'public_key': row['ssh_public_key'],
-                        'private_key': row['ssh_private_key'],
-                    }
-                # use dotfiles in the priority of keypair > group > domain
-                dotfile_paths = set(map(lambda x: x['path'], dotfiles))
-                # add keypair dotfiles
-                internal_data.update({'dotfiles': list(dotfiles)})
-                # add group dotfiles
-                dotfiles, _ = await query_group_dotfiles(conn, group_id)
-                for dotfile in dotfiles:
-                    if dotfile['path'] not in dotfile_paths:
-                        internal_data['dotfiles'].append(dotfile)
-                        dotfile_paths.add(dotfile['path'])
-                # add domain dotfiles
-                dotfiles, _ = await query_domain_dotfiles(conn, domain_name)
-                for dotfile in dotfiles:
-                    if dotfile['path'] not in dotfile_paths:
-                        internal_data['dotfiles'].append(dotfile)
-                        dotfile_paths.add(dotfile['path'])
-                # reverse the dotfiles list so that higher priority can overwrite
-                # in case the actual path is the same
-                internal_data['dotfiles'].reverse()
-
-                # check if there is no name conflict of dotfile and vfolder
-                for dotfile in internal_data.get('dotfiles', []):
-                    if dotfile['path'].startswith('/'):
-                        if dotfile['path'].startswith('/home/'):
-                            path_arr = dotfile['path'].split('/')
-                            # check if there is a dotfile whose path equals /home/work/vfolder_name
-                            if len(path_arr) >= 3 and path_arr[2] == 'work' and \
-                                    path_arr[3] in matched_mounts:
-                                raise BackendError(
-                                    f'There is a vfolder whose name conflicts with '
-                                    f'dotfile {path_arr[3]} with path "{dotfile["path"]}"')
-                    else:
-                        if dotfile['path'] in matched_mounts:
-                            raise BackendError(
-                                f'There is a vfolder whose name conflicts with '
-                                f'dotfile {dotfile["path"]}')
             mapped_agent = None
             if not agent_list:
                 pass
@@ -1096,11 +1010,12 @@ class AgentRegistry:
                             'cluster_idx': kernel['cluster_idx'],
                             'cluster_hostname': f"{kernel['cluster_role']}{kernel['cluster_idx']}",
                             'scaling_group': scaling_group,
-                            'domain_name': domain_name,
-                            'group_id': group_id,
-                            'user_uuid': user_uuid,
+                            'domain_name': user_scope.domain_name,
+                            'group_id': user_scope.group_id,
+                            'user_uuid': user_scope.user_uuid,
                             'access_key': access_key,
                             'image': image_ref.canonical,
+                            'architecture': image_ref.architecture,
                             'registry': image_ref.registry,
                             'tag': session_tag,
                             'starts_at': starts_at,
@@ -1110,8 +1025,10 @@ class AgentRegistry:
                             'occupied_shares': {},
                             'resource_opts': resource_opts,
                             'environ': [f'{k}={v}' for k, v in environ.items()],
-                            'mounts': [list(mount) for mount in mounts],  # postgres save tuple as str
-                            'mount_map': mount_map,
+                            'mounts': [  # TODO: keep for legacy?
+                                mount.name for mount in vfolder_mounts
+                            ],
+                            'vfolder_mounts': vfolder_mounts,
                             'bootstrap_script': kernel.get('bootstrap_script'),
                             'repl_in_port': 0,
                             'repl_out_port': 0,
@@ -1182,12 +1099,14 @@ class AgentRegistry:
         # Aggregate image registry information
         keyfunc = lambda item: item.kernel.image_ref
         image_infos = {}
-        for image_ref, _ in itertools.groupby(
-            sorted(kernel_agent_bindings, key=keyfunc), key=keyfunc,
-        ):
-            image_infos[image_ref] = await self.shared_config.inspect_image(image_ref)
-            registry_url, registry_creds = \
-                await get_registry_info(self.shared_config.etcd, image_ref.registry)
+        async with self.db.begin_readonly_session() as session:
+            for image_ref, _ in itertools.groupby(
+                sorted(kernel_agent_bindings, key=keyfunc), key=keyfunc,
+            ):
+                log.debug('start_session(): image ref => {} ({})', image_ref, image_ref.architecture)
+                image_infos[image_ref] = await ImageRow.resolve(session, [image_ref])
+                registry_url, registry_creds = \
+                    await get_registry_info(self.shared_config.etcd, image_ref.registry)
         image_info = {
             'image_infos': image_infos,
             'registry_url': registry_url,
@@ -1419,18 +1338,18 @@ class AgentRegistry:
                                     'url': str(registry_url),
                                     **registry_creds,   # type: ignore
                                 },
-                                'digest': image_infos[binding.kernel.image_ref]['digest'],
+                                'digest': image_infos[binding.kernel.image_ref].config_digest,
                                 'repo_digest': None,
                                 'canonical': binding.kernel.image_ref.canonical,
-                                'labels': image_infos[binding.kernel.image_ref]['labels'],
+                                'architecture': binding.kernel.image_ref.architecture,
+                                'labels': image_infos[binding.kernel.image_ref].labels,
                             },
                             'session_type': scheduled_session.session_type.value,
                             'cluster_role': binding.kernel.cluster_role,
                             'cluster_idx': binding.kernel.cluster_idx,
                             'cluster_hostname': binding.kernel.cluster_hostname,
                             'idle_timeout': resource_policy['idle_timeout'],
-                            'mounts': scheduled_session.mounts,
-                            'mount_map': scheduled_session.mount_map,
+                            'mounts': [item.to_json() for item in scheduled_session.vfolder_mounts],
                             'environ': {
                                 # inherit per-session environment variables
                                 **scheduled_session.environ,
@@ -2329,6 +2248,7 @@ class AgentRegistry:
                             agents.c.available_slots,
                             agents.c.version,
                             agents.c.compute_plugins,
+                            agents.c.architecture,
                         ])
                         .select_from(agents)
                         .where(agents.c.id == agent_id)
@@ -2353,6 +2273,7 @@ class AgentRegistry:
                             'lost_at': sa.null(),
                             'version': agent_info['version'],
                             'compute_plugins': agent_info['compute_plugins'],
+                            'architecture': agent_info.get('architecture', 'x86_64'),
                         })
                         result = await conn.execute(insert_query)
                         assert result.rowcount == 1
@@ -2368,6 +2289,8 @@ class AgentRegistry:
                             updates['version'] = agent_info['version']
                         if row['compute_plugins'] != agent_info['compute_plugins']:
                             updates['compute_plugins'] = agent_info['compute_plugins']
+                        if row['architecture'] != agent_info['architecture']:
+                            updates['architecture'] = agent_info['architecture']
                         # occupied_slots are updated when kernels starts/terminates
                         if updates:
                             await self.shared_config.update_resource_slots(slot_key_and_units)
@@ -2391,6 +2314,7 @@ class AgentRegistry:
                                 'available_slots': available_slots,
                                 'version': agent_info['version'],
                                 'compute_plugins': agent_info['compute_plugins'],
+                                'architecture': agent_info['architecture'],
                             })
                             .where(agents.c.id == agent_id)
                         )
@@ -2412,12 +2336,12 @@ class AgentRegistry:
 
             # Update the mapping of kernel images to agents.
             known_registries = await get_known_registries(self.shared_config.etcd)
-            images = msgpack.unpackb(snappy.decompress(agent_info['images']))
+            loaded_images = msgpack.unpackb(snappy.decompress(agent_info['images']))
 
             def _pipe_builder(r: aioredis.Redis):
                 pipe = r.pipeline()
-                for image in images:
-                    image_ref = ImageRef(image[0], known_registries)
+                for image in loaded_images:
+                    image_ref = ImageRef(image[0], known_registries, agent_info['architecture'])
                     pipe.sadd(image_ref.canonical, agent_id)
                 return pipe
             await redis.execute(self.redis_image, _pipe_builder)
