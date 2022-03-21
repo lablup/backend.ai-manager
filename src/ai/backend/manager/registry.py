@@ -107,6 +107,7 @@ from .types import SessionGetter, UserScope
 from .models import (
     agents, kernels, keypairs,
     keypair_resource_policies,
+    session_dependencies,
     AgentStatus, KernelStatus,
     ImageRow,
     query_allowed_sgroups,
@@ -760,7 +761,7 @@ class AgentRegistry:
         self,
         session_creation_id: str,
         session_name: str,
-        access_key: str,
+        access_key: AccessKey,
         kernel_enqueue_configs: List[KernelEnqueueingConfig],
         scaling_group: Optional[str],
         session_type: SessionTypes,
@@ -773,6 +774,7 @@ class AgentRegistry:
         internal_data: dict = None,
         starts_at: datetime = None,
         agent_list: Sequence[str] = None,
+        dependency_sessions: Sequence[SessionId] = None,
     ) -> SessionId:
 
         session_id = SessionId(uuid.uuid4())
@@ -829,7 +831,6 @@ class AgentRegistry:
                 vfolder_mounts,
             )
 
-        ids = []
         is_multicontainer = cluster_size > 1
         if is_multicontainer:
             if len(kernel_enqueue_configs) == 1:
@@ -870,6 +871,47 @@ class AgentRegistry:
         )
         if hook_result.status != PASSED:
             raise RejectedByHook.from_hook_result(hook_result)
+
+        kernel_bulk_insert_query = kernels.insert().values({
+            'agent': sa.bindparam('mapped_agent'),
+            'id': sa.bindparam('kernel_id'),
+            'status': KernelStatus.PENDING,
+            'session_creation_id': session_creation_id,
+            'session_id': session_id,
+            'session_name': session_name,
+            'session_type': session_type,
+            'cluster_mode': cluster_mode.value,
+            'cluster_size': cluster_size,
+            'cluster_role': sa.bindparam('cluster_role'),
+            'cluster_idx': sa.bindparam('cluster_idx'),
+            'cluster_hostname': sa.bindparam('cluster_hostname'),
+            'scaling_group': scaling_group,
+            'domain_name': user_scope.domain_name,
+            'group_id': user_scope.group_id,
+            'user_uuid': user_scope.user_uuid,
+            'access_key': access_key,
+            'image': sa.bindparam('image'),
+            'registry': sa.bindparam('registry'),
+            'tag': session_tag,
+            'starts_at': starts_at,
+            'internal_data': internal_data,
+            'startup_command': sa.bindparam('startup_command'),
+            'occupied_slots': sa.bindparam('occupied_slots'),
+            'occupied_shares': {},
+            'resource_opts': sa.bindparam('resource_opts'),
+            'environ': sa.bindparam('environ'),
+            'mounts': [  # TODO: keep for legacy?
+                mount.name for mount in vfolder_mounts
+            ],
+            'vfolder_mounts': vfolder_mounts,
+            'bootstrap_script': sa.bindparam('bootstrap_script'),
+            'repl_in_port': 0,
+            'repl_out_port': 0,
+            'stdin_port': 0,
+            'stdout_port': 0,
+            'preopen_ports': sa.bindparam('preopen_ports'),
+        })
+        kernel_data = []
 
         for idx, kernel in enumerate(kernel_enqueue_configs):
             kernel_id: KernelId
@@ -992,62 +1034,64 @@ class AgentRegistry:
                 pass
             else:
                 mapped_agent = agent_list[idx]
-            try:
-                async def _enqueue() -> None:
-                    nonlocal ids
-                    async with self.db.begin() as conn:
-                        query = kernels.insert().values({
-                            'agent': mapped_agent,
-                            'id': kernel_id,
-                            'status': KernelStatus.PENDING,
-                            'session_creation_id': session_creation_id,
-                            'session_id': session_id,
-                            'session_name': session_name,
-                            'session_type': session_type,
-                            'cluster_mode': cluster_mode.value,
-                            'cluster_size': cluster_size,
-                            'cluster_role': kernel['cluster_role'],
-                            'cluster_idx': kernel['cluster_idx'],
-                            'cluster_hostname': f"{kernel['cluster_role']}{kernel['cluster_idx']}",
-                            'scaling_group': scaling_group,
-                            'domain_name': user_scope.domain_name,
-                            'group_id': user_scope.group_id,
-                            'user_uuid': user_scope.user_uuid,
-                            'access_key': access_key,
-                            'image': image_ref.canonical,
-                            'architecture': image_ref.architecture,
-                            'registry': image_ref.registry,
-                            'tag': session_tag,
-                            'starts_at': starts_at,
-                            'internal_data': internal_data,
-                            'startup_command': kernel.get('startup_command'),
-                            'occupied_slots': requested_slots,
-                            'occupied_shares': {},
-                            'resource_opts': resource_opts,
-                            'environ': [f'{k}={v}' for k, v in environ.items()],
-                            'mounts': [  # TODO: keep for legacy?
-                                mount.name for mount in vfolder_mounts
-                            ],
-                            'vfolder_mounts': vfolder_mounts,
-                            'bootstrap_script': kernel.get('bootstrap_script'),
-                            'repl_in_port': 0,
-                            'repl_out_port': 0,
-                            'stdin_port': 0,
-                            'stdout_port': 0,
-                            'preopen_ports': creation_config.get('preopen_ports', []),
-                        })
-                        await conn.execute(query)
-                        ids.append(kernel_id)
 
-                await execute_with_retry(_enqueue)
-            except DBAPIError as e:
-                if getattr(e.orig, "pgcode", None) == '23503':
-                    match = re.search(r'Key \(agent\)=\((?P<agent>[^)]+)\)', repr(e.orig))
-                    if match:
-                        raise InvalidAPIParameters(f"No such agent: {match.group('agent')}")
-                    else:
-                        raise InvalidAPIParameters("No such agent")
-                raise
+            kernel_data.append({
+                'mapped_agent': mapped_agent,
+                'kernel_id': kernel_id,
+                'cluster_role': kernel['cluster_role'],
+                'cluster_idx': kernel['cluster_idx'],
+                'cluster_hostname': f"{kernel['cluster_role']}{kernel['cluster_idx']}",
+                'image': image_ref.canonical,
+                'architecture': image_ref.architecture,
+                'registry': image_ref.registry,
+                'startup_command': kernel.get('startup_command'),
+                'occupied_slots': requested_slots,
+                'resource_opts': resource_opts,
+                'environ': [f'{k}={v}' for k, v in environ.items()],
+                'bootstrap_script': kernel.get('bootstrap_script'),
+                'preopen_ports': creation_config.get('preopen_ports', []),
+            })
+
+        try:
+            async def _enqueue() -> None:
+                async with self.db.begin() as conn:
+                    await conn.execute(kernel_bulk_insert_query, kernel_data)
+                    if dependency_sessions:
+                        matched_dependency_session_ids = []
+                        for dependency_id in dependency_sessions:
+                            match_info = await match_session_ids(
+                                dependency_id,
+                                access_key,
+                                db_connection=conn,
+                            )
+                            if match_info:
+                                matched_dependency_session_ids.append(match_info[0]['session_id'])
+                            else:
+                                raise InvalidAPIParameters(
+                                    "Unknown session ID or name in the dependency list",
+                                    extra_data={"session_ref": dependency_id},
+                                )
+                        dependency_bulk_insert_query = session_dependencies.insert().values(
+                            {
+                                'session_id': session_id,
+                                'depends_on': sa.bindparam('dependency_id'),
+                            },
+                        )
+                        await conn.execute(dependency_bulk_insert_query, [
+                            {'dependency_id': dependency_id}
+                            for dependency_id in matched_dependency_session_ids
+                        ])
+
+            await execute_with_retry(_enqueue)
+        except DBAPIError as e:
+            if getattr(e.orig, "pgcode", None) == '23503':
+                match = re.search(r'Key \(agent\)=\((?P<agent>[^)]+)\)', repr(e.orig))
+                if match:
+                    raise InvalidAPIParameters(f"No such agent: {match.group('agent')}")
+                else:
+                    raise InvalidAPIParameters("No such agent")
+            raise
+
         await self.hook_plugin_ctx.notify(
             'POST_ENQUEUE_SESSION',
             (session_id, session_name, access_key),
