@@ -1,8 +1,8 @@
 """remove_keypair_concurrency_used
 
-Revision ID: 51f093fecf1a
-Revises: 1c8cbe9605df
-Create Date: 2022-03-21 15:40:49.857290
+Revision ID: d59ff89e7514
+Revises: 0f7a4b643940
+Create Date: 2022-03-21 16:43:29.899251
 
 """
 from alembic import op
@@ -10,8 +10,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = '51f093fecf1a'
-down_revision = '1c8cbe9605df'
+revision = 'd59ff89e7514'
+down_revision = '0f7a4b643940'
 branch_labels = None
 depends_on = None
 
