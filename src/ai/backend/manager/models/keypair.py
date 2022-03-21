@@ -530,6 +530,10 @@ class DeleteKeyPair(graphene.Mutation):
             sa.delete(keypairs)
             .where(keypairs.c.access_key == access_key)
         )
+        await redis.execute(
+            ctx.redis_stat,
+            lambda r: r.hdel('keypair.rsc_usages', access_key),
+        )
         return await simple_db_mutate(cls, ctx, delete_query)
 
 
