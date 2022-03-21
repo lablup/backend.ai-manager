@@ -628,7 +628,8 @@ async def _create(request: web.Request, params: dict[str, Any]) -> web.Response:
             UndefChecker | t.Null | t.String,
         tx.AliasedKey(['bootstrap_script', 'bootstrapScript'], default=undefined):
             UndefChecker | t.Null | t.String,
-        t.Key('dependencies', default=undefined): UndefChecker | t.Null | t.List(tx.UUID) | t.List(t.String),
+        t.Key('dependencies', default=undefined):
+            UndefChecker | t.Null | t.List(tx.UUID) | t.List(t.String),
         t.Key('owner_access_key', default=undefined): UndefChecker | t.Null | t.String,
     },
 ), loads=_json_loads)
