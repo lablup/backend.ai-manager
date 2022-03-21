@@ -1,1 +1,1 @@
-Change `sqlalchemy.engine.Connection` to `sqlalchemy.orm.Session` for querying ORM mapped objects.
+Fix a regression introduced in #541 by correcting a missing replacement of `sqlalchemy.engine.Connection` with `sqlalchemy.orm.Session` as `ImageRow` is now an ORM object
