@@ -1057,6 +1057,20 @@ class AgentRegistry:
                 async with self.db.begin() as conn:
                     await conn.execute(kernel_bulk_insert_query, kernel_data)
                     if dependency_sessions:
+                        matched_dependency_session_ids = []
+                        for dependency_id in dependency_sessions:
+                            match_info = await match_session_ids(
+                                dependency_id,
+                                access_key,
+                                db_connection=conn,
+                            )
+                            if match_info:
+                                matched_dependency_session_ids.append(match_info[0]['session_id'])
+                            else:
+                                raise InvalidAPIParameters(
+                                    "Unknown session ID or name in the dependency list",
+                                    extra_data={"session_ref": dependency_id},
+                                )
                         dependency_bulk_insert_query = session_dependencies.insert().values(
                             {
                                 'session_id': session_id,
@@ -1065,7 +1079,7 @@ class AgentRegistry:
                         )
                         await conn.execute(dependency_bulk_insert_query, [
                             {'dependency_id': dependency_id}
-                            for dependency_id in dependency_sessions
+                            for dependency_id in matched_dependency_session_ids
                         ])
 
             await execute_with_retry(_enqueue)

@@ -113,6 +113,8 @@ async def check_dependencies(
     )
     query = (
         sa.select([
+            kernels.c.session_id,
+            kernels.c.session_name,
             kernels.c.result,
         ])
         .select_from(j)
@@ -120,13 +122,17 @@ async def check_dependencies(
     )
     result = await db_conn.execute(query)
     rows = result.fetchall()
-    all_success = all(row['result'] == SessionResult.SUCCESS for row in rows)
+    pending_dependencies = []
+    for row in rows:
+        if row['result'] != SessionResult.SUCCESS:
+            pending_dependencies.append(row)
+    all_success = (not pending_dependencies)
     if all_success:
         return PredicateResult(True)
     return PredicateResult(
         False,
         "Waiting dependency sessions to finish as success. ({})".format(
-            ", ".join(row['session_id'] for row in rows),
+            ", ".join(f"{row['session_name']} ({row['session_id']})" for row in pending_dependencies),
         ),
     )
 
