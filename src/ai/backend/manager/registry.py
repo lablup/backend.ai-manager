@@ -105,7 +105,7 @@ from .exceptions import MultiAgentError
 from .defs import DEFAULT_ROLE, INTRINSIC_SLOTS
 from .types import SessionGetter, UserScope
 from .models import (
-    agents, kernels, keypairs,
+    agents, kernels,
     keypair_resource_policies,
     AgentStatus, KernelStatus,
     ImageRow,
