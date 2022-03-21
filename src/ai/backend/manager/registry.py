@@ -761,7 +761,7 @@ class AgentRegistry:
         self,
         session_creation_id: str,
         session_name: str,
-        access_key: str,
+        access_key: AccessKey,
         kernel_enqueue_configs: List[KernelEnqueueingConfig],
         scaling_group: Optional[str],
         session_type: SessionTypes,
