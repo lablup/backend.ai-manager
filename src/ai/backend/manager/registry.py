@@ -1236,7 +1236,7 @@ class AgentRegistry:
 
     def convert_resource_spec_allocations(
         self,
-        allocations: Mapping[str, Mapping[SlotName, Mapping[DeviceId, str]]]
+        allocations: Mapping[str, Mapping[SlotName, Mapping[DeviceId, str]]],
     ) -> Mapping[str, str]:
         actual_allocs: MutableMapping[str, str] = {}
         for alloc_map in allocations.values():
