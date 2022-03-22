@@ -69,8 +69,11 @@ async def registry_ctx(mocker):
     finally:
         await registry.shutdown()
 
+
 @pytest.mark.asyncio
-async def test_handle_heartbeat(registry_ctx: Tuple[AgentRegistry, MagicMock, MagicMock, MagicMock], mocker) -> None:
+async def test_handle_heartbeat(
+    registry_ctx: Tuple[AgentRegistry, MagicMock, MagicMock, MagicMock], mocker,
+) -> None:
     mock_get_known_registries = AsyncMock(return_value=[
         {'index.docker.io': 'https://registry-1.docker.io'},
     ])
@@ -176,15 +179,17 @@ async def test_handle_heartbeat(registry_ctx: Tuple[AgentRegistry, MagicMock, Ma
 
 
 @pytest.mark.asyncio
-async def test_convert_resource_spec_allocations(registry_ctx: Tuple[AgentRegistry, MagicMock, MagicMock, MagicMock]):
+async def test_convert_resource_spec_allocations(
+    registry_ctx: Tuple[AgentRegistry, MagicMock, MagicMock, MagicMock],
+):
     registry, _, _, _ = registry_ctx
     allocations = {
         'cuda': {
             SlotName('cuda.shares'): {
                 DeviceId('a0'): '2.5',
-                DeviceId('a1'): '2.0'
-            }
-        }
+                DeviceId('a1'): '2.0',
+            },
+        },
     }
     converted_allocations = registry.convert_resource_spec_allocations(allocations)
     assert converted_allocations['cuda.shares'] == '4.5'
@@ -192,15 +197,15 @@ async def test_convert_resource_spec_allocations(registry_ctx: Tuple[AgentRegist
         'cpu': {
             SlotName('cpu'): {
                 DeviceId('a0'): '3',
-                DeviceId('a1'): '1'
-            }
+                DeviceId('a1'): '1',
+            },
         },
         'ram': {
             SlotName('ram'): {
                 DeviceId('b0'): '2.5g',
                 DeviceId('b1'): '512m',
-            }
-        }
+            },
+        },
     }
     converted_allocations = registry.convert_resource_spec_allocations(allocations)
     assert converted_allocations['cpu'] == '4'
