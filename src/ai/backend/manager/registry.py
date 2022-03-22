@@ -1567,6 +1567,7 @@ class AgentRegistry:
                 for ak in keys:
                     usage = concurrency_used_per_key.get(ak, 0)
                     pipe.hset(kp_key, ak, usage)
+                await pipe.execute()
             await redis.execute(
                 self.redis_stat,
                 _pipe_builder,
