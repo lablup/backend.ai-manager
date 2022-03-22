@@ -699,6 +699,7 @@ def main(ctx: click.Context, config_path: Path, debug: bool) -> None:
                         server_main_logwrapper,
                         num_workers=cfg['manager']['num-proc'],
                         args=(cfg, log_endpoint),
+                        wait_timeout=5.0,
                     )
                 finally:
                     log.info('terminated.')
