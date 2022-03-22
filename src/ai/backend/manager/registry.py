@@ -74,6 +74,7 @@ from ai.backend.common.types import (
     ClusterInfo,
     ClusterMode,
     ClusterSSHKeyPair,
+    DeviceId,
     HardwareMetadata,
     KernelEnqueueingConfig,
     KernelId,
@@ -1223,7 +1224,7 @@ class AgentRegistry:
                     "agent(s) raise errors during kernel creation",
                     errors=agent_errors,
                 )
-
+            await self.recalc_resource_usage()
         # If all is well, let's say the session is ready.
         await self.event_producer.produce_event(
             SessionStartedEvent(scheduled_session.session_id, session_creation_id),
@@ -1232,6 +1233,22 @@ class AgentRegistry:
             'POST_START_SESSION',
             (scheduled_session.session_id, scheduled_session.session_name, scheduled_session.access_key),
         )
+
+    def convert_resource_spec_allocations(
+        self,
+        allocations: Mapping[str, Mapping[SlotName, Mapping[DeviceId, str]]]
+    ) -> Mapping[str, str]:
+        actual_allocs: MutableMapping[str, str] = {}
+        for alloc_map in allocations.values():
+            for slot_name, allocation_by_device in alloc_map.items():
+                total_allocs: List[Decimal] = []
+                for allocation in allocation_by_device.values():
+                    if BinarySize.suffix_map.get(allocation[-1].lower()) is not None:
+                        total_allocs.append(Decimal(BinarySize.from_str(allocation)))
+                    else:
+                        total_allocs.append(Decimal(allocation))
+                actual_allocs[slot_name] = str(sum(total_allocs))
+        return actual_allocs
 
     async def _post_create_kernel(
         self,
@@ -1273,52 +1290,17 @@ class AgentRegistry:
                             'stdout_port': created_info['stdout_port'],
                             'service_ports': service_ports,
                         }
-                        actual_allocs: MutableMapping[str, str] = {}
-                        for alloc_map in created_info['resource_spec']['allocations'].values():
-                            for slot_name, allocations in alloc_map.items():
-                                total_allocs: List[Decimal] = []
-                                for allocation in allocations.values():
-                                    if BinarySize.suffix_map.get(allocation[-1].lower()) is not None:
-                                        total_allocs.append(Decimal(BinarySize.from_str(allocation)))
-                                    else:
-                                        total_allocs.append(Decimal(allocation))
-                                actual_allocs[slot_name] = str(sum(total_allocs))
+                        actual_allocs = self.convert_resource_spec_allocations(
+                            created_info['resource_spec']['allocations'])
 
                         values['occupied_slots'] = actual_allocs
-                        query = (
-                            sa.select([kernels.c.occupied_slots])
-                            .select_from(kernels)
-                            .where(kernels.c.id == created_info['id'])
-                        )
-                        requested_slots = await conn.scalar(query)
-                        query = (
-                            sa.select([agents.c.occupied_slots])
-                            .select_from(agents)
-                            .where(agents.c.id == agent_alloc_ctx.agent_id)
-                        )
-                        agent_occupied_slots = await conn.scalar(query)
-                        alloc_diffs = {
-                            k: Decimal(requested_slots[k]) - Decimal(v)
-                            for k, v in actual_allocs.items()
-                        }
-                        if any([v != 0 for v in alloc_diffs.values()]):
-                            agent_actual_allocated_slots = {
-                                k: str(Decimal(agent_occupied_slots[k]) - v)
-                                for k, v in alloc_diffs.items()
-                            }
-                            query = (
-                                agents.update()
-                                .values({'occupied_slots': agent_actual_allocated_slots})
-                                .where(agents.c.id == agent_alloc_ctx.agent_id)
-                            )
-                            await conn.execute(query)
-                        query = (
+                        update_query = (
                             kernels.update()
                             .values(values)
                             .where(kernels.c.id == created_info['id']))
-                        await conn.execute(query)
+                        await conn.execute(update_query)
                 except Exception as e:
-                    log.exception('error while executing _finalize_running', exc_info=e)
+                    log.exception('error while executing _finalize_running')
                     raise e
             await execute_with_retry(_finialize_running)
         finally:
