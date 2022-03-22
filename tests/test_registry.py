@@ -65,12 +65,12 @@ async def registry_ctx(mocker):
     )
     await registry.init()
     try:
-        yield (registry, mock_dbconn, mock_dbresult)
+        yield (registry, mock_dbconn, mock_dbresult, mock_shared_config)
     finally:
         await registry.shutdown()
 
 @pytest.mark.asyncio
-async def test_handle_heartbeat(registry_ctx: Tuple[AgentRegistry, MagicMock, MagicMock], mocker) -> None:
+async def test_handle_heartbeat(registry_ctx: Tuple[AgentRegistry, MagicMock, MagicMock, MagicMock], mocker) -> None:
     mock_get_known_registries = AsyncMock(return_value=[
         {'index.docker.io': 'https://registry-1.docker.io'},
     ])
@@ -84,8 +84,7 @@ async def test_handle_heartbeat(registry_ctx: Tuple[AgentRegistry, MagicMock, Ma
 
     mocker.patch('ai.backend.common.plugin.pkg_resources.iter_entry_points', mocked_entrypoints)
 
-    registry, mock_dbconn, mock_dbresult = registry_ctx
-    mock_shared_config = registry.shared_config
+    registry, mock_dbconn, mock_dbresult, mock_shared_config = registry_ctx
     image_data = snappy.compress(msgpack.packb([
         ('index.docker.io/lablup/python:3.6-ubuntu18.04', ),
     ]))
@@ -177,8 +176,8 @@ async def test_handle_heartbeat(registry_ctx: Tuple[AgentRegistry, MagicMock, Ma
 
 
 @pytest.mark.asyncio
-async def test_convert_resource_spec_allocations(registry_ctx: Tuple[AgentRegistry, MagicMock, MagicMock]):
-    registry, _, _ = registry_ctx
+async def test_convert_resource_spec_allocations(registry_ctx: Tuple[AgentRegistry, MagicMock, MagicMock, MagicMock]):
+    registry, _, _, _ = registry_ctx
     allocations = {
         'cuda': {
             SlotName('cuda.shares'): {
