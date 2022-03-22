@@ -328,8 +328,9 @@ async def event_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
         node_id=root_ctx.local_config['manager']['id'],
     )
     yield
-    await root_ctx.event_dispatcher.close()
     await root_ctx.event_producer.close()
+    await asyncio.sleep(0.2)
+    await root_ctx.event_dispatcher.close()
 
 
 @actxmgr
