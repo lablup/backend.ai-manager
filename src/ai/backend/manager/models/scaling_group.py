@@ -28,7 +28,7 @@ from .base import (
     set_if_set,
     batch_result,
     batch_multiresult,
-    StructuredJSONBColumn,
+    StructuredJSONColumn,
 )
 from .group import resolve_group_name_or_id
 from .user import UserRole
@@ -68,10 +68,10 @@ scaling_groups = sa.Table(
     sa.Column('driver', sa.String(length=64), nullable=False),
     sa.Column('driver_opts', pgsql.JSONB(), nullable=False, default={}),
     sa.Column('scheduler', sa.String(length=64), nullable=False),
-    sa.Column('scheduler_opts', StructuredJSONBColumn(
+    sa.Column('scheduler_opts', StructuredJSONColumn(
         t.Dict({
             t.Key('allowed_session_types', default=['interactive', 'batch']):
-                t.List(tx.Enum(SessionTypes)),
+                t.List(tx.Enum(SessionTypes), min_length=1),
         }).allow_extra('*'),
     ), nullable=False, default={}),
 )

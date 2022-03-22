@@ -40,6 +40,7 @@ from ai.backend.common.types import (
     SessionResult,
     SlotName,
     ResourceSlot,
+    VFolderMount,
 )
 
 from ..defs import DEFAULT_ROLE
@@ -52,6 +53,7 @@ from .base import (
     PaginatedList,
     ResourceSlotColumn,
     SessionIDColumnType,
+    StructuredJSONObjectListColumn,
     batch_result,
     batch_multiresult,
     metadata,
@@ -64,7 +66,7 @@ from .keypair import keypairs
 if TYPE_CHECKING:
     from .gql import GraphQueryContext
 
-__all__: Sequence[str] = (
+__all__ = (
     'kernels',
     'session_dependencies',
     'KernelStatistics',
@@ -175,6 +177,7 @@ kernels = sa.Table(
     sa.Column('user_uuid', GUID, sa.ForeignKey('users.uuid'), nullable=False),
     sa.Column('access_key', sa.String(length=20), sa.ForeignKey('keypairs.access_key')),
     sa.Column('image', sa.String(length=512)),
+    sa.Column('architecture', sa.String(length=32), default='x86_64'),
     sa.Column('registry', sa.String(length=512)),
     sa.Column('tag', sa.String(length=64), nullable=True),
 
@@ -183,8 +186,9 @@ kernels = sa.Table(
     sa.Column('occupied_slots', ResourceSlotColumn(), nullable=False),
     sa.Column('occupied_shares', pgsql.JSONB(), nullable=False, default={}),  # legacy
     sa.Column('environ', sa.ARRAY(sa.String), nullable=True),
-    sa.Column('mounts', sa.ARRAY(sa.String), nullable=True),  # list of list
-    sa.Column('mount_map', pgsql.JSONB(), nullable=True, default={}),
+    sa.Column('mounts', sa.ARRAY(sa.String), nullable=True),  # list of list; legacy since 22.03
+    sa.Column('mount_map', pgsql.JSONB(), nullable=True, default={}),  # legacy since 22.03
+    sa.Column('vfolder_mounts', StructuredJSONObjectListColumn(VFolderMount), nullable=True),
     sa.Column('attached_devices', pgsql.JSONB(), nullable=True, default={}),
     sa.Column('resource_opts', pgsql.JSONB(), nullable=True, default={}),
     sa.Column('bootstrap_script', sa.String(length=16 * 1024), nullable=True),
@@ -531,6 +535,7 @@ class ComputeContainer(graphene.ObjectType):
 
     # image
     image = graphene.String()
+    architecture = graphene.String()
     registry = graphene.String()
 
     # status
@@ -572,6 +577,7 @@ class ComputeContainer(graphene.ObjectType):
 
             # image
             'image': row['image'],
+            'architecture': row['architecture'],
             'registry': row['registry'],
 
             # status
@@ -614,6 +620,7 @@ class ComputeContainer(graphene.ObjectType):
 
     _queryfilter_fieldspec = {
         "image": ("image", None),
+        "architecture": ("architecture", None),
         "agent": ("agent", None),
         "cluster_idx": ("cluster_idx", None),
         "cluster_role": ("cluster_role", None),
@@ -627,6 +634,7 @@ class ComputeContainer(graphene.ObjectType):
 
     _queryorder_colmap = {
         "image": "image",
+        "architecture": "architecture",
         "agent": "agent",
         "cluster_idx": "cluster_idx",
         "cluster_role": "cluster_role",
@@ -771,8 +779,9 @@ class ComputeSession(graphene.ObjectType):
     session_id = graphene.UUID()
 
     # image
-    image = graphene.String()     # image for the main container
-    registry = graphene.String()  # image registry for the main container
+    image = graphene.String()         # image for the main container
+    architecture = graphene.String()  # image architecture for the main container
+    registry = graphene.String()      # image registry for the main container
     cluster_template = graphene.String()
     cluster_mode = graphene.String()
     cluster_size = graphene.Int()
@@ -827,6 +836,7 @@ class ComputeSession(graphene.ObjectType):
 
             # image
             'image': row['image'],
+            'architecture': row['architecture'],
             'registry': row['registry'],
             'cluster_template': None,  # TODO: implement
             'cluster_mode': row['cluster_mode'],
@@ -906,6 +916,7 @@ class ComputeSession(graphene.ObjectType):
         "type": ("kernels_session_type", lambda s: SessionTypes[s]),
         "name": ("kernels_session_name", None),
         "image": ("kernels_image", None),
+        "architecture": ("kernels_architecture", None),
         "domain_name": ("kernels_domain_name", None),
         "group_name": ("groups_group_name", None),
         "user_email": ("users_email", None),
@@ -931,6 +942,7 @@ class ComputeSession(graphene.ObjectType):
         "type": "kernels_session_type",
         "name": "kernels_session_name",
         "image": "kernels_image",
+        "architecture": "kernels_architecture",
         "domain_name": "kernels_domain_name",
         "group_name": "kernels_group_name",
         "user_email": "users_email",
@@ -1134,6 +1146,7 @@ class LegacyComputeSession(graphene.ObjectType):
     session_type = graphene.String()
     role = graphene.String()
     image = graphene.String()
+    architecture = graphene.String()
     registry = graphene.String()
     domain_name = graphene.String()
     group_name = graphene.String()
@@ -1277,6 +1290,7 @@ class LegacyComputeSession(graphene.ObjectType):
             'role': row['cluster_role'],
             'tag': row['tag'],
             'image': row['image'],
+            'architecture': row['architecture'],
             'registry': row['registry'],
             'domain_name': row['domain_name'],
             'group_name': row['name'],  # group.name (group is omitted since use_labels=True is not used)
@@ -1294,7 +1308,7 @@ class LegacyComputeSession(graphene.ObjectType):
             'result': row['result'].name,
             'service_ports': row['service_ports'],
             'occupied_slots': row['occupied_slots'].to_json(),
-            'mounts': row['mounts'],
+            'vfolder_mounts': row['vfolder_mounts'],
             'resource_opts': row['resource_opts'],
             'num_queries': row['num_queries'],
             # optionally hidden

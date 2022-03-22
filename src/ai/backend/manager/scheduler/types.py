@@ -37,6 +37,7 @@ from ai.backend.common.types import (
     ResourceSlot,
     SlotName,
     SlotTypes,
+    VFolderMount,
 )
 
 from ..defs import DEFAULT_ROLE
@@ -70,6 +71,7 @@ class AgentAllocationContext:
 class AgentContext:
     agent_id: AgentId
     agent_addr: str
+    architecture: str
     scaling_group: str
     available_slots: ResourceSlot
     occupied_slots: ResourceSlot
@@ -194,8 +196,7 @@ class PendingSession:
     requested_slots: ResourceSlot
     target_sgroup_names: MutableSequence[str]
     environ: MutableMapping[str, str]
-    mounts: Sequence[str]
-    mount_map: Mapping[str, str]
+    vfolder_mounts: Sequence[VFolderMount]
     bootstrap_script: Optional[str]
     startup_command: Optional[str]
     internal_data: Optional[MutableMapping[str, Any]]
@@ -230,8 +231,7 @@ class PendingSession:
             kernels.c.internal_data,
             kernels.c.resource_opts,
             kernels.c.environ,
-            kernels.c.mounts,
-            kernels.c.mount_map,
+            kernels.c.vfolder_mounts,
             kernels.c.bootstrap_script,
             kernels.c.startup_command,
             kernels.c.preopen_ports,
@@ -276,8 +276,7 @@ class PendingSession:
                 k: v for k, v
                 in map(lambda s: s.split('=', maxsplit=1), row['environ'])
             },
-            mounts=row['mounts'],
-            mount_map=row['mount_map'],
+            vfolder_mounts=row['vfolder_mounts'],
             bootstrap_script=row['bootstrap_script'],
             startup_command=row['startup_command'],
             preopen_ports=row['preopen_ports'],
@@ -333,6 +332,7 @@ class KernelInfo:
             kernels.c.cluster_idx,
             kernels.c.cluster_hostname,
             kernels.c.image,
+            kernels.c.architecture,
             kernels.c.registry,
             kernels.c.resource_opts,
             kernels.c.occupied_slots,
@@ -351,7 +351,7 @@ class KernelInfo:
             cluster_role=row['cluster_role'],
             cluster_idx=row['cluster_idx'],
             cluster_hostname=row['cluster_hostname'],
-            image_ref=ImageRef(row['image'], [row['registry']]),
+            image_ref=ImageRef(row['image'], [row['registry']], row['architecture']),
             resource_opts=row['resource_opts'],
             requested_slots=row['occupied_slots'],
             bootstrap_script=row['bootstrap_script'],

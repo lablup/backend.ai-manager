@@ -3,17 +3,23 @@ Common definitions/constants used throughout the manager.
 """
 
 import enum
+import platform
 import re
 from typing import Final
 
+from ai.backend.common.docker import arch_name_aliases
 from ai.backend.common.types import SlotName, SlotTypes
-
 
 INTRINSIC_SLOTS: Final = {
     SlotName('cpu'): SlotTypes('count'),
     SlotName('mem'): SlotTypes('bytes'),
 }
 
+MANAGER_ARCH = platform.machine().lower().strip()
+
+
+DEFAULT_IMAGE_ARCH = arch_name_aliases.get(MANAGER_ARCH, MANAGER_ARCH)
+# DEFAULT_IMAGE_ARCH = 'x86_64'
 
 # The default container role name for multi-container sessions
 DEFAULT_ROLE: Final = "main"

@@ -1,1 +1,0 @@
-Correctly skip the legacy kernel images in the Docker Hub registry, prefixed with `kernel-`, while updating the image metadata.

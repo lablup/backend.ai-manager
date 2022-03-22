@@ -22,7 +22,7 @@ from ai.backend.common.types import (
     ResourceSlot, SessionTypes,
     ClusterMode,
 )
-from ai.backend.manager.defs import DEFAULT_ROLE
+from ai.backend.manager.defs import DEFAULT_IMAGE_ARCH, DEFAULT_ROLE
 from ai.backend.manager.scheduler.types import (
     KernelInfo,
     PendingSession,
@@ -56,6 +56,7 @@ def example_agents():
         AgentContext(
             agent_id=AgentId('i-001'),
             agent_addr='10.0.1.1:6001',
+            architecture=DEFAULT_IMAGE_ARCH,
             scaling_group='sg01',
             available_slots=ResourceSlot({
                 'cpu': Decimal('4.0'),
@@ -73,6 +74,7 @@ def example_agents():
         AgentContext(
             agent_id=AgentId('i-101'),
             agent_addr='10.0.2.1:6001',
+            architecture=DEFAULT_IMAGE_ARCH,
             scaling_group='sg02',
             available_slots=ResourceSlot({
                 'cpu': Decimal('3.0'),
@@ -96,6 +98,7 @@ def example_mixed_agents():
         AgentContext(
             agent_id=AgentId('i-gpu'),
             agent_addr='10.0.1.1:6001',
+            architecture=DEFAULT_IMAGE_ARCH,
             scaling_group='sg01',
             available_slots=ResourceSlot({
                 'cpu': Decimal('4.0'),
@@ -111,6 +114,7 @@ def example_mixed_agents():
         AgentContext(
             agent_id=AgentId('i-cpu'),
             agent_addr='10.0.2.1:6001',
+            architecture=DEFAULT_IMAGE_ARCH,
             scaling_group='sg02',
             available_slots=ResourceSlot({
                 'cpu': Decimal('3.0'),
@@ -132,6 +136,7 @@ def example_agents_first_one_assigned():
         AgentContext(
             agent_id=AgentId('i-001'),
             agent_addr='10.0.1.1:6001',
+            architecture=DEFAULT_IMAGE_ARCH,
             scaling_group='sg01',
             available_slots=ResourceSlot({
                 'cpu': Decimal('2.0'),
@@ -149,6 +154,7 @@ def example_agents_first_one_assigned():
         AgentContext(
             agent_id=AgentId('i-101'),
             agent_addr='10.0.2.1:6001',
+            architecture=DEFAULT_IMAGE_ARCH,
             scaling_group='sg02',
             available_slots=ResourceSlot({
                 'cpu': Decimal('3.0'),
@@ -172,6 +178,7 @@ def example_agents_no_valid():
         AgentContext(
             agent_id=AgentId('i-001'),
             agent_addr='10.0.1.1:6001',
+            architecture=DEFAULT_IMAGE_ARCH,
             scaling_group='sg01',
             available_slots=ResourceSlot({
                 'cpu': Decimal('0'),
@@ -189,6 +196,7 @@ def example_agents_no_valid():
         AgentContext(
             agent_id=AgentId('i-101'),
             agent_addr='10.0.2.1:6001',
+            architecture=DEFAULT_IMAGE_ARCH,
             scaling_group='sg02',
             available_slots=ResourceSlot({
                 'cpu': Decimal('0'),
@@ -252,8 +260,7 @@ _common_dummy_for_pending_session: Mapping[str, Any] = dict(
     group_id=example_group_id,
     resource_policy={},
     resource_opts={},
-    mounts=[],
-    mount_map={},
+    vfolder_mounts=[],
     environ={},
     bootstrap_script=None,
     startup_command=None,

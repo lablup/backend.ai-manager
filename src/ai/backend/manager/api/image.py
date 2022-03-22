@@ -22,11 +22,12 @@ from ai.backend.common.types import (
     SessionTypes,
 )
 
-from ..defs import DEFAULT_ROLE
+from ..defs import DEFAULT_IMAGE_ARCH, DEFAULT_ROLE
 from ..models import (
     domains, groups, query_allowed_sgroups,
     association_groups_users as agus,
 )
+from ..types import UserScope
 from .auth import admin_required
 from .exceptions import InvalidAPIParameters
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
@@ -275,6 +276,7 @@ async def get_import_image_form(request: web.Request) -> web.Response:
     t.Dict({
         t.Key('src'): t.String,
         t.Key('target'): t.String,
+        t.Key('architecture', default=DEFAULT_IMAGE_ARCH): t.String,
         t.Key('launchOptions', default={}): t.Dict({
             t.Key('scalingGroup', default='default'): t.String,
             t.Key('group', default='default'): t.String,
@@ -328,8 +330,9 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
         result = await conn.execute(query)
         allowed_docker_registries = result.scalar()
 
-    source_image = ImageRef(params['src'], allowed_docker_registries)
-    target_image = ImageRef(params['target'], allowed_docker_registries)
+    # TODO: select agent to run image builder based on image architecture
+    source_image = ImageRef(params['src'], allowed_docker_registries, params['architecture'])
+    target_image = ImageRef(params['target'], allowed_docker_registries, params['architecture'])
 
     # TODO: validate and convert arguments to template variables
     dockerfile_content = tpl.render({
@@ -389,6 +392,7 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
     importer_image = ImageRef(
         root_ctx.local_config['manager']['importer-image'],
         allowed_docker_registries,
+        params['architecture'],
     )
 
     docker_creds = {}
@@ -427,10 +431,12 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
         None,
         SessionTypes.BATCH,
         resource_policy,
-        domain_name=request['user']['domain_name'],
-        group_id=group_id,
-        user_uuid=request['user']['uuid'],
-        user_role=request['user']['role'],
+        user_scope=UserScope(
+            domain_name=request['user']['domain_name'],
+            group_id=group_id,
+            user_uuid=request['user']['uuid'],
+            user_role=request['user']['role'],
+        ),
         internal_data={
             'domain_socket_proxies': ['/var/run/docker.sock'],
             'docker_credentials': docker_creds,
