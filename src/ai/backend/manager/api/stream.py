@@ -633,7 +633,7 @@ async def stream_conn_tracker_gc(root_ctx: RootContext, app_ctx: PrivateContext)
     try:
         while True:
             no_packet_timeout: timedelta = tx.TimeDuration().check(
-                await shared_config.etcd.get('config/idle/app-streaming-packet-timeout', '5m'),
+                await shared_config.etcd.get('config/idle/app-streaming-packet-timeout') or '5m',
             )
             async with app_ctx.conn_tracker_lock:
                 now = await redis.execute(redis_live, lambda r: r.time())
