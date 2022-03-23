@@ -21,6 +21,7 @@ from aiohttp import web
 import aiohttp_cors
 from aiotools import aclosing
 import attr
+from etcetra.types import WatchEventType
 import graphene
 
 from ai.backend.common import validators as tx
@@ -92,7 +93,7 @@ async def detect_status_update(root_ctx: RootContext) -> None:
     try:
         async with aclosing(root_ctx.shared_config.watch_manager_status()) as agen:
             async for ev in agen:
-                if ev.event == 'put':
+                if ev.event == WatchEventType.PUT:
                     root_ctx.shared_config.get_manager_status.cache_clear()
                     updated_status = await root_ctx.shared_config.get_manager_status()
                     log.debug('Process-{0} detected manager status update: {1}',

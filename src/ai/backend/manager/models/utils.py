@@ -113,6 +113,12 @@ class ExtendedAsyncSAEngine(SAEngine):
 
     @actxmgr
     async def advisory_lock(self, lock_id: AdvisoryLock) -> AsyncIterator[None]:
+        '''
+        PostgreSQL's Advisory Lock is considered deprecated on our side.
+        Use Etcd's lock mechanism with etcetra instead.
+        '''
+        log.warn("PostgreSQL's Advisory Lock is considered deprecated on our side."
+                 "Use Etcd's lock mechanism with etcetra instead.")
         lock_acquired = False
         # Here we use the session-level advisory lock,
         # which follows the lifetime of underlying DB connection.

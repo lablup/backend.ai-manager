@@ -106,7 +106,7 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
         )
         await self.populate_config(raw_config or {})
         self.timer = GlobalTimer(
-            self._db,
+            self._shared_config.etcd,
             AdvisoryLock.LOCKID_IDLE_CHECK_TIMER,
             self._event_producer,
             lambda: DoIdleCheckEvent(),

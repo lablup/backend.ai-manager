@@ -1,6 +1,6 @@
 from __future__ import annotations
-
 import asyncio
+
 from contextvars import ContextVar
 from datetime import datetime
 import logging
@@ -40,6 +40,7 @@ from ai.backend.common.events import (
     EventDispatcher,
     EventProducer,
 )
+from ai.backend.common.etcd import AsyncEtcd
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
     aobject,
@@ -129,6 +130,7 @@ class SchedulerDispatcher(aobject):
     shared_config: SharedConfig
     registry: AgentRegistry
     db: SAEngine
+    etcd: AsyncEtcd
 
     event_dispatcher: EventDispatcher
     event_producer: EventProducer
@@ -150,6 +152,8 @@ class SchedulerDispatcher(aobject):
         self.registry = registry
         self.db = registry.db
 
+        self.etcd = shared_config.etcd
+
     async def __ainit__(self) -> None:
         coalescing_opts: CoalescingOptions = {
             'max_wait': 0.5,
@@ -163,14 +167,14 @@ class SchedulerDispatcher(aobject):
         evd.consume(DoScheduleEvent, None, self.schedule, coalescing_opts)
         evd.consume(DoPrepareEvent, None, self.prepare)
         self.schedule_timer = GlobalTimer(
-            self.db,
+            self.shared_config.etcd,
             AdvisoryLock.LOCKID_SCHEDULE_TIMER,
             self.event_producer,
             lambda: DoScheduleEvent(),
             interval=10.0,
         )
         self.prepare_timer = GlobalTimer(
-            self.db,
+            self.shared_config.etcd,
             AdvisoryLock.LOCKID_PREPARE_TIMER,
             self.event_producer,
             lambda: DoPrepareEvent(),
@@ -213,7 +217,10 @@ class SchedulerDispatcher(aobject):
         try:
             # The schedule() method should be executed with a global lock
             # as its individual steps are composed of many short-lived transactions.
-            async with self.db.advisory_lock(AdvisoryLock.LOCKID_SCHEDULE):
+            timeout_seconds = int(await self.etcd.get('config/etcd_lock/timeout') or '60')
+            async with self.etcd.etcd.with_lock(
+                AdvisoryLock.LOCKID_SCHEDULE.value, timeout=timeout_seconds
+            ):
                 async with self.db.begin_readonly() as conn:
                     query = (
                         sa.select([agents.c.scaling_group])
@@ -235,12 +242,10 @@ class SchedulerDispatcher(aobject):
                         log.debug('schedule({}): instance not available', sgroup_name)
                     except Exception as e:
                         log.exception('schedule({}): scheduling error!\n{}', sgroup_name, repr(e))
-        except DBAPIError as e:
-            if getattr(e.orig, 'pgcode', None) == '55P03':
-                log.info("schedule(): cancelled due to advisory lock timeout; "
-                         "maybe another schedule() call is still running")
-                raise asyncio.CancelledError()
-            raise
+        except asyncio.TimeoutError:
+            log.info(
+                "schedule(): cancelled due to etcd lock timeout; "
+                "maybe another schedule() call is still running")
 
     async def _load_scheduler(
         self,
@@ -723,7 +728,10 @@ class SchedulerDispatcher(aobject):
             known_slot_types,
         )
         try:
-            async with self.db.advisory_lock(AdvisoryLock.LOCKID_PREPARE):
+            timeout_seconds = int(await self.etcd.get('config/etcd_lock/timeout') or '60')
+            async with self.etcd.etcd.with_lock(
+                AdvisoryLock.LOCKID_PREPARE.value, timeout=timeout_seconds,
+            ):
                 now = datetime.now(tzutc())
 
                 async def _transition() -> Sequence[PendingSession]:
@@ -768,13 +776,10 @@ class SchedulerDispatcher(aobject):
                             sched_ctx,
                             scheduled_session,
                         ))
-
-        except DBAPIError as e:
-            if getattr(e.orig, 'pgcode', None) == '55P03':
-                log.info("prepare(): cancelled due to advisory lock timeout; "
-                         "maybe another prepare() call is still running")
-                raise asyncio.CancelledError()
-            raise
+        except asyncio.TimeoutError:
+            log.info(
+                "prepare(): cancelled due to etcd lock timeout; "
+                "maybe another prepare() call is still running")
 
     async def start_session(
         self,

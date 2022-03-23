@@ -10,7 +10,7 @@ from typing import (
 from .defs import AdvisoryLock
 
 if TYPE_CHECKING:
-    from ai.backend.manager.models.utils import ExtendedAsyncSAEngine
+    from ai.backend.common.etcd import AsyncEtcd
     from ai.backend.common.events import AbstractEvent, EventProducer
 
 
@@ -25,15 +25,15 @@ class GlobalTimer:
 
     def __init__(
         self,
-        db: ExtendedAsyncSAEngine,
-        timer_id: int,
+        etcd: AsyncEtcd,
+        timer_name: AdvisoryLock,
         event_producer: EventProducer,
         event_factory: Callable[[], AbstractEvent],
         interval: float = 10.0,
         initial_delay: float = 0.0,
     ) -> None:
-        self.db = db
-        self.timer_id = timer_id
+        self.etcd = etcd
+        self.timer_name = timer_name
         self._event_producer = event_producer
         self._event_factory = event_factory
         self._stopped = False
@@ -46,7 +46,8 @@ class GlobalTimer:
             if self._stopped:
                 return
             while True:
-                async with self.db.advisory_lock(AdvisoryLock(self.timer_id)):
+                timeout_seconds = int(await self.etcd.get('config/etcd_lock/timeout') or '60')
+                async with self.etcd.etcd.with_lock(self.timer_name.value, timeout=timeout_seconds):
                     if self._stopped:
                         return
                     await self._event_producer.produce_event(self._event_factory())

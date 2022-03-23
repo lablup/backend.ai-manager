@@ -93,21 +93,20 @@ class TimerNode(threading.Thread):
         )
         event_dispatcher.consume(NoopEvent, None, _tick)
 
-        async with connect_database(self.local_config) as db:
-            timer = GlobalTimer(
-                db,
-                AdvisoryLock.LOCKID_TEST,
-                event_producer,
-                lambda: NoopEvent(self.test_id),
-                self.interval,
-            )
-            try:
-                await timer.join()
-                await self.stop_event.wait()
-            finally:
-                await timer.leave()
-                await event_producer.close()
-                await event_dispatcher.close()
+        timer = GlobalTimer(
+            self.shared_config.etcd,
+            AdvisoryLock.LOCKID_TEST,
+            event_producer,
+            lambda: NoopEvent(self.test_id),
+            self.interval,
+        )
+        try:
+            await timer.join()
+            await self.stop_event.wait()
+        finally:
+            await timer.leave()
+            await event_producer.close()
+            await event_dispatcher.close()
 
     def run(self) -> None:
         asyncio.run(self.timer_node_async())
