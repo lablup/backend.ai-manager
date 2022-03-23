@@ -1278,11 +1278,15 @@ class AgentRegistry:
             (scheduled_session.session_id, scheduled_session.session_name, scheduled_session.access_key),
         )
 
-    def convert_resource_spec_allocations(
+    def convert_resource_spec_to_resource_slot(
         self,
         allocations: Mapping[str, Mapping[SlotName, Mapping[DeviceId, str]]],
-    ) -> Mapping[str, str]:
-        actual_allocs: MutableMapping[str, str] = {}
+    ) -> ResourceSlot:
+        """
+        Convert per-device resource spec allocations (agent-side format)
+        back into a resource slot (manager-side format).
+        """
+        actual_allocs = ResourceSlot()
         for alloc_map in allocations.values():
             for slot_name, allocation_by_device in alloc_map.items():
                 total_allocs: List[Decimal] = []
@@ -1334,7 +1338,7 @@ class AgentRegistry:
                             'stdout_port': created_info['stdout_port'],
                             'service_ports': service_ports,
                         }
-                        actual_allocs = self.convert_resource_spec_allocations(
+                        actual_allocs = self.convert_resource_spec_to_resource_slot(
                             created_info['resource_spec']['allocations'])
 
                         values['occupied_slots'] = actual_allocs
