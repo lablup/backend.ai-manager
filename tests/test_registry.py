@@ -179,7 +179,7 @@ async def test_handle_heartbeat(
 
 
 @pytest.mark.asyncio
-async def test_convert_resource_spec_allocations(
+async def test_convert_resource_spec_to_resource_slot(
     registry_ctx: Tuple[AgentRegistry, MagicMock, MagicMock, MagicMock],
 ):
     registry, _, _, _ = registry_ctx
@@ -191,7 +191,7 @@ async def test_convert_resource_spec_allocations(
             },
         },
     }
-    converted_allocations = registry.convert_resource_spec_allocations(allocations)
+    converted_allocations = registry.convert_resource_spec_to_resource_slot(allocations)
     assert converted_allocations['cuda.shares'] == '4.5'
     allocations = {
         'cpu': {
@@ -207,6 +207,6 @@ async def test_convert_resource_spec_allocations(
             },
         },
     }
-    converted_allocations = registry.convert_resource_spec_allocations(allocations)
+    converted_allocations = registry.convert_resource_spec_to_resource_slot(allocations)
     assert converted_allocations['cpu'] == '4'
     assert converted_allocations['ram'] == str(Decimal(BinarySize.from_str('1g')) * 3)
