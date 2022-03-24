@@ -1454,18 +1454,17 @@ class AgentRegistry:
                 )
                 # Pass the return value of RPC calls to post-processing tasks
                 for created_info in created_infos:
-                    created_kernel_id = KernelId(uuid.UUID(created_info['id']))
-                    self._post_kernel_creation_infos[created_kernel_id].set_result(created_info)
+                    kernel_id = KernelId(uuid.UUID(created_info['id']))
+                    self._post_kernel_creation_infos[kernel_id].set_result(created_info)
                 await asyncio.gather(*post_tasks, return_exceptions=True)
             except Exception as e:
                 # The agent has already cancelled or issued the destruction lifecycle event
                 # for this batch of kernels.
                 for binding in items:
-                    start_future = self.kernel_creation_tracker[binding.kernel.kernel_id]
-                    start_future.cancel()
-                    creation_info_future = self._post_kernel_creation_infos[binding.kernel.kernel_id]
-                    creation_info_future.set_exception(e)
-                await asyncio.sleep(0)
+                    kernel_id = binding.kernel.kernel_id
+                    self.kernel_creation_tracker[kernel_id].cancel()
+                    self._post_kernel_creation_infos[kernel_id].set_exception(e)
+                await asyncio.gather(*post_tasks, return_exceptions=True)
                 raise
 
     async def create_cluster_ssh_keypair(self) -> ClusterSSHKeyPair:
