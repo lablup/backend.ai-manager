@@ -599,7 +599,9 @@ class VirtualFolder(graphene.ObjectType):
     host = graphene.String()
     name = graphene.String()
     user = graphene.UUID()       # User.id
+    user_email = graphene.String()
     group = graphene.UUID()      # Group.id
+    group_name = graphene.String()
     creator = graphene.String()  # User.email
     unmanaged_path = graphene.String()
     usage_mode = graphene.String()
@@ -620,22 +622,24 @@ class VirtualFolder(graphene.ObjectType):
         if row is None:
             return None
         return cls(
-            id=row['id'],
-            host=row['host'],
-            name=row['name'],
-            user=row['user'],
-            group=row['group'],
-            creator=row['creator'],
-            unmanaged_path=row['unmanaged_path'],
-            usage_mode=row['usage_mode'],
-            permission=row['permission'],
-            ownership_type=row['ownership_type'],
-            max_files=row['max_files'],
-            max_size=row['max_size'],    # in MiB
-            created_at=row['created_at'],
-            last_used=row['last_used'],
+            id=row['vfolders_id'],
+            host=row['vfolders_host'],
+            name=row['vfolders_name'],
+            user=row['vfolders_user'],
+            user_email=row['users_email'],
+            group=row['vfolders_group'],
+            group_name=row['groups_name'],
+            creator=row['vfolders_creator'],
+            unmanaged_path=row['vfolders_unmanaged_path'],
+            usage_mode=row['vfolders_usage_mode'],
+            permission=row['vfolders_permission'],
+            ownership_type=row['vfolders_ownership_type'],
+            max_files=row['vfolders_max_files'],
+            max_size=row['vfolders_max_size'],    # in MiB
+            created_at=row['vfolders_created_at'],
+            last_used=row['vfolders_last_used'],
             # num_attached=row['num_attached'],
-            cloneable=row['cloneable'],
+            cloneable=row['vfolders_cloneable'],
         )
 
     async def resolve_num_files(self, info: graphene.ResolveInfo) -> int:
@@ -651,6 +655,7 @@ class VirtualFolder(graphene.ObjectType):
         "host": ("vfolders_host", None),
         "name": ("vfolders_name", None),
         "group": ("vfolders_group", uuid.UUID),
+        "group_name": ("groups_name", None),
         "user": ("vfolders_user", uuid.UUID),
         "user_email": ("users_email", None),
         "creator": ("vfolders_creator", None),
@@ -670,6 +675,7 @@ class VirtualFolder(graphene.ObjectType):
         "host": "vfolders_host",
         "name": "vfolders_name",
         "group": "vfolders_group",
+        "group_name": "groups_name",
         "user": "vfolders_user",
         "user_email": "users_email",
         "usage_mode": "vfolders_usage_mode",
@@ -693,7 +699,12 @@ class VirtualFolder(graphene.ObjectType):
         filter: str = None,
     ) -> int:
         from .user import users
-        j = sa.join(vfolders, users, vfolders.c.user == users.c.uuid)
+        from .group import groups
+        j = (
+            vfolders
+            .join(users, vfolders.c.user == users.c.uuid, isouter=True)
+            .join(groups, vfolders.c.group == groups.c.id, isouter=True)
+        )
         query = (
             sa.select([sa.func.count(vfolders.c.id)])
             .select_from(j)
@@ -725,9 +736,14 @@ class VirtualFolder(graphene.ObjectType):
         order: str = None,
     ) -> Sequence[VirtualFolder]:
         from .user import users
-        j = sa.join(vfolders, users, vfolders.c.user == users.c.uuid)
+        from .group import groups
+        j = (
+            vfolders
+            .join(users, vfolders.c.user == users.c.uuid, isouter=True)
+            .join(groups, vfolders.c.group == groups.c.id, isouter=True)
+        )
         query = (
-            sa.select([vfolders])
+            sa.select([vfolders, users.c.email, groups.c.name], use_labels=True)
             .select_from(j)
             .limit(limit)
             .offset(offset)
