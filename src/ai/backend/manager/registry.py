@@ -1258,7 +1258,7 @@ class AgentRegistry:
                 return_exceptions=True,
             )
             for agent_alloc_tx, result in zip((item[0] for item in per_agent_tasks), results):
-                if isinstance(result, aiotools.MultiError):
+                if isinstance(result, aiotools.TaskGroupError):
                     agent_errors.extend(result.__errors__)
                 elif isinstance(result, Exception):
                     # mark to be destroyed afterwards
@@ -1286,7 +1286,7 @@ class AgentRegistry:
         Convert per-device resource spec allocations (agent-side format)
         back into a resource slot (manager-side format).
         """
-        actual_allocs = ResourceSlot()
+        slots = ResourceSlot()
         for alloc_map in allocations.values():
             for slot_name, allocation_by_device in alloc_map.items():
                 total_allocs: List[Decimal] = []
@@ -1295,8 +1295,8 @@ class AgentRegistry:
                         total_allocs.append(Decimal(BinarySize.from_str(allocation)))
                     else:
                         total_allocs.append(Decimal(allocation))
-                actual_allocs[slot_name] = str(sum(total_allocs))
-        return actual_allocs
+                slots[slot_name] = str(sum(total_allocs))
+        return slots
 
     async def _post_create_kernel(
         self,
@@ -1340,16 +1340,16 @@ class AgentRegistry:
                         }
                         actual_allocs = self.convert_resource_spec_to_resource_slot(
                             created_info['resource_spec']['allocations'])
-
                         values['occupied_slots'] = actual_allocs
                         update_query = (
                             kernels.update()
                             .values(values)
-                            .where(kernels.c.id == created_info['id']))
+                            .where(kernels.c.id == created_info['id'])
+                        )
                         await conn.execute(update_query)
-                except Exception as e:
+                except Exception:
                     log.exception('error while executing _finalize_running')
-                    raise e
+                    raise
             await execute_with_retry(_finialize_running)
         finally:
             try:
