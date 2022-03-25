@@ -78,7 +78,6 @@ async def create_or_update_filebrowser(
 
     headers = {}
     headers["X-BackendAI-Storage-Auth-Token"] = proxy_info.secret
-
     try:
         async with proxy_info.session.request(
             "POST",
