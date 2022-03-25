@@ -8,7 +8,7 @@ from typing import (
     TYPE_CHECKING,
 )
 
-from aiotools import MultiError
+from aiotools import TaskGroupError
 
 if TYPE_CHECKING:
     from ai.backend.common.types import AgentId
@@ -51,7 +51,7 @@ class AgentError(RuntimeError):
         self.exc_tb = exc_tb
 
 
-class MultiAgentError(MultiError):
+class MultiAgentError(TaskGroupError):
     """
     An exception that is a collection of multiple errors from multiple agents.
     """

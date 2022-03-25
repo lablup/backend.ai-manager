@@ -17,6 +17,7 @@ from typing import (
 from aiohttp import web
 import aiohttp_cors
 from aioredis import Redis
+from aioredis.client import Pipeline as RedisPipeline
 from dateutil.tz import tzutc
 from dateutil.parser import parse as dtparse
 import sqlalchemy as sa
@@ -437,12 +438,12 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
             if row is None:
                 raise AuthorizationFailed('Access key not found')
 
-            async def _pipe_builder(r: Redis):
+            async def _pipe_builder(r: Redis) -> RedisPipeline:
                 pipe = r.pipeline()
                 num_queries_key = f'kp:{access_key}:num_queries'
                 pipe.incr(num_queries_key)
                 pipe.expire(num_queries_key, 86400 * 30)  # retention: 1 month
-                await pipe.execute()
+                return pipe
 
             await redis.execute(root_ctx.redis_stat, _pipe_builder)
         else:
@@ -482,12 +483,12 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
             if not secrets.compare_digest(my_signature, signature):
                 raise AuthorizationFailed('Signature mismatch')
 
-            async def _pipe_builder(r: Redis):
+            async def _pipe_builder(r: Redis) -> RedisPipeline:
                 pipe = r.pipeline()
                 num_queries_key = f'kp:{access_key}:num_queries'
                 pipe.incr(num_queries_key)
                 pipe.expire(num_queries_key, 86400 * 30)  # retention: 1 month
-                await pipe.execute()
+                return pipe
 
             await redis.execute(root_ctx.redis_stat, _pipe_builder)
         else:
@@ -664,6 +665,12 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
         keypair = result.first()
     if keypair is None:
         raise AuthorizationFailed('No API keypairs found.')
+    # [Hooking point for POST_AUTHORIZE as one-way notification]
+    # The hook handlers should accept a tuple of the request, user, and keypair objects.
+    await root_ctx.hook_plugin_ctx.notify(
+        'POST_AUTHORIZE',
+        (request, user, keypair),
+    )
     return web.json_response({
         'data': {
             'access_key': keypair['access_key'],

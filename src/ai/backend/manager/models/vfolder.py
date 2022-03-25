@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import enum
+import os.path
+import uuid
+from pathlib import PurePosixPath
 from typing import (
     Any,
     List,
@@ -10,7 +13,6 @@ from typing import (
     Set,
     TYPE_CHECKING,
 )
-import uuid
 
 from dateutil.parser import parse as dtparse
 import graphene
@@ -20,7 +22,11 @@ from sqlalchemy.engine.row import Row
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 import trafaret as t
 
+from ai.backend.common.types import VFolderMount
+
+from ..api.exceptions import InvalidAPIParameters, VFolderNotFound, VFolderOperationFailed
 from ..defs import RESERVED_VFOLDER_PATTERNS, RESERVED_VFOLDERS
+from ..types import UserScope
 from .base import (
     metadata, EnumValueType, GUID, IDColumn,
     Item, PaginatedList, BigInt,
@@ -31,6 +37,7 @@ from .minilang.ordering import QueryOrderParser
 from .user import UserRole
 if TYPE_CHECKING:
     from .gql import GraphQueryContext
+    from .storage import StorageSessionManager
 
 __all__: Sequence[str] = (
     'vfolders',
@@ -46,6 +53,7 @@ __all__: Sequence[str] = (
     'get_allowed_vfolder_hosts_by_group',
     'get_allowed_vfolder_hosts_by_user',
     'verify_vfolder_name',
+    'prepare_vfolder_mounts',
 )
 
 
@@ -446,6 +454,142 @@ async def get_allowed_vfolder_hosts_by_user(
     # Keypair Resource Policy's allowed_vfolder_hosts
     allowed_hosts.update(resource_policy['allowed_vfolder_hosts'])
     return allowed_hosts
+
+
+async def prepare_vfolder_mounts(
+    conn: SAConnection,
+    storage_manager: StorageSessionManager,
+    allowed_vfolder_types: Sequence[str],
+    user_scope: UserScope,
+    requested_mounts: Sequence[str],
+    requested_mount_map: Mapping[str, str],
+) -> Sequence[VFolderMount]:
+    """
+    Determine the actual mount information from the requested vfolder lists,
+    vfolder configurations, and the given user scope.
+    """
+
+    # Fast-path for empty requested mounts
+    if not requested_mounts:
+        return []
+
+    requested_vfolder_names: dict[str, str] = {}
+    requested_vfolder_subpaths: dict[str, str] = {}
+    requested_vfolder_dstpaths: dict[str, str] = {}
+    matched_vfolder_mounts: list[VFolderMount] = []
+
+    # Split the vfolder name and subpaths
+    for key in requested_mounts:
+        name, _, subpath = key.partition("/")
+        if not PurePosixPath(os.path.normpath(key)).is_relative_to(name):
+            raise InvalidAPIParameters(
+                f"The subpath '{subpath}' should designate "
+                f"a subdirectory of the vfolder '{name}'.",
+            )
+        requested_vfolder_names[key] = name
+        requested_vfolder_subpaths[key] = os.path.normpath(subpath)
+    for key, value in requested_mount_map.items():
+        requested_vfolder_dstpaths[key] = value
+
+    # Check if there are overlapping mount sources
+    for p1 in requested_mounts:
+        for p2 in requested_mounts:
+            if p1 == p2:
+                continue
+            if PurePosixPath(p1).is_relative_to(PurePosixPath(p2)):
+                raise InvalidAPIParameters(
+                    f"VFolder source path '{p1}' overlaps with '{p2}'",
+                )
+
+    # Query the accessible vfolders that satisfy either:
+    # - the name matches with the requested vfolder name, or
+    # - the name starts with a dot (dot-prefixed vfolder) for automatic mounting.
+    if requested_vfolder_names:
+        extra_vf_conds = (
+            vfolders.c.name.in_(requested_vfolder_names.values()) |
+            vfolders.c.name.startswith('.')
+        )
+    else:
+        extra_vf_conds = vfolders.c.name.startswith('.')
+    accessible_vfolders = await query_accessible_vfolders(
+        conn, user_scope.user_uuid,
+        user_role=user_scope.user_role,
+        domain_name=user_scope.domain_name,
+        allowed_vfolder_types=allowed_vfolder_types,
+        extra_vf_conds=extra_vf_conds,
+    )
+
+    # for vfolder in accessible_vfolders:
+    for key, vfolder_name in requested_vfolder_names.items():
+        for vfolder in accessible_vfolders:
+            if vfolder['name'] == requested_vfolder_names[key]:
+                break
+        else:
+            raise VFolderNotFound(f"VFolder {vfolder_name} is not found or accessible.")
+        if vfolder['group'] is not None and vfolder['group'] != str(user_scope.group_id):
+            # User's accessible group vfolders should not be mounted
+            # if not belong to the execution kernel.
+            continue
+        try:
+            mount_base_path = PurePosixPath(
+                await storage_manager.get_mount_path(
+                    vfolder['host'],
+                    vfolder['id'],
+                    PurePosixPath(requested_vfolder_subpaths[key]),
+                ),
+            )
+        except VFolderOperationFailed as e:
+            raise InvalidAPIParameters(e.extra_msg, e.extra_data) from None
+        if vfolder['name'] == '.local' and vfolder['group'] is not None:
+            # Auto-create per-user subdirectory inside the group-owned ".local" vfolder.
+            async with storage_manager.request(
+                vfolder['host'], 'POST', 'folder/file/mkdir',
+                params={
+                    'volume': storage_manager.split_host(vfolder['host'])[1],
+                    'vfid': vfolder['id'],
+                    'relpath': str(user_scope.user_uuid.hex),
+                    'exist_ok': True,
+                },
+            ):
+                pass
+            # Mount the per-user subdirectory as the ".local" vfolder.
+            matched_vfolder_mounts.append(VFolderMount(
+                name=vfolder['name'],
+                vfid=vfolder['id'],
+                vfsubpath=PurePosixPath(user_scope.user_uuid.hex),
+                host_path=mount_base_path / user_scope.user_uuid.hex,
+                kernel_path=PurePosixPath("/home/work/.local"),
+                mount_perm=vfolder['permission'],
+            ))
+        else:
+            # Normal vfolders
+            kernel_path_raw = requested_vfolder_dstpaths.get(key)
+            if kernel_path_raw is None:
+                kernel_path = PurePosixPath(f"/home/work/{vfolder['name']}")
+            else:
+                kernel_path = PurePosixPath(kernel_path_raw)
+                if not kernel_path.is_absolute():
+                    kernel_path = PurePosixPath("/home/work", kernel_path_raw)
+            matched_vfolder_mounts.append(VFolderMount(
+                name=vfolder['name'],
+                vfid=vfolder['id'],
+                vfsubpath=PurePosixPath(requested_vfolder_subpaths[key]),
+                host_path=mount_base_path / requested_vfolder_subpaths[key],
+                kernel_path=kernel_path,
+                mount_perm=vfolder['permission'],
+            ))
+
+    # Check if there are overlapping mount targets
+    for vf1 in matched_vfolder_mounts:
+        for vf2 in matched_vfolder_mounts:
+            if vf1.name == vf2.name:
+                continue
+            if vf1.kernel_path.is_relative_to(vf2.kernel_path):
+                raise InvalidAPIParameters(
+                    f"VFolder mount path {vf1.kernel_path} overlaps with {vf2.kernel_path}",
+                )
+
+    return matched_vfolder_mounts
 
 
 class VirtualFolder(graphene.ObjectType):

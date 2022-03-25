@@ -33,7 +33,7 @@ class DockerHubRegistry(BaseContainerRegistry):
                     data = await resp.json()
                     for item in data['results']:
                         # skip legacy images
-                        if not item['name'].startswith('kernel-'):
+                        if item['name'].startswith('kernel-'):
                             continue
                         yield f"{username}/{item['name']}"
                 else:

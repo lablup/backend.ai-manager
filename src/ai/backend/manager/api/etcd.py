@@ -69,10 +69,11 @@ async def get_config(request: web.Request, params: Any) -> web.Response:
     )
     if params['prefix']:
         # Flatten the returned ChainMap object for JSON serialization
-        value = dict(await root_ctx.shared_config.etcd.get_prefix_dict(params['key']))
+        tree_value = dict(await root_ctx.shared_config.etcd.get_prefix_dict(params['key']))
+        return web.json_response({'result': tree_value})
     else:
-        value = await root_ctx.shared_config.etcd.get(params['key'])
-    return web.json_response({'result': value})
+        scalar_value = await root_ctx.shared_config.etcd.get(params['key'])
+        return web.json_response({'result': scalar_value})
 
 
 @superadmin_required

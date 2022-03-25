@@ -10,12 +10,15 @@ from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
-    ResourceSlot, SessionTypes,
+    ResourceSlot,
+    SessionResult,
+    SessionTypes,
 )
 
 from ..models import (
     domains, groups, kernels, keypairs,
     keypair_resource_policies,
+    session_dependencies,
     query_allowed_sgroups,
     DefaultForUnspecified,
 )
@@ -103,8 +106,35 @@ async def check_dependencies(
     sched_ctx: SchedulingContext,
     sess_ctx: PendingSession,
 ) -> PredicateResult:
-    # TODO: implement
-    return PredicateResult(True, 'bypassing because it is not implemented')
+    j = sa.join(
+        session_dependencies,
+        kernels,
+        session_dependencies.c.depends_on == kernels.c.session_id,
+    )
+    query = (
+        sa.select([
+            kernels.c.session_id,
+            kernels.c.session_name,
+            kernels.c.result,
+        ])
+        .select_from(j)
+        .where(session_dependencies.c.session_id == sess_ctx.session_id)
+    )
+    result = await db_conn.execute(query)
+    rows = result.fetchall()
+    pending_dependencies = []
+    for row in rows:
+        if row['result'] != SessionResult.SUCCESS:
+            pending_dependencies.append(row)
+    all_success = (not pending_dependencies)
+    if all_success:
+        return PredicateResult(True)
+    return PredicateResult(
+        False,
+        "Waiting dependency sessions to finish as success. ({})".format(
+            ", ".join(f"{row['session_name']} ({row['session_id']})" for row in pending_dependencies),
+        ),
+    )
 
 
 async def check_keypair_resource_limit(
@@ -211,29 +241,49 @@ async def check_scaling_group(
             )
 
     sgroups = await execute_with_retry(_query)
+    if not sgroups:
+        return PredicateResult(
+            False,
+            "You do not have any scaling groups allowed to use.",
+            permanent=True,
+        )
     target_sgroup_names: List[str] = []
     preferred_sgroup_name = sess_ctx.scaling_group
     if preferred_sgroup_name is not None:
+        # Consider only the preferred scaling group.
         for sgroup in sgroups:
             if preferred_sgroup_name == sgroup['name']:
                 break
         else:
             return PredicateResult(
                 False,
-                f"The given preferred scaling group is not allowed to use. "
-                f"({preferred_sgroup_name})",
+                f"You do not have access to the scaling group '{preferred_sgroup_name}'.",
                 permanent=True,
             )
-        # Consider agents only in the preferred scaling group.
+        allowed_session_types = sgroup['scheduler_opts']['allowed_session_types']
+        if sess_ctx.session_type.value.lower() not in allowed_session_types:
+            return PredicateResult(
+                False,
+                f"The scaling group '{preferred_sgroup_name}' does not accept "
+                f"the session type '{sess_ctx.session_type}'. ",
+                permanent=True,
+            )
         target_sgroup_names = [preferred_sgroup_name]
     else:
-        # Consider all agents in all allowed scaling groups.
-        target_sgroup_names = [sgroup['name'] for sgroup in sgroups]
-    log.debug('considered scaling groups: {}', target_sgroup_names)
-    if not target_sgroup_names:
-        return PredicateResult(
-            False,
-            "No available resource in scaling groups.",
-        )
+        # Consider all allowed scaling groups.
+        usable_sgroups = []
+        for sgroup in sgroups:
+            allowed_session_types = sgroup['scheduler_opts']['allowed_session_types']
+            if sess_ctx.session_type.value.lower() in allowed_session_types:
+                usable_sgroups.append(sgroup)
+        if not usable_sgroups:
+            return PredicateResult(
+                False,
+                f"No scaling groups accept the session type '{sess_ctx.session_type}'.",
+                permanent=True,
+            )
+        target_sgroup_names = [sgroup['name'] for sgroup in usable_sgroups]
+    assert target_sgroup_names
+    log.debug("scaling groups considered for s:{} are {}", sess_ctx.session_id, target_sgroup_names)
     sess_ctx.target_sgroup_names.extend(target_sgroup_names)
     return PredicateResult(True)

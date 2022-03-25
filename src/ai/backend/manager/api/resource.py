@@ -507,7 +507,7 @@ async def get_time_binned_monthly_stats(request: web.Request, user_uuid=None):
     now = datetime.now(tzutc())
     start_date = now - timedelta(days=30)
     root_ctx: RootContext = request.app['_root.context']
-    async with root_ctx.db.begin() as conn:
+    async with root_ctx.db.begin_readonly() as conn:
         query = (
             sa.select([kernels])
             .select_from(kernels)
@@ -631,11 +631,10 @@ async def get_watcher_info(request: web.Request, agent_id: str) -> dict:
     if token is None:
         token = 'insecure'
     agent_ip = await root_ctx.shared_config.etcd.get(f'nodes/agents/{agent_id}/ip')
-    watcher_port = await root_ctx.shared_config.etcd.get(
+    raw_watcher_port = await root_ctx.shared_config.etcd.get(
         f'nodes/agents/{agent_id}/watcher_port',
     )
-    if watcher_port is None:
-        watcher_port = 6009
+    watcher_port = 6099 if raw_watcher_port is None else int(raw_watcher_port)
     # TODO: watcher scheme is assumed to be http
     addr = yarl.URL(f'http://{agent_ip}:{watcher_port}')
     return {
