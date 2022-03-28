@@ -7,7 +7,6 @@ from typing import (
 from dateutil.tz import tzutc
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
-import aioredis
 
 from ai.backend.common import redis
 from ai.backend.common.logging import BraceStyleAdapter
@@ -65,48 +64,53 @@ async def check_concurrency(
 
     max_concurrent_sessions: int
 
-    async def _get_max_conc_sess() -> int:
-        async with db_conn.begin_nested():
-            select_query = (
-                sa.select([keypair_resource_policies])
-                .select_from(keypair_resource_policies)
-                .where(keypair_resource_policies.c.name == sess_ctx.resource_policy)
-            )
-            result = await db_conn.execute(select_query)
+    _check_keypair_concurrency_script = '''
+    local key = KEYS[1]
+    local limit = tonumber(ARGV[1])
+    local result = {}
+    redis.call('SETNX', key, 0)
+    local count = tonumber(redis.call('GET', key))
+    if count >= limit then
+        result[1] = 0
+        result[2] = count
+        return result
+    end
+    result[1] = 1
+    result[2] = count
+    redis.call('INCR', key)
+    return result
+    '''
+
+    async def _get_max_concurrent_sessions() -> int:
+        select_query = (
+            sa.select([keypair_resource_policies])
+            .select_from(keypair_resource_policies)
+            .where(keypair_resource_policies.c.name == sess_ctx.resource_policy)
+        )
+        result = await db_conn.execute(select_query)
         return result.first()['max_concurrent_sessions']
 
-    async def _check() -> PredicateResult:
-        async def _getset_kp_rsc_usg(r: aioredis.Redis) -> int:
-            key = 'keypair.concurrency_used'
-            if conc := await r.get(f'{key}.{sess_ctx.access_key}'):
-                return int(conc)
-            await r.set(f'{key}.{sess_ctx.access_key}', 0)
-            return 0
-        concurrency_used = await redis.execute(
-            sched_ctx.registry.redis_stat,
-            _getset_kp_rsc_usg,
+    max_concurrent_sessions = await execute_with_retry(_get_max_concurrent_sessions)
+    ok, concurrency_used = await redis.execute_script(
+        sched_ctx.registry.redis_stat,
+        'check_keypair_concurrency_used',
+        _check_keypair_concurrency_script,
+        [f"keypair.concurrency_used.{sess_ctx.access_key}"],
+        [max_concurrent_sessions],
+    )
+    log.debug(
+        'access_key: {0} ({1} / {2})',
+        sess_ctx.access_key,
+        concurrency_used,
+        max_concurrent_sessions,
+    )
+    if ok == 0:
+        return PredicateResult(
+            False,
+            "You cannot run more than "
+            f"{max_concurrent_sessions} concurrent sessions",
         )
-        log.debug(
-            'access_key: {0} ({1} / {2})',
-            sess_ctx.access_key, concurrency_used,
-            max_concurrent_sessions,
-        )
-        if concurrency_used >= max_concurrent_sessions:
-            return PredicateResult(
-                False,
-                "You cannot run more than "
-                f"{max_concurrent_sessions} concurrent sessions",
-            )
-
-        # Increment concurrency usage of keypair.
-        await redis.execute(
-            sched_ctx.registry.redis_stat,
-            lambda r: r.incrby(f'keypair.concurrency_used.{sess_ctx.access_key}', 1),
-        )
-        return PredicateResult(True)
-
-    max_concurrent_sessions = await execute_with_retry(_get_max_conc_sess)
-    return await _check()
+    return PredicateResult(True)
 
 
 async def check_dependencies(
