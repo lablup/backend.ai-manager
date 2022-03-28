@@ -153,6 +153,7 @@ class KeyPair(graphene.ObjectType):
         'ai.backend.manager.models.ComputeSession',
         status=graphene.String(),
     )
+    concurrency_used = graphene.Int()
 
     user_info = graphene.Field(lambda: UserInfo)
 
@@ -211,6 +212,17 @@ class KeyPair(graphene.ObjectType):
             status = KernelStatus[raw_status]
         loader = ctx.dataloader_manager.get_loader(ctx, 'ComputeSession', status=status)
         return await loader.load(self.access_key)
+
+    async def resolve_concurrency_used(self, info: graphene.ResolveInfo) -> int:
+        ctx: GraphQueryContext = info.context
+        kp_key = 'keypair.rsc_usages'
+        concurrency_used = await redis.execute(
+            ctx.redis_stat,
+            lambda r: r.hget(kp_key, self.access_key),
+        )
+        if concurrency_used is not None:
+            return int(concurrency_used)
+        return 0
 
     @classmethod
     async def load_all(
