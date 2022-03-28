@@ -508,7 +508,7 @@ async def get_all_kernels(
 
 class KernelStatistics:
     @classmethod
-    async def batch_load_by_session(
+    async def batch_load_by_kernel(
         cls,
         ctx: GraphQueryContext,
         session_ids: Sequence[SessionId],
@@ -621,7 +621,7 @@ class ComputeContainer(graphene.ObjectType):
     # we can leave last_stat value for legacy support, as an alias to last_stat
     async def resolve_live_stat(self, info: graphene.ResolveInfo) -> Optional[Mapping[str, Any]]:
         graph_ctx: GraphQueryContext = info.context
-        loader = graph_ctx.dataloader_manager.get_loader(graph_ctx, 'KernelStatistics.by_session')
+        loader = graph_ctx.dataloader_manager.get_loader(graph_ctx, 'KernelStatistics.by_kernel')
         return await loader.load(self.id)
 
     async def resolve_last_stat(self, info: graphene.ResolveInfo) -> Optional[Mapping[str, Any]]:
@@ -1211,7 +1211,7 @@ class LegacyComputeSession(graphene.ObjectType):
     # we can leave last_stat value for legacy support, as an alias to last_stat
     async def resolve_live_stat(self, info: graphene.ResolveInfo) -> Optional[Mapping[str, Any]]:
         graph_ctx: GraphQueryContext = info.context
-        loader = graph_ctx.dataloader_manager.get_loader(graph_ctx, 'KernelStatistics.by_session')
+        loader = graph_ctx.dataloader_manager.get_loader(graph_ctx, 'KernelStatistics.by_kernel')
         return await loader.load(self.id)
 
     async def resolve_last_stat(self, info: graphene.ResolveInfo) -> Optional[Mapping[str, Any]]:
@@ -1238,7 +1238,7 @@ class LegacyComputeSession(graphene.ObjectType):
                 return convert_type(0)
             return convert_type(value)
         else:
-            loader = graph_ctx.dataloader_manager.get_loader(graph_ctx, 'KernelStatistics.by_session')
+            loader = graph_ctx.dataloader_manager.get_loader(graph_ctx, 'KernelStatistics.by_kernel')
             kstat = await loader.load(self.id)
             if kstat is None:
                 return convert_type(0)
