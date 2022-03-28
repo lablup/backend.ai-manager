@@ -32,6 +32,23 @@ from .types import (
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.scheduler'))
 
+_check_keypair_concurrency_script = '''
+local key = KEYS[1]
+local limit = tonumber(ARGV[1])
+local result = {}
+redis.call('SETNX', key, 0)
+local count = tonumber(redis.call('GET', key))
+if count >= limit then
+    result[1] = 0
+    result[2] = count
+    return result
+end
+redis.call('INCR', key)
+result[1] = 1
+result[2] = count + 1
+return result
+'''
+
 
 async def check_reserved_batch_session(
     db_conn: SAConnection,
@@ -61,25 +78,6 @@ async def check_concurrency(
     sched_ctx: SchedulingContext,
     sess_ctx: PendingSession,
 ) -> PredicateResult:
-
-    max_concurrent_sessions: int
-
-    _check_keypair_concurrency_script = '''
-    local key = KEYS[1]
-    local limit = tonumber(ARGV[1])
-    local result = {}
-    redis.call('SETNX', key, 0)
-    local count = tonumber(redis.call('GET', key))
-    if count >= limit then
-        result[1] = 0
-        result[2] = count
-        return result
-    end
-    redis.call('INCR', key)
-    result[1] = 1
-    result[2] = count + 1
-    return result
-    '''
 
     async def _get_max_concurrent_sessions() -> int:
         select_query = (
