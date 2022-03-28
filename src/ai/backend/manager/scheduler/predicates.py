@@ -38,7 +38,7 @@ local limit = tonumber(ARGV[1])
 local result = {}
 redis.call('SETNX', key, 0)
 local count = tonumber(redis.call('GET', key))
-if count >= limit then
+if limit > 0 and count >= limit then
     result[1] = 0
     result[2] = count
     return result
