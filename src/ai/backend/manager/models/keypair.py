@@ -157,11 +157,6 @@ class KeyPair(graphene.ObjectType):
 
     user_info = graphene.Field(lambda: UserInfo)
 
-    # Deprecated
-    concurrency_limit = graphene.Int(
-        deprecation_reason='Moved to KeyPairResourcePolicy object as '
-                           'max_concurrent_sessions field.')
-
     async def resolve_user_info(
         self,
         info: graphene.ResolveInfo,
