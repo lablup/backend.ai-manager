@@ -1311,7 +1311,7 @@ async def handle_kernel_stat_sync(
     event: DoSyncKernelStatsEvent,
 ) -> None:
     root_ctx: RootContext = app['_root.context']
-    if root_ctx.local_config['debug']['save-stats-to-db']:
+    if root_ctx.local_config['debug']['periodic-sync-stats']:
         await root_ctx.registry.sync_kernel_stats(event.kernel_ids)
 
 

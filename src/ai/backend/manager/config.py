@@ -263,7 +263,7 @@ manager_local_config_iv = t.Dict({
         t.Key('enabled', default=False): t.ToBool,
         t.Key('log-events', default=False): t.ToBool,
         t.Key('log-scheduler-ticks', default=False): t.ToBool,
-        t.Key('save-stats-to-db', default=False): t.ToBool,
+        t.Key('periodic-sync-stats', default=False): t.ToBool,
     }).allow_extra('*'),
 }).merge(config.etcd_config_iv).allow_extra('*')
 
