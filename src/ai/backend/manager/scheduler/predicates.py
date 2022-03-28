@@ -75,9 +75,9 @@ async def check_concurrency(
         result[2] = count
         return result
     end
-    result[1] = 1
-    result[2] = count
     redis.call('INCR', key)
+    result[1] = 1
+    result[2] = count + 1
     return result
     '''
 
@@ -98,18 +98,18 @@ async def check_concurrency(
         [f"keypair.concurrency_used.{sess_ctx.access_key}"],
         [max_concurrent_sessions],
     )
-    log.debug(
-        'access_key: {0} ({1} / {2})',
-        sess_ctx.access_key,
-        concurrency_used,
-        max_concurrent_sessions,
-    )
     if ok == 0:
         return PredicateResult(
             False,
             "You cannot run more than "
             f"{max_concurrent_sessions} concurrent sessions",
         )
+    log.debug(
+        'access_key: {0} ({1} / {2})',
+        sess_ctx.access_key,
+        concurrency_used,
+        max_concurrent_sessions,
+    )
     return PredicateResult(True)
 
 
