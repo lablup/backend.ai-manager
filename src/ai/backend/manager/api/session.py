@@ -1455,11 +1455,11 @@ async def report_stats(root_ctx: RootContext, interval: float) -> None:
 
     async with root_ctx.db.begin_readonly() as conn:
         query = (
-            sa.select([sa.func.count([kernels.c.id])])
+            sa.select([sa.func.count(kernels.c.id)])
             .select_from(kernels)
             .where(
-                (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)) &
-                (kernels.c.cluster_role == DEFAULT_ROLE),
+                (kernels.c.cluster_role == DEFAULT_ROLE) &
+                (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
             )
         )
         n = await conn.scalar(query)

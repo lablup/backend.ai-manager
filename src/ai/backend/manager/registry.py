@@ -1581,7 +1581,7 @@ class AgentRegistry:
         ) as rpc:
             await rpc.call.update_scaling_group(scaling_group)
 
-    async def recalc_resource_usage(self) -> None:
+    async def recalc_resource_usage(self, do_fullscan=False) -> None:
         concurrency_used_per_key: MutableMapping[str, int] = defaultdict(lambda: 0)
         occupied_slots_per_agent: MutableMapping[str, ResourceSlot] = \
             defaultdict(lambda: ResourceSlot({'cpu': 0, 'mem': 0}))
@@ -1632,18 +1632,31 @@ class AgentRegistry:
 
         async def _update_keypair_rsc_usg() -> None:
             # Update keypair resource usage for keypairs with running containers.
+            kp_key = 'keypair.concurrency_used'
+
             async def _update(r: aioredis.Redis):
-                kp_key = 'keypair.concurrency_used'
-                keys = await r.keys(f'{kp_key}.*')
+                m: Mapping[str, int] = \
+                    {f'{kp_key}.{k}': concurrency_used_per_key[k] for k in concurrency_used_per_key}
+                await r.mset(m)
+
+            async def _update_by_fullscan(r: aioredis.Redis):
                 m: Dict[str, int] = {}
+                keys = await r.keys(f'{kp_key}.*')
                 for ak in keys:
                     usage = concurrency_used_per_key.get(ak, 0)
                     m[f'{kp_key}.{ak}'] = usage
                 await r.mset(m)
-            await redis.execute(
-                self.redis_stat,
-                _update,
-            )
+
+            if do_fullscan:
+                await redis.execute(
+                    self.redis_stat,
+                    _update_by_fullscan,
+                )
+            else:
+                await redis.execute(
+                    self.redis_stat,
+                    _update,
+                )
 
         await execute_with_retry(_recalc)
         await _update_keypair_rsc_usg()
