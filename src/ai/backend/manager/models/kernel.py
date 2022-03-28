@@ -37,6 +37,7 @@ from ai.backend.common.types import (
     BinarySize,
     ClusterMode,
     KernelId,
+    RedisConnectionInfo,
     SessionId,
     SessionTypes,
     SessionResult,
