@@ -1268,7 +1268,6 @@ class AgentRegistry:
                     "agent(s) raise errors during kernel creation",
                     errors=agent_errors,
                 )
-            await self.recalc_resource_usage()
         # If all is well, let's say the session is ready.
         await self.event_producer.produce_event(
             SessionStartedEvent(scheduled_session.session_id, session_creation_id),
