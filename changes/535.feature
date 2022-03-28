@@ -1,1 +1,1 @@
-Migrate keypair concurrency check to redis
+Migrate keypair concurrency check from PostgreSQL to Redis
