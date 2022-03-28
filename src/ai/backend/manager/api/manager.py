@@ -111,7 +111,7 @@ async def fetch_manager_status(request: web.Request) -> web.Response:
 
         async with root_ctx.db.begin() as conn:
             query = (
-                sa.select([sa.func.count(kernels.c.id)])
+                sa.select([sa.func.count()])
                 .select_from(kernels)
                 .where(
                     (kernels.c.cluster_role == DEFAULT_ROLE) &

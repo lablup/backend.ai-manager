@@ -646,7 +646,7 @@ class ComputeContainer(graphene.ObjectType):
         filter: str = None,
     ) -> int:
         query = (
-            sa.select([sa.func.count(kernels.c.id)])
+            sa.select([sa.func.count()])
             .select_from(kernels)
             .where(kernels.c.session_id == session_id)
         )
@@ -968,7 +968,7 @@ class ComputeSession(graphene.ObjectType):
             .join(users, users.c.uuid == kernels.c.user_uuid)
         )
         query = (
-            sa.select([sa.func.count(kernels.c.id)])
+            sa.select([sa.func.count()])
             .select_from(j)
             .where(kernels.c.cluster_role == DEFAULT_ROLE)
         )
@@ -1356,7 +1356,7 @@ class LegacyComputeSession(graphene.ObjectType):
         elif isinstance(status, KernelStatus):
             status_list = [status]
         query = (
-            sa.select([sa.func.count(kernels.c.session_id)])
+            sa.select([sa.func.count()])
             .select_from(kernels)
             .where(kernels.c.cluster_role == DEFAULT_ROLE)
         )
@@ -1510,7 +1510,7 @@ async def recalc_concurrency_used(
     concurrency_used: int
     async with db_conn.begin_nested():
         query = (
-            sa.select([sa.func.count(kernels.c.id)])
+            sa.select([sa.func.count()])
             .select_from(kernels)
             .where(
                 (kernels.c.access_key == access_key) &

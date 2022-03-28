@@ -295,7 +295,7 @@ class KeyPair(graphene.ObjectType):
         from .user import users
         j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
         query = (
-            sa.select([sa.func.count(keypairs.c.access_key)])
+            sa.select([sa.func.count()])
             .select_from(j)
         )
         if domain_name is not None:

@@ -1455,7 +1455,7 @@ async def report_stats(root_ctx: RootContext, interval: float) -> None:
 
     async with root_ctx.db.begin_readonly() as conn:
         query = (
-            sa.select([sa.func.count('*')])
+            sa.select([sa.func.count()])
             .select_from(kernels)
             .where(
                 (kernels.c.cluster_role == DEFAULT_ROLE) &

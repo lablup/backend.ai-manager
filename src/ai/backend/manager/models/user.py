@@ -296,13 +296,13 @@ class User(graphene.ObjectType):
             from .group import association_groups_users as agus
             j = (users.join(agus, agus.c.user_id == users.c.uuid))
             query = (
-                sa.select([sa.func.count(users.c.uuid)])
+                sa.select([sa.func.count()])
                 .select_from(j)
                 .where(agus.c.group_id == group_id)
             )
         else:
             query = (
-                sa.select([sa.func.count(users.c.uuid)])
+                sa.select([sa.func.count()])
                 .select_from(users)
             )
         if domain_name is not None:
