@@ -21,6 +21,8 @@ from typing import (
 from uuid import UUID
 import uuid
 
+import aioredis
+import aioredis.client
 from dateutil.parser import parse as dtparse
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -511,10 +513,18 @@ class KernelStatistics:
         ctx: GraphQueryContext,
         session_ids: Sequence[SessionId],
     ) -> Sequence[Optional[Mapping[str, Any]]]:
+
+        def _build_pipeline(redis: aioredis.Redis) -> aioredis.client.Pipeline:
+            pipe = redis.pipeline()
+            for sess_id in session_ids:
+                pipe.get(str(sess_id))
+            return pipe
+
         stats = []
-        for sess_id in session_ids:
-            if obj := await redis.execute(ctx.redis_stat, lambda r: r.get(str(sess_id))):
-                stats.append(msgpack.unpackb(obj))
+        results = await redis.execute(ctx.redis_stat, _build_pipeline)
+        for result in results:
+            if result is not None:
+                stats.append(msgpack.unpackb(result))
             else:
                 stats.append(None)
         return stats
