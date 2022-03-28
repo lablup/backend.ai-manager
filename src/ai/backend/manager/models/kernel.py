@@ -596,7 +596,6 @@ class ComputeContainer(graphene.ObjectType):
             'resource_opts': row['resource_opts'],
 
             # statistics
-            # live_stat is resolved by Graphene (resolve_live_stat method)
             # last_stat is resolved by Graphene (resolve_last_stat method)
         }
 
