@@ -1634,7 +1634,7 @@ class AgentRegistry:
             # Update keypair resource usage for keypairs with running containers.
             async def _pipe_builder(r: aioredis.Redis):
                 pipe = r.pipeline()
-                kp_key = 'keypair.rsc_usages'
+                kp_key = 'keypair.concurrency_used'
                 keys = await r.hkeys(kp_key)
                 for ak in keys:
                     usage = concurrency_used_per_key.get(ak, 0)
@@ -1815,7 +1815,7 @@ class AgentRegistry:
                             await redis.execute(
                                 self.redis_stat,
                                 lambda r: r.hincrby(
-                                    'keypair.rsc_usages',
+                                    'keypair.concurrency_used',
                                     kernel['access_key'],
                                     -1,
                                 ),
@@ -1849,7 +1849,7 @@ class AgentRegistry:
                             await redis.execute(
                                 self.redis_stat,
                                 lambda r: r.hincrby(
-                                    'keypair.rsc_usages',
+                                    'keypair.concurrency_used',
                                     kernel['access_key'],
                                     -1,
                                 ),

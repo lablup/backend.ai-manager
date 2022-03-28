@@ -1454,7 +1454,7 @@ async def report_stats(root_ctx: RootContext, interval: float) -> None:
 
     async def _sum_kp_rsc_usg(r: aioredis.Redis):
         result = 0
-        usgs = await r.hvals('keypair.rsc_usages')
+        usgs = await r.hvals('keypair.concurrency_used')
         for usg in usgs:
             result += int(usg) if int(usg) > 0 else 0
         return result
