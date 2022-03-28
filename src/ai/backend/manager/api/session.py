@@ -95,7 +95,8 @@ from ..types import UserScope
 from ..models import (
     domains,
     association_groups_users as agus, groups,
-    keypairs, kernels, query_bootstrap_script,
+    keypairs, kernels, AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
+    query_bootstrap_script,
     keypair_resource_policies,
     scaling_groups,
     users, UserRole,
@@ -1452,20 +1453,18 @@ async def report_stats(root_ctx: RootContext, interval: float) -> None:
     await stats_monitor.report_metric(
         GAUGE, 'ai.backend.manager.agent_instances', len(all_inst_ids))
 
-    async def _sum_kp_rsc_usg(r: aioredis.Redis):
-        result = 0
-        usgs = await r.hvals('keypair.concurrency_used')
-        for usg in usgs:
-            result += int(usg) if int(usg) > 0 else 0
-        return result
-    n = await redis.execute(
-        root_ctx.redis_stat,
-        _sum_kp_rsc_usg,
-    )
-    await stats_monitor.report_metric(
-        GAUGE, 'ai.backend.manager.active_kernels', n)
-
     async with root_ctx.db.begin_readonly() as conn:
+        query = (
+            sa.select([sa.func.count([kernels.c.id])])
+            .select_from(kernels)
+            .where(
+                (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)) &
+                (kernels.c.cluster_role == DEFAULT_ROLE),
+            )
+        )
+        n = await conn.scalar(query)
+        await stats_monitor.report_metric(
+            GAUGE, 'ai.backend.manager.active_kernels', n)
         subquery = (
             sa.select([sa.func.count()])
             .select_from(keypairs)

@@ -1103,7 +1103,7 @@ class PurgeUser(graphene.Mutation):
         access_key = ak_rows.first().access_key
         await redis.execute(
             redis_conn,
-            lambda r: r.hdel('keypair.concurrency_used', access_key),
+            lambda r: r.delete(f'keypair.concurrency_used.{access_key}'),
         )
         result = await conn.execute(
             sa.delete(keypairs)

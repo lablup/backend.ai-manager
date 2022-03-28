@@ -213,7 +213,7 @@ class KeyPair(graphene.ObjectType):
         kp_key = 'keypair.concurrency_used'
         concurrency_used = await redis.execute(
             ctx.redis_stat,
-            lambda r: r.hget(kp_key, self.access_key),
+            lambda r: r.get(f'{kp_key}.{self.access_key}'),
         )
         if concurrency_used is not None:
             return int(concurrency_used)
@@ -539,7 +539,7 @@ class DeleteKeyPair(graphene.Mutation):
         )
         await redis.execute(
             ctx.redis_stat,
-            lambda r: r.hdel('keypair.concurrency_used', access_key),
+            lambda r: r.delete(f'keypair.concurrency_used.{access_key}'),
         )
         return await simple_db_mutate(cls, ctx, delete_query)
 

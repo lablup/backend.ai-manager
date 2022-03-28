@@ -1522,7 +1522,7 @@ async def recalc_concurrency_used(
 
     await redis.execute(
         redis_stat,
-        lambda r: r.hset(
-            'keypair.concurrency_used', access_key, concurrency_used,
+        lambda r: r.set(
+            f'keypair.concurrency_used.{access_key}', concurrency_used,
         ),
     )

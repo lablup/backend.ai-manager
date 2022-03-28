@@ -78,9 +78,9 @@ async def check_concurrency(
     async def _check() -> PredicateResult:
         async def _getset_kp_rsc_usg(r: aioredis.Redis) -> int:
             key = 'keypair.concurrency_used'
-            if conc := await r.hget(key, sess_ctx.access_key):
+            if conc := await r.get(f'{key}.{sess_ctx.access_key}'):
                 return int(conc)
-            await r.hset(key, sess_ctx.access_key, 0)
+            await r.set(f'{key}.{sess_ctx.access_key}', 0)
             return 0
         concurrency_used = await redis.execute(
             sched_ctx.registry.redis_stat,
@@ -101,11 +101,7 @@ async def check_concurrency(
         # Increment concurrency usage of keypair.
         await redis.execute(
             sched_ctx.registry.redis_stat,
-            lambda r: r.hincrby(
-                'keypair.concurrency_used',
-                sess_ctx.access_key,
-                1,
-            ),
+            lambda r: r.incrby(f'keypair.concurrency_used.{sess_ctx.access_key}', 1),
         )
         return PredicateResult(True)
 

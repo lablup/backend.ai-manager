@@ -1632,17 +1632,17 @@ class AgentRegistry:
 
         async def _update_keypair_rsc_usg() -> None:
             # Update keypair resource usage for keypairs with running containers.
-            async def _pipe_builder(r: aioredis.Redis):
-                pipe = r.pipeline()
+            async def _update(r: aioredis.Redis):
                 kp_key = 'keypair.concurrency_used'
-                keys = await r.hkeys(kp_key)
+                keys = await r.keys(f'{kp_key}.*')
+                m: Dict[str, int] = {}
                 for ak in keys:
                     usage = concurrency_used_per_key.get(ak, 0)
-                    pipe.hset(kp_key, ak, usage)
-                await pipe.execute()
+                    m[f'{kp_key}.{ak}'] = usage
+                await r.mset(m)
             await redis.execute(
                 self.redis_stat,
-                _pipe_builder,
+                _update,
             )
 
         await execute_with_retry(_recalc)
@@ -1814,9 +1814,8 @@ class AgentRegistry:
                             # decrement the user's concurrency counter
                             await redis.execute(
                                 self.redis_stat,
-                                lambda r: r.hincrby(
-                                    'keypair.concurrency_used',
-                                    kernel['access_key'],
+                                lambda r: r.incrby(
+                                    f"keypair.concurrency_used.{kernel['access_key']}",
                                     -1,
                                 ),
                             )
@@ -1848,9 +1847,8 @@ class AgentRegistry:
                             # decrement the user's concurrency counter
                             await redis.execute(
                                 self.redis_stat,
-                                lambda r: r.hincrby(
-                                    'keypair.concurrency_used',
-                                    kernel['access_key'],
+                                lambda r: r.incrby(
+                                    f"keypair.concurrency_used.{kernel['access_key']}",
                                     -1,
                                 ),
                             )
