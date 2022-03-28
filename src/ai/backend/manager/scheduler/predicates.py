@@ -105,7 +105,7 @@ async def check_concurrency(
             f"{max_concurrent_sessions} concurrent sessions",
         )
     log.debug(
-        'access_key: {0} ({1} / {2})',
+        'number of concurrent sessions of ak:{0} = {1} / {2}',
         sess_ctx.access_key,
         concurrency_used,
         max_concurrent_sessions,
