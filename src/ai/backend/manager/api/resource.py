@@ -278,7 +278,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
 @superadmin_required
 async def recalculate_usage(request: web.Request) -> web.Response:
     """
-    Update `keypairs.c.concurrency_used` and `agents.c.occupied_slots`.
+    Update `keypair_resource_usages` in redis and `agents.c.occupied_slots`.
 
     Those two values are sometimes out of sync. In that case, calling this API
     re-calculates the values for running containers and updates them in DB.
