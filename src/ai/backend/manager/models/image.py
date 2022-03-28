@@ -214,13 +214,10 @@ class ImageRow(Base):
         alias: str,
         load_aliases=False,
     ) -> ImageRow:
-        query = \
-            sa.select(ImageRow).select_from(
-                sa.join(ImageRow, ImageAliasRow, (
-                    (ImageAliasRow.image == ImageRow.id) &
-                    (ImageAliasRow.alias == alias)
-                )),
-            )
+        query = (
+            sa.select(ImageRow).select_from(ImageRow)
+            .join(ImageAliasRow, ImageRow.aliases.and_(ImageAliasRow.alias == alias))
+        )
         if load_aliases:
             query = query.options(selectinload(ImageRow.aliases))
         result = await session.scalar(query)
@@ -294,8 +291,11 @@ class ImageRow(Base):
                 resolver_func = cls.from_alias
             elif isinstance(reference, ImageRef):
                 resolver_func = functools.partial(cls.from_image_ref, strict=strict)
-            if (row := await resolver_func(session, reference, load_aliases=load_aliases)):
-                return row
+            try:
+                if (row := await resolver_func(session, reference, load_aliases=load_aliases)):
+                    return row
+            except UnknownImageReference:
+                continue
         raise UnknownImageReference
 
     @classmethod
