@@ -97,7 +97,6 @@ def main(csv_path: str,
             'is_active': True,
             'is_admin': False,
             'resource_policy': resource_policy,
-            'concurrency_used': 0,
             'rate_limit': rate_limit,
             'num_queries': 0,
         }

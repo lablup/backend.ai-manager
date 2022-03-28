@@ -63,7 +63,6 @@ from .group import groups
 from .minilang.queryfilter import QueryFilterParser
 from .minilang.ordering import QueryOrderParser
 from .user import users
-from .keypair import keypairs
 if TYPE_CHECKING:
     from .gql import GraphQueryContext
 
@@ -647,7 +646,7 @@ class ComputeContainer(graphene.ObjectType):
         filter: str = None,
     ) -> int:
         query = (
-            sa.select([sa.func.count(kernels.c.id)])
+            sa.select([sa.func.count()])
             .select_from(kernels)
             .where(kernels.c.session_id == session_id)
         )
@@ -969,7 +968,7 @@ class ComputeSession(graphene.ObjectType):
             .join(users, users.c.uuid == kernels.c.user_uuid)
         )
         query = (
-            sa.select([sa.func.count(kernels.c.id)])
+            sa.select([sa.func.count()])
             .select_from(j)
             .where(kernels.c.cluster_role == DEFAULT_ROLE)
         )
@@ -1357,7 +1356,7 @@ class LegacyComputeSession(graphene.ObjectType):
         elif isinstance(status, KernelStatus):
             status_list = [status]
         query = (
-            sa.select([sa.func.count(kernels.c.session_id)])
+            sa.select([sa.func.count()])
             .select_from(kernels)
             .where(kernels.c.cluster_role == DEFAULT_ROLE)
         )
@@ -1502,21 +1501,28 @@ class LegacyComputeSessionList(graphene.ObjectType):
     items = graphene.List(LegacyComputeSession, required=True)
 
 
-async def recalc_concurrency_used(db_conn: SAConnection, access_key: AccessKey) -> None:
+async def recalc_concurrency_used(
+    db_conn: SAConnection,
+    redis_stat: RedisConnectionInfo,
+    access_key: AccessKey,
+) -> None:
+
+    concurrency_used: int
     async with db_conn.begin_nested():
         query = (
-            sa.update(keypairs)
-            .values(
-                concurrency_used=(
-                    sa.select([sa.func.count(kernels.c.id)])
-                    .select_from(kernels)
-                    .where(
-                        (kernels.c.access_key == access_key) &
-                        (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
-                    )
-                    .scalar_subquery()
-                ),
+            sa.select([sa.func.count()])
+            .select_from(kernels)
+            .where(
+                (kernels.c.access_key == access_key) &
+                (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
             )
-            .where(keypairs.c.access_key == access_key)
         )
-        await db_conn.execute(query)
+        result = await db_conn.execute(query)
+        concurrency_used = result.first()[0]
+
+    await redis.execute(
+        redis_stat,
+        lambda r: r.set(
+            f'keypair.concurrency_used.{access_key}', concurrency_used,
+        ),
+    )

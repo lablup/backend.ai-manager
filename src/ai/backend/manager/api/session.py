@@ -95,7 +95,8 @@ from ..types import UserScope
 from ..models import (
     domains,
     association_groups_users as agus, groups,
-    keypairs, kernels, query_bootstrap_script,
+    keypairs, kernels, AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
+    query_bootstrap_script,
     keypair_resource_policies,
     scaling_groups,
     users, UserRole,
@@ -1454,13 +1455,16 @@ async def report_stats(root_ctx: RootContext, interval: float) -> None:
 
     async with root_ctx.db.begin_readonly() as conn:
         query = (
-            sa.select([sa.func.sum(keypairs.c.concurrency_used)])
-            .select_from(keypairs)
+            sa.select([sa.func.count()])
+            .select_from(kernels)
+            .where(
+                (kernels.c.cluster_role == DEFAULT_ROLE) &
+                (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
+            )
         )
         n = await conn.scalar(query)
         await stats_monitor.report_metric(
             GAUGE, 'ai.backend.manager.active_kernels', n)
-
         subquery = (
             sa.select([sa.func.count()])
             .select_from(keypairs)
