@@ -1233,10 +1233,10 @@ async def handle_kernel_creation_lifecycle(
         await root_ctx.registry.set_kernel_status(event.kernel_id, KernelStatus.PREPARING, event.reason)
     elif isinstance(event, KernelStartedEvent):
         # post_create_kernel() coroutines are waiting for the creation tracker events to be set.
-        if tracker := root_ctx.registry.kernel_creation_tracker.get(ck_id):
+        if (tracker := root_ctx.registry.kernel_creation_tracker.get(ck_id)) and not tracker.done():
             tracker.set_result(None)
     elif isinstance(event, KernelCancelledEvent):
-        if tracker := root_ctx.registry.kernel_creation_tracker.get(ck_id):
+        if (tracker := root_ctx.registry.kernel_creation_tracker.get(ck_id)) and not tracker.done():
             tracker.cancel()
 
 

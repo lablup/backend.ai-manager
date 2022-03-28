@@ -182,11 +182,9 @@ class SchedulerDispatcher(aobject):
         log.info('Session scheduler started')
 
     async def close(self) -> None:
-        await asyncio.gather(
-            self.prepare_timer.leave(),
-            self.schedule_timer.leave(),
-            return_exceptions=True,
-        )
+        async with aiotools.TaskGroup() as tg:
+            tg.create_task(self.prepare_timer.leave())
+            tg.create_task(self.schedule_timer.leave())
         log.info('Session scheduler stopped')
 
     async def schedule(
@@ -728,7 +726,7 @@ class SchedulerDispatcher(aobject):
             async with self.db.advisory_lock(AdvisoryLock.LOCKID_PREPARE):
                 now = datetime.now(tzutc())
 
-                async def _transition() -> Sequence[PendingSession]:
+                async def _mark_session_preparing() -> Sequence[PendingSession]:
                     async with self.db.begin() as conn:
                         update_query = (
                             sa.update(kernels)
@@ -756,7 +754,7 @@ class SchedulerDispatcher(aobject):
                         rows = (await conn.execute(select_query)).fetchall()
                         return PendingSession.from_rows(rows)
 
-                scheduled_sessions = await execute_with_retry(_transition)
+                scheduled_sessions = await execute_with_retry(_mark_session_preparing)
                 log.debug("prepare(): preparing {} session(s)", len(scheduled_sessions))
                 async with aiotools.TaskGroup() as tg:
                     for scheduled_session in scheduled_sessions:
@@ -796,31 +794,32 @@ class SchedulerDispatcher(aobject):
             # TODO: instead of instantly cancelling upon exception, we could mark it as
             #       SCHEDULED and retry within some limit using status_data.
 
-            async def _update() -> None:
+            async def _mark_session_cancelled() -> None:
                 async with self.db.begin() as db_conn:
-                    for k in session.kernels:
-                        await recalc_agent_resource_occupancy(db_conn, k.agent_id)
+                    affected_agents = set(k.agent_id for k in session.kernels)
+                    for agent_id in affected_agents:
+                        await recalc_agent_resource_occupancy(db_conn, agent_id)
                     await _rollback_predicate_mutations(db_conn, sched_ctx, session)
                     now = datetime.now(tzutc())
-                    query = kernels.update().values({
+                    update_query = sa.update(kernels).values({
                         'status': KernelStatus.CANCELLED,
                         'status_changed': now,
                         'status_info': "failed-to-start",
                         'status_data': status_data,
                         'terminated_at': now,
                     }).where(kernels.c.session_id == session.session_id)
-                    await db_conn.execute(query)
+                    await db_conn.execute(update_query)
 
-            await execute_with_retry(_update)
-            await self.registry.event_producer.produce_event(
-                SessionCancelledEvent(
-                    session.session_id,
-                    session.session_creation_id,
-                    "failed-to-start",
-                ),
-            )
             log.debug(log_fmt + 'cleanup-start-failure: begin', *log_args)
             try:
+                await execute_with_retry(_mark_session_cancelled)
+                await self.registry.event_producer.produce_event(
+                    SessionCancelledEvent(
+                        session.session_id,
+                        session.session_creation_id,
+                        "failed-to-start",
+                    ),
+                )
                 async with self.db.begin_readonly() as db_conn:
                     query = (
                         sa.select([kernels.c.id, kernels.c.container_id])

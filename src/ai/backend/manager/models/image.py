@@ -243,14 +243,12 @@ class ImageRow(Base):
         with respect to requested canonical, this function will
         return that row regardless of actual architecture.
         """
-        log.debug('from_image_ref(): {} ({})', ref.canonical, ref.architecture)
         query = sa.select(ImageRow).where(ImageRow.name == ref.canonical)
         if load_aliases:
             query = query.options(selectinload(ImageRow.aliases))
 
         result = await session.execute(query)
         candidates: List[ImageRow] = result.scalars().all()
-        log.debug('rows: {}', candidates)
 
         if len(candidates) == 0:
             raise UnknownImageReference

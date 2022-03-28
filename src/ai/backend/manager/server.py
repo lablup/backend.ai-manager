@@ -328,8 +328,9 @@ async def event_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
         node_id=root_ctx.local_config['manager']['id'],
     )
     yield
-    await root_ctx.event_dispatcher.close()
     await root_ctx.event_producer.close()
+    await asyncio.sleep(0.2)
+    await root_ctx.event_dispatcher.close()
 
 
 @actxmgr
@@ -698,6 +699,7 @@ def main(ctx: click.Context, config_path: Path, debug: bool) -> None:
                         server_main_logwrapper,
                         num_workers=cfg['manager']['num-proc'],
                         args=(cfg, log_endpoint),
+                        wait_timeout=5.0,
                     )
                 finally:
                     log.info('terminated.')
