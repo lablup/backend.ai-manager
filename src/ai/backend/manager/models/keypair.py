@@ -160,7 +160,7 @@ class KeyPair(graphene.ObjectType):
     # Deprecated
     concurrency_limit = graphene.Int(
         deprecation_reason='Moved to KeyPairResourcePolicy object as '
-                           'max_concurrent_sessions field.')
+                           'the max_concurrent_sessions field.')
 
     async def resolve_user_info(
         self,
@@ -187,10 +187,10 @@ class KeyPair(graphene.ObjectType):
             resource_policy=row['resource_policy'],
             created_at=row['created_at'],
             last_used=row['last_used'],
-            concurrency_limit=0,  # moved to resource policy
             rate_limit=row['rate_limit'],
             user=row['user'],
             ssh_public_key=row['ssh_public_key'],
+            concurrency_limit=0,  # deprecated
         )
 
     async def resolve_num_queries(self, info: graphene.ResolveInfo) -> int:
@@ -264,7 +264,6 @@ class KeyPair(graphene.ObjectType):
         "resource_policy": ("keypairs_resource_policy", None),
         "created_at": ("keypairs_created_at", dtparse),
         "last_used": ("keypairs_last_used", dtparse),
-        "concurrency_limit": ("keypairs_concurrency_limit", None),
         "rate_limit": ("keypairs_rate_limit", None),
         "num_queries": ("keypairs_num_queries", None),
         "ssh_public_key": ("keypairs_ssh_public_key", None),
@@ -279,7 +278,6 @@ class KeyPair(graphene.ObjectType):
         "resource_policy": "keypairs_resource_policy",
         "created_at": "keypairs_created_at",
         "last_used": "keypairs_last_used",
-        "concurrency_limit": "keypairs_concurrency_limit",
         "rate_limit": "keypairs_rate_limit",
         "num_queries": "keypairs_num_queries",
     }
