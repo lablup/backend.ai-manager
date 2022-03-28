@@ -285,18 +285,21 @@ class ImageRow(Base):
         return that row regardless of actual architecture.
         """
 
+        err_msg = 'Unkwon image canonical or alias'
         for reference in reference_candidates:
             resolver_func: Any = None
             if isinstance(reference, str):
                 resolver_func = cls.from_alias
+                err_msg += f', alias name: {reference}'
             elif isinstance(reference, ImageRef):
                 resolver_func = functools.partial(cls.from_image_ref, strict=strict)
+                err_msg += f', reference canonical: {reference.canonical}'
             try:
                 if (row := await resolver_func(session, reference, load_aliases=load_aliases)):
                     return row
             except UnknownImageReference:
                 continue
-        raise UnknownImageReference
+        raise ImageNotFound(err_msg)
 
     @classmethod
     async def list(cls, session: AsyncSession, load_aliases=False) -> List[ImageRow]:
