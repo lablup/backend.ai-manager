@@ -243,14 +243,12 @@ class ImageRow(Base):
         with respect to requested canonical, this function will
         return that row regardless of actual architecture.
         """
-        log.debug('from_image_ref(): {} ({})', ref.canonical, ref.architecture)
         query = sa.select(ImageRow).where(ImageRow.name == ref.canonical)
         if load_aliases:
             query = query.options(selectinload(ImageRow.aliases))
 
         result = await session.execute(query)
         candidates: List[ImageRow] = result.scalars().all()
-        log.debug('rows: {}', candidates)
 
         if len(candidates) == 0:
             raise UnknownImageReference
@@ -490,7 +488,7 @@ class Image(graphene.ObjectType):
             labels=[
                 KVPair(key=k, value=v)
                 for k, v in row.labels.items()],
-            aliases=row.aliases,
+            aliases=[alias_row.alias for alias_row in row.aliases],
             size_bytes=row.size_bytes,
             resource_limits=[
                 ResourceLimit(
@@ -738,12 +736,13 @@ class AliasImage(graphene.Mutation):
         log.info('alias image {0} -> {1} by API request', alias, image_ref)
         ctx: GraphQueryContext = info.context
         try:
-            async with ctx.db.begin() as conn:
-                image_row = await ImageRow.from_image_ref(conn, image_ref, load_aliases=True)
-                if image_row is not None:
-                    await image_row.alias(conn, alias)
+            async with ctx.db.begin_session() as session:
+                try:
+                    image_row = await ImageRow.from_image_ref(session, image_ref, load_aliases=True)
+                except UnknownImageReference:
+                    raise ImageNotFound
                 else:
-                    raise ValueError('Image not found')
+                    image_row.aliases.append(ImageAliasRow(alias=alias, image_id=image_row.id))
         except ValueError as e:
             return AliasImage(ok=False, msg=str(e))
         return AliasImage(ok=True, msg='')

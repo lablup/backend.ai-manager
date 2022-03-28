@@ -382,7 +382,7 @@ async def _query_userinfo(
     return owner_uuid, group_id, resource_policy
 
 
-async def _create(request: web.Request, params: Any) -> web.Response:
+async def _create(request: web.Request, params: dict[str, Any]) -> web.Response:
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
     scopes_param = {
@@ -486,6 +486,9 @@ async def _create(request: web.Request, params: Any) -> web.Response:
     if params['cluster_size'] > 1:
         log.debug(" -> cluster_mode:{} (replicate)", params['cluster_mode'])
 
+    if params['dependencies'] is None:
+        params['dependencies'] = []
+
     session_creation_id = secrets.token_urlsafe(16)
     start_event = asyncio.Event()
     kernel_id: Optional[KernelId] = None
@@ -529,6 +532,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
                 session_tag=params['tag'],
                 starts_at=starts_at,
                 agent_list=params['config']['agent_list'],
+                dependency_sessions=params['dependencies'],
             )),
         )
         resp['sessionId'] = str(kernel_id)  # changed since API v5
@@ -624,10 +628,12 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             UndefChecker | t.Null | t.String,
         tx.AliasedKey(['bootstrap_script', 'bootstrapScript'], default=undefined):
             UndefChecker | t.Null | t.String,
+        t.Key('dependencies', default=undefined):
+            UndefChecker | t.Null | t.List(tx.UUID) | t.List(t.String),
         t.Key('owner_access_key', default=undefined): UndefChecker | t.Null | t.String,
     },
 ), loads=_json_loads)
-async def create_from_template(request: web.Request, params: Any) -> web.Response:
+async def create_from_template(request: web.Request, params: dict[str, Any]) -> web.Response:
     # TODO: we need to refactor session_template model to load the template configs
     #       by one batch. Currently, we need to set every template configs one by one.
     root_ctx: RootContext = request.app['_root.context']
@@ -795,10 +801,11 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
         t.Key('reuseIfExists', default=True) >> 'reuse': t.ToBool,
         t.Key('startupCommand', default=None) >> 'startup_command': t.Null | t.String,
         tx.AliasedKey(['bootstrap_script', 'bootstrapScript'], default=None): t.Null | t.String,
+        t.Key('dependencies', default=None): t.Null | t.List(tx.UUID) | t.List(t.String),
         t.Key('owner_access_key', default=None): t.Null | t.String,
     }),
     loads=_json_loads)
-async def create_from_params(request: web.Request, params: Any) -> web.Response:
+async def create_from_params(request: web.Request, params: dict[str, Any]) -> web.Response:
     if params['session_name'] in ['from-template']:
         raise InvalidAPIParameters(f'Requested session ID {params["session_name"]} is reserved word')
     api_version = request['api_version']
@@ -856,7 +863,7 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
         t.Key('owner_access_key', default=None): t.Null | t.String,
     }),
     loads=_json_loads)
-async def create_cluster(request: web.Request, params: Any) -> web.Response:
+async def create_cluster(request: web.Request, params: dict[str, Any]) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     app_ctx: PrivateContext = request.app['session.context']
     if params['domain'] is None:
@@ -1226,10 +1233,10 @@ async def handle_kernel_creation_lifecycle(
         await root_ctx.registry.set_kernel_status(event.kernel_id, KernelStatus.PREPARING, event.reason)
     elif isinstance(event, KernelStartedEvent):
         # post_create_kernel() coroutines are waiting for the creation tracker events to be set.
-        if tracker := root_ctx.registry.kernel_creation_tracker.get(ck_id):
+        if (tracker := root_ctx.registry.kernel_creation_tracker.get(ck_id)) and not tracker.done():
             tracker.set_result(None)
     elif isinstance(event, KernelCancelledEvent):
-        if tracker := root_ctx.registry.kernel_creation_tracker.get(ck_id):
+        if (tracker := root_ctx.registry.kernel_creation_tracker.get(ck_id)) and not tracker.done():
             tracker.cancel()
 
 

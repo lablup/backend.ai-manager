@@ -12,12 +12,15 @@ import aioredis
 from ai.backend.common import redis
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
-    ResourceSlot, SessionTypes,
+    ResourceSlot,
+    SessionResult,
+    SessionTypes,
 )
 
 from ..models import (
     domains, groups, kernels,
     keypair_resource_policies,
+    session_dependencies,
     query_allowed_sgroups,
     DefaultForUnspecified,
 )
@@ -115,8 +118,35 @@ async def check_dependencies(
     sched_ctx: SchedulingContext,
     sess_ctx: PendingSession,
 ) -> PredicateResult:
-    # TODO: implement
-    return PredicateResult(True, 'bypassing because it is not implemented')
+    j = sa.join(
+        session_dependencies,
+        kernels,
+        session_dependencies.c.depends_on == kernels.c.session_id,
+    )
+    query = (
+        sa.select([
+            kernels.c.session_id,
+            kernels.c.session_name,
+            kernels.c.result,
+        ])
+        .select_from(j)
+        .where(session_dependencies.c.session_id == sess_ctx.session_id)
+    )
+    result = await db_conn.execute(query)
+    rows = result.fetchall()
+    pending_dependencies = []
+    for row in rows:
+        if row['result'] != SessionResult.SUCCESS:
+            pending_dependencies.append(row)
+    all_success = (not pending_dependencies)
+    if all_success:
+        return PredicateResult(True)
+    return PredicateResult(
+        False,
+        "Waiting dependency sessions to finish as success. ({})".format(
+            ", ".join(f"{row['session_name']} ({row['session_id']})" for row in pending_dependencies),
+        ),
+    )
 
 
 async def check_keypair_resource_limit(

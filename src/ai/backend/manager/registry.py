@@ -74,6 +74,7 @@ from ai.backend.common.types import (
     ClusterInfo,
     ClusterMode,
     ClusterSSHKeyPair,
+    DeviceId,
     HardwareMetadata,
     KernelEnqueueingConfig,
     KernelId,
@@ -107,6 +108,7 @@ from .types import SessionGetter, UserScope
 from .models import (
     agents, kernels,
     keypair_resource_policies,
+    session_dependencies,
     AgentStatus, KernelStatus,
     ImageRow,
     query_allowed_sgroups,
@@ -760,7 +762,7 @@ class AgentRegistry:
         self,
         session_creation_id: str,
         session_name: str,
-        access_key: str,
+        access_key: AccessKey,
         kernel_enqueue_configs: List[KernelEnqueueingConfig],
         scaling_group: Optional[str],
         session_type: SessionTypes,
@@ -773,6 +775,7 @@ class AgentRegistry:
         internal_data: dict = None,
         starts_at: datetime = None,
         agent_list: Sequence[str] = None,
+        dependency_sessions: Sequence[SessionId] = None,
     ) -> SessionId:
 
         session_id = SessionId(uuid.uuid4())
@@ -829,7 +832,6 @@ class AgentRegistry:
                 vfolder_mounts,
             )
 
-        ids = []
         is_multicontainer = cluster_size > 1
         if is_multicontainer:
             if len(kernel_enqueue_configs) == 1:
@@ -870,6 +872,47 @@ class AgentRegistry:
         )
         if hook_result.status != PASSED:
             raise RejectedByHook.from_hook_result(hook_result)
+
+        kernel_bulk_insert_query = kernels.insert().values({
+            'agent': sa.bindparam('mapped_agent'),
+            'id': sa.bindparam('kernel_id'),
+            'status': KernelStatus.PENDING,
+            'session_creation_id': session_creation_id,
+            'session_id': session_id,
+            'session_name': session_name,
+            'session_type': session_type,
+            'cluster_mode': cluster_mode.value,
+            'cluster_size': cluster_size,
+            'cluster_role': sa.bindparam('cluster_role'),
+            'cluster_idx': sa.bindparam('cluster_idx'),
+            'cluster_hostname': sa.bindparam('cluster_hostname'),
+            'scaling_group': scaling_group,
+            'domain_name': user_scope.domain_name,
+            'group_id': user_scope.group_id,
+            'user_uuid': user_scope.user_uuid,
+            'access_key': access_key,
+            'image': sa.bindparam('image'),
+            'registry': sa.bindparam('registry'),
+            'tag': session_tag,
+            'starts_at': starts_at,
+            'internal_data': internal_data,
+            'startup_command': sa.bindparam('startup_command'),
+            'occupied_slots': sa.bindparam('occupied_slots'),
+            'occupied_shares': {},
+            'resource_opts': sa.bindparam('resource_opts'),
+            'environ': sa.bindparam('environ'),
+            'mounts': [  # TODO: keep for legacy?
+                mount.name for mount in vfolder_mounts
+            ],
+            'vfolder_mounts': vfolder_mounts,
+            'bootstrap_script': sa.bindparam('bootstrap_script'),
+            'repl_in_port': 0,
+            'repl_out_port': 0,
+            'stdin_port': 0,
+            'stdout_port': 0,
+            'preopen_ports': sa.bindparam('preopen_ports'),
+        })
+        kernel_data = []
 
         for idx, kernel in enumerate(kernel_enqueue_configs):
             kernel_id: KernelId
@@ -992,62 +1035,64 @@ class AgentRegistry:
                 pass
             else:
                 mapped_agent = agent_list[idx]
-            try:
-                async def _enqueue() -> None:
-                    nonlocal ids
-                    async with self.db.begin() as conn:
-                        query = kernels.insert().values({
-                            'agent': mapped_agent,
-                            'id': kernel_id,
-                            'status': KernelStatus.PENDING,
-                            'session_creation_id': session_creation_id,
-                            'session_id': session_id,
-                            'session_name': session_name,
-                            'session_type': session_type,
-                            'cluster_mode': cluster_mode.value,
-                            'cluster_size': cluster_size,
-                            'cluster_role': kernel['cluster_role'],
-                            'cluster_idx': kernel['cluster_idx'],
-                            'cluster_hostname': f"{kernel['cluster_role']}{kernel['cluster_idx']}",
-                            'scaling_group': scaling_group,
-                            'domain_name': user_scope.domain_name,
-                            'group_id': user_scope.group_id,
-                            'user_uuid': user_scope.user_uuid,
-                            'access_key': access_key,
-                            'image': image_ref.canonical,
-                            'architecture': image_ref.architecture,
-                            'registry': image_ref.registry,
-                            'tag': session_tag,
-                            'starts_at': starts_at,
-                            'internal_data': internal_data,
-                            'startup_command': kernel.get('startup_command'),
-                            'occupied_slots': requested_slots,
-                            'occupied_shares': {},
-                            'resource_opts': resource_opts,
-                            'environ': [f'{k}={v}' for k, v in environ.items()],
-                            'mounts': [  # TODO: keep for legacy?
-                                mount.name for mount in vfolder_mounts
-                            ],
-                            'vfolder_mounts': vfolder_mounts,
-                            'bootstrap_script': kernel.get('bootstrap_script'),
-                            'repl_in_port': 0,
-                            'repl_out_port': 0,
-                            'stdin_port': 0,
-                            'stdout_port': 0,
-                            'preopen_ports': creation_config.get('preopen_ports', []),
-                        })
-                        await conn.execute(query)
-                        ids.append(kernel_id)
 
-                await execute_with_retry(_enqueue)
-            except DBAPIError as e:
-                if getattr(e.orig, "pgcode", None) == '23503':
-                    match = re.search(r'Key \(agent\)=\((?P<agent>[^)]+)\)', repr(e.orig))
-                    if match:
-                        raise InvalidAPIParameters(f"No such agent: {match.group('agent')}")
-                    else:
-                        raise InvalidAPIParameters("No such agent")
-                raise
+            kernel_data.append({
+                'mapped_agent': mapped_agent,
+                'kernel_id': kernel_id,
+                'cluster_role': kernel['cluster_role'],
+                'cluster_idx': kernel['cluster_idx'],
+                'cluster_hostname': f"{kernel['cluster_role']}{kernel['cluster_idx']}",
+                'image': image_ref.canonical,
+                'architecture': image_ref.architecture,
+                'registry': image_ref.registry,
+                'startup_command': kernel.get('startup_command'),
+                'occupied_slots': requested_slots,
+                'resource_opts': resource_opts,
+                'environ': [f'{k}={v}' for k, v in environ.items()],
+                'bootstrap_script': kernel.get('bootstrap_script'),
+                'preopen_ports': creation_config.get('preopen_ports', []),
+            })
+
+        try:
+            async def _enqueue() -> None:
+                async with self.db.begin() as conn:
+                    await conn.execute(kernel_bulk_insert_query, kernel_data)
+                    if dependency_sessions:
+                        matched_dependency_session_ids = []
+                        for dependency_id in dependency_sessions:
+                            match_info = await match_session_ids(
+                                dependency_id,
+                                access_key,
+                                db_connection=conn,
+                            )
+                            if match_info:
+                                matched_dependency_session_ids.append(match_info[0]['session_id'])
+                            else:
+                                raise InvalidAPIParameters(
+                                    "Unknown session ID or name in the dependency list",
+                                    extra_data={"session_ref": dependency_id},
+                                )
+                        dependency_bulk_insert_query = session_dependencies.insert().values(
+                            {
+                                'session_id': session_id,
+                                'depends_on': sa.bindparam('dependency_id'),
+                            },
+                        )
+                        await conn.execute(dependency_bulk_insert_query, [
+                            {'dependency_id': dependency_id}
+                            for dependency_id in matched_dependency_session_ids
+                        ])
+
+            await execute_with_retry(_enqueue)
+        except DBAPIError as e:
+            if getattr(e.orig, "pgcode", None) == '23503':
+                match = re.search(r'Key \(agent\)=\((?P<agent>[^)]+)\)', repr(e.orig))
+                if match:
+                    raise InvalidAPIParameters(f"No such agent: {match.group('agent')}")
+                else:
+                    raise InvalidAPIParameters("No such agent")
+            raise
+
         await self.hook_plugin_ctx.notify(
             'POST_ENQUEUE_SESSION',
             (session_id, session_name, access_key),
@@ -1213,7 +1258,7 @@ class AgentRegistry:
                 return_exceptions=True,
             )
             for agent_alloc_tx, result in zip((item[0] for item in per_agent_tasks), results):
-                if isinstance(result, aiotools.MultiError):
+                if isinstance(result, aiotools.TaskGroupError):
                     agent_errors.extend(result.__errors__)
                 elif isinstance(result, Exception):
                     # mark to be destroyed afterwards
@@ -1223,7 +1268,7 @@ class AgentRegistry:
                     "agent(s) raise errors during kernel creation",
                     errors=agent_errors,
                 )
-
+            await self.recalc_resource_usage()
         # If all is well, let's say the session is ready.
         await self.event_producer.produce_event(
             SessionStartedEvent(scheduled_session.session_id, session_creation_id),
@@ -1232,6 +1277,26 @@ class AgentRegistry:
             'POST_START_SESSION',
             (scheduled_session.session_id, scheduled_session.session_name, scheduled_session.access_key),
         )
+
+    def convert_resource_spec_to_resource_slot(
+        self,
+        allocations: Mapping[str, Mapping[SlotName, Mapping[DeviceId, str]]],
+    ) -> ResourceSlot:
+        """
+        Convert per-device resource spec allocations (agent-side format)
+        back into a resource slot (manager-side format).
+        """
+        slots = ResourceSlot()
+        for alloc_map in allocations.values():
+            for slot_name, allocation_by_device in alloc_map.items():
+                total_allocs: List[Decimal] = []
+                for allocation in allocation_by_device.values():
+                    if BinarySize.suffix_map.get(allocation[-1].lower()) is not None:
+                        total_allocs.append(Decimal(BinarySize.from_str(allocation)))
+                    else:
+                        total_allocs.append(Decimal(allocation))
+                slots[slot_name] = str(sum(total_allocs))
+        return slots
 
     async def _post_create_kernel(
         self,
@@ -1254,14 +1319,13 @@ class AgentRegistry:
 
             async def _finialize_running() -> None:
                 # Record kernel access information
-                async with self.db.begin() as conn:
-                    agent_host = URL(agent_alloc_ctx.agent_addr).host
-                    kernel_host = created_info.get('kernel_host', agent_host)
-                    service_ports = created_info.get('service_ports', [])
-                    # NOTE: created_info contains resource_spec
-                    query = (
-                        kernels.update()
-                        .values({
+                try:
+                    async with self.db.begin() as conn:
+                        agent_host = URL(agent_alloc_ctx.agent_addr).host
+                        kernel_host = created_info.get('kernel_host', agent_host)
+                        service_ports = created_info.get('service_ports', [])
+                        # NOTE: created_info contains resource_spec
+                        values = {
                             'scaling_group': agent_alloc_ctx.scaling_group,
                             'status': KernelStatus.RUNNING,
                             'container_id': created_info['container_id'],
@@ -1273,10 +1337,19 @@ class AgentRegistry:
                             'stdin_port': created_info['stdin_port'],
                             'stdout_port': created_info['stdout_port'],
                             'service_ports': service_ports,
-                        })
-                        .where(kernels.c.id == created_info['id']))
-                    await conn.execute(query)
-
+                        }
+                        actual_allocs = self.convert_resource_spec_to_resource_slot(
+                            created_info['resource_spec']['allocations'])
+                        values['occupied_slots'] = actual_allocs
+                        update_query = (
+                            kernels.update()
+                            .values(values)
+                            .where(kernels.c.id == created_info['id'])
+                        )
+                        await conn.execute(update_query)
+                except Exception:
+                    log.exception('error while executing _finalize_running')
+                    raise
             await execute_with_retry(_finialize_running)
         finally:
             try:
@@ -1381,18 +1454,17 @@ class AgentRegistry:
                 )
                 # Pass the return value of RPC calls to post-processing tasks
                 for created_info in created_infos:
-                    created_kernel_id = KernelId(uuid.UUID(created_info['id']))
-                    self._post_kernel_creation_infos[created_kernel_id].set_result(created_info)
+                    kernel_id = KernelId(uuid.UUID(created_info['id']))
+                    self._post_kernel_creation_infos[kernel_id].set_result(created_info)
                 await asyncio.gather(*post_tasks, return_exceptions=True)
             except Exception as e:
                 # The agent has already cancelled or issued the destruction lifecycle event
                 # for this batch of kernels.
                 for binding in items:
-                    start_future = self.kernel_creation_tracker[binding.kernel.kernel_id]
-                    start_future.cancel()
-                    creation_info_future = self._post_kernel_creation_infos[binding.kernel.kernel_id]
-                    creation_info_future.set_exception(e)
-                await asyncio.sleep(0)
+                    kernel_id = binding.kernel.kernel_id
+                    self.kernel_creation_tracker[kernel_id].cancel()
+                    self._post_kernel_creation_infos[kernel_id].set_exception(e)
+                await asyncio.gather(*post_tasks, return_exceptions=True)
                 raise
 
     async def create_cluster_ssh_keypair(self) -> ClusterSSHKeyPair:
