@@ -333,10 +333,10 @@ async def get_container_stats_for_period(request: web.Request, start_date, end_d
         last_stat = msgpack.unpackb(raw_stat)
         nfs = None
         if row['vfolder_mounts']:
-            # For >=22.03, return used host directory instead of volume host.
+            # For >=22.03, return used host directories instead of volume host, which is not so useful.
             nfs = list(set([str(mount.host_path) for mount in row['vfolder_mounts']]))
         elif row['mounts'] and len(row['mounts']) > 0 and isinstance(row['mounts'][0], list):
-            # Access legacy struacuture of `mounts`.
+            # For the kernel records that have legacy contents of `mounts`.
             nfs = list(set([mount[2] for mount in row['mounts']]))
         if row['terminated_at'] is None:
             used_time = used_days = None
