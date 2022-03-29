@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 
 from datetime import datetime
 import logging
@@ -9,14 +10,19 @@ from pathlib import Path
 
 import click
 import psycopg2
+import sqlalchemy as sa
 
+from ai.backend.common import redis as redis_api
 from ai.backend.common.cli import LazyGroup
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.validators import TimeDuration
 
+from ai.backend.manager.models import kernels
+from ai.backend.manager.models.utils import connect_database
+
 from ..config import load as load_config
 from ..models.keypair import generate_keypair as _gen_keypair
-from .context import CLIContext, init_logger
+from .context import CLIContext, init_logger, redis_ctx
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.cli'))
 
@@ -133,6 +139,34 @@ def clear_history(cli_ctx: CLIContext, retention, vacuum_full) -> None:
         duration = TimeDuration()
         expiration = today - duration.check_and_return(retention)
         expiration_date = expiration.strftime('%Y-%m-%d %H:%M:%S')
+
+        async def _clear_redis_history():
+            try:
+                async with connect_database(cli_ctx.local_config) as db:
+                    async with db.begin_readonly() as conn:
+                        query = (
+                            sa.select([kernels.c.id])
+                            .select_from(kernels)
+                            .where(
+                                (kernels.c.terminated_at < expiration),
+                            )
+                        )
+                        result = await conn.execute(query)
+                        target_kernels = [str(x['id']) for x in result.all()]
+                if len(target_kernels) > 0:
+                    async with redis_ctx(cli_ctx) as redis_objects:
+                        await redis_api.execute(
+                            redis_objects['stat'],
+                            lambda r: r.delete(*target_kernels),
+                        )
+                log.info(
+                    'Cleaned up {:,} database records older than {:}.',
+                    len(target_kernels), expiration_date,
+                )
+            except:
+                log.exception('Error while cleaning up redis history')
+
+        asyncio.run(_clear_redis_history())
 
         conn = psycopg2.connect(
             host=local_config['db']['addr'][0],
