@@ -243,11 +243,6 @@ def gql():
     '''Command set for GraphQL schema.'''
 
 
-@main.group(cls=LazyGroup, import_name='ai.backend.manager.cli.redis:cli')
-def redis():
-    '''Command set for Redis.'''
-
-
 @main.group(cls=LazyGroup, import_name='ai.backend.manager.cli.image:cli')
 def image():
     '''Command set for managing images.'''
