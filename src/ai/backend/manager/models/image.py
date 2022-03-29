@@ -231,14 +231,16 @@ class ImageRow(Base):
         cls,
         session: AsyncSession,
         ref: ImageRef,
-        strict=False,
-        load_aliases=False,
+        *,
+        strict_arch: bool = False,
+        load_aliases: bool = False,
     ) -> ImageRow:
         """
-        loads image row with given ImageRef object.
-        if `strict` is False and image table has only one row
+        Loads a image row that corresponds to the given ImageRef object.
+
+        When *strict_arch* is False and the image table has only one row
         with respect to requested canonical, this function will
-        return that row regardless of actual architecture.
+        return that row regardless of the image architecture.
         """
         query = sa.select(ImageRow).where(ImageRow.name == ref.canonical)
         if load_aliases:
@@ -249,7 +251,7 @@ class ImageRow(Base):
 
         if len(candidates) == 0:
             raise UnknownImageReference
-        if len(candidates) == 1 and not strict:
+        if len(candidates) == 1 and not strict_arch:
             return candidates[0]
         for row in candidates:
             log.debug('row: {}', row)
@@ -262,37 +264,47 @@ class ImageRow(Base):
         cls,
         session: AsyncConnection,
         reference_candidates: List[Union[ImageAlias, ImageRef]],
-        load_aliases=True,
-        strict=False,
+        *,
+        strict_arch: bool = False,
+        load_aliases: bool = True,
     ) -> ImageRow:
-        """Tries to resolve matching row of image table by iterating through reference_candidates.
-        If type of candidate element is `str`, it'll be considered only as an alias to image.
+        """
+        Resolves a matching row in the image table from multiple image references and/or aliases.
+
         Passing image canonical directly to resolve image data is no longer possible.
         You need to declare ImageRef object explicitly if you're using string
         as an image canonical. For example:
-        ```
-        await resolve_image_row(conn, [
-            ImageRef(params['image'], params['image'],
-            params['architecture']),
-        ])
-        ```
+
+        .. code-block::
+
+           await ImageRow.resolve(
+               conn,
+               [
+                   ImageRef(
+                       params['image'],
+                       params['image'],
+                       params['architecture'],
+                   ),
+               ],
+           )
+
         This kind of pattern is considered as 'good use case',
         since accepting multiple reference candidates is intended to make
         user explicitly declare that the code will first try to consider string
         as an image canonical and try to load image, and changes to alias if it fails.
-        if `strict` is False and image table has only one row
-        with respect to requested canonical, this function will
-        return that row regardless of actual architecture.
-        """
 
-        err_msg = 'Unkwon image canonical or alias'
+        When *strict_arch* is False and the image table has only one row
+        with respect to requested canonical, this function will
+        return that row regardless of the image architecture.
+        """
+        err_msg = 'Unkown image canonical or alias'
         for reference in reference_candidates:
             resolver_func: Any = None
             if isinstance(reference, str):
                 resolver_func = cls.from_alias
                 err_msg += f', alias name: {reference}'
             elif isinstance(reference, ImageRef):
-                resolver_func = functools.partial(cls.from_image_ref, strict=strict)
+                resolver_func = functools.partial(cls.from_image_ref, strict_arch=strict_arch)
                 err_msg += f', reference canonical: {reference.canonical}'
             try:
                 if (row := await resolver_func(session, reference, load_aliases=load_aliases)):
