@@ -5,7 +5,7 @@ import contextlib
 import attr
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, AsyncIterator, TypedDict
+from typing import TYPE_CHECKING, AsyncIterator
 
 from ai.backend.common import redis
 from ai.backend.common.config import redis_config_iv
@@ -20,13 +20,14 @@ if TYPE_CHECKING:
     from ..config import LocalConfig
 
 
-@attr.s(auto_attribs=True, frozen=True)
+@attr.s(auto_attribs=True, frozen=True, slots=True)
 class CLIContext:
     logger: Logger
     local_config: LocalConfig
 
 
-class RedisObjects(TypedDict):
+@attr.s(auto_attribs=True, frozen=True, slots=True)
+class RedisConnectionSet:
     live: RedisConnectionInfo
     stat: RedisConnectionInfo
     image: RedisConnectionInfo
@@ -52,7 +53,7 @@ def init_logger(local_config: LocalConfig) -> Logger:
 
 
 @contextlib.asynccontextmanager
-async def redis_ctx(cli_ctx: CLIContext) -> AsyncIterator[RedisObjects]:
+async def redis_ctx(cli_ctx: CLIContext) -> AsyncIterator[RedisConnectionSet]:
     local_config = cli_ctx.local_config
     shared_config = SharedConfig(
         local_config['etcd']['addr'],
@@ -71,12 +72,12 @@ async def redis_ctx(cli_ctx: CLIContext) -> AsyncIterator[RedisObjects]:
     redis_stream = redis.get_redis_object(
         shared_config.data['redis'], db=REDIS_STREAM_DB,
     )
-    yield {
-        'live': redis_live,
-        'stat': redis_stat,
-        'image': redis_image,
-        'stream': redis_stream,
-    }
+    yield RedisConnectionSet(
+        live=redis_live,
+        stat=redis_stat,
+        image=redis_image,
+        stream=redis_stream,
+    )
     await redis_stream.close()
     await redis_image.close()
     await redis_stat.close()

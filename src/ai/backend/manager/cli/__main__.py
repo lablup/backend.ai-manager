@@ -1,18 +1,21 @@
 from __future__ import annotations
-import asyncio
 
-from datetime import datetime
+import asyncio
 import logging
-from setproctitle import setproctitle
 import subprocess
 import sys
+from datetime import datetime
+from functools import partial
 from pathlib import Path
 
+import aioredis, aioredis.client
 import click
 import psycopg2
 import sqlalchemy as sa
+from more_itertools import chunked
+from setproctitle import setproctitle
 
-from ai.backend.common import redis as redis_api
+from ai.backend.common import redis as redis_helper
 from ai.backend.common.cli import LazyGroup
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.validators import TimeDuration
@@ -153,18 +156,34 @@ def clear_history(cli_ctx: CLIContext, retention, vacuum_full) -> None:
                         )
                         result = await conn.execute(query)
                         target_kernels = [str(x['id']) for x in result.all()]
+
+                delete_count = 0
                 if len(target_kernels) > 0:
-                    async with redis_ctx(cli_ctx) as redis_objects:
-                        await redis_api.execute(
-                            redis_objects['stat'],
-                            lambda r: r.delete(*target_kernels),
-                        )
+
+                    def _build_pipe(
+                        r: aioredis.Redis,
+                        kernel_ids: list[str],
+                    ) -> aioredis.client.Pipeline:
+                        pipe = r.pipeline(transaction=False)
+                        pipe.delete(*kernel_ids)
+                        return pipe
+
+                    async with redis_ctx(cli_ctx) as redis_conn_set:
+                        # Apply chunking to avoid excessive length of command params
+                        # and indefinite blocking of the Redis server.
+                        for kernel_ids in chunked(target_kernels, 32):
+                            results = await redis_helper.execute(
+                                redis_conn_set.stat,
+                                partial(_build_pipe, kernel_ids=kernel_ids),
+                            )
+                        # Each DEL command returns the number of keys deleted.
+                        delete_count += sum(results)
                 log.info(
-                    'Cleaned up {:,} database records older than {:}.',
-                    len(target_kernels), expiration_date,
+                    "Cleaned up {:,} redis statistics records older than {:}.",
+                    delete_count, expiration_date,
                 )
             except:
-                log.exception('Error while cleaning up redis history')
+                log.exception("Unexpected error while cleaning up redis history")
 
         asyncio.run(_clear_redis_history())
 
