@@ -1,1 +1,0 @@
-Recalculate `kernels.occupied_slots` column with actually allocated resource slots value.
