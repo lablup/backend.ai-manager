@@ -16,6 +16,16 @@ Changes
 
 <!-- towncrier release notes start -->
 
+21.03.32 (2022-03-29)
+---------------------
+
+### Features
+* Add `POST_AUTHORIZE` notify hook to support plugins that needs to do some operations just after the authorization step. ([#552](https://github.com/lablup/backend.ai-manager/issues/552))
+
+### Fixes
+* Fix a long-standing critical bug that leaked kernel creation coroutine tasks and made some sessions stuck at PREPARING ([#558](https://github.com/lablup/backend.ai-manager/issues/558))
+
+
 21.03.31 (2022-03-07)
 ---------------------
 
