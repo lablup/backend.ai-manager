@@ -1807,15 +1807,22 @@ class AgentRegistry:
                             destroyed_kernels.append(kernel)
 
                         async def _update() -> None:
+                            kern_stat = await redis.execute(
+                                self.redis_stat,
+                                lambda r: r.get(str(kernel['id'])),
+                            )
                             async with self.db.begin() as conn:
+                                values = {
+                                    'status': KernelStatus.TERMINATED,
+                                    'status_info': reason,
+                                    'status_changed': now,
+                                    'terminated_at': now,
+                                }
+                                if kern_stat:
+                                    values['last_stat'] = msgpack.unpackb(kern_stat)
                                 await conn.execute(
                                     sa.update(kernels)
-                                    .values({
-                                        'status': KernelStatus.TERMINATED,
-                                        'status_info': reason,
-                                        'status_changed': now,
-                                        'terminated_at': now,
-                                    })
+                                    .values(values)
                                     .where(kernels.c.id == kernel['id']),
                                 )
 
@@ -2612,6 +2619,11 @@ class AgentRegistry:
             except asyncio.CancelledError:
                 pass
 
+        kern_stat = await redis.execute(
+            self.redis_stat,
+            lambda r: r.get(str(kernel_id)),
+        )
+
         async def _update_kernel_status() -> Row | None:
             async with self.db.begin() as conn:
                 # Check the current status.
@@ -2643,19 +2655,22 @@ class AgentRegistry:
                 # Change the status to TERMINATED.
                 # (we don't delete the row for later logging and billing)
                 now = datetime.now(tzutc())
+                values = {
+                    'status': KernelStatus.TERMINATED,
+                    'status_info': reason,
+                    'status_changed': now,
+                    'status_data': sql_json_merge(
+                        kernels.c.status_data,
+                        ("kernel",),
+                        {"exit_code": exit_code},
+                    ),
+                    'terminated_at': now,
+                }
+                if kern_stat:
+                    values['last_stat'] = msgpack.unpackb(kern_stat)
                 update_query = (
                     sa.update(kernels)
-                    .values({
-                        'status': KernelStatus.TERMINATED,
-                        'status_info': reason,
-                        'status_changed': now,
-                        'status_data': sql_json_merge(
-                            kernels.c.status_data,
-                            ("kernel",),
-                            {"exit_code": exit_code},
-                        ),
-                        'terminated_at': now,
-                    })
+                    .values(values)
                     .where(kernels.c.id == kernel_id)
                 )
                 await conn.execute(update_query)

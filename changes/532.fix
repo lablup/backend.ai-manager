@@ -1,0 +1,1 @@
+Use Redis to persistently store and update per-kernel statistics while keeping the `kernels.last_stat` db column as a backup, with a debug option to periodically sync them

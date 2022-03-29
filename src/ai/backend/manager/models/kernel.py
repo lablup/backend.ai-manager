@@ -21,6 +21,8 @@ from typing import (
 from uuid import UUID
 import uuid
 
+import aioredis
+import aioredis.client
 from dateutil.parser import parse as dtparse
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -35,11 +37,11 @@ from ai.backend.common.types import (
     BinarySize,
     ClusterMode,
     KernelId,
+    RedisConnectionInfo,
     SessionId,
     SessionTypes,
     SessionResult,
     SlotName,
-    RedisConnectionInfo,
     ResourceSlot,
     VFolderMount,
 )
@@ -69,6 +71,7 @@ if TYPE_CHECKING:
 __all__ = (
     'kernels',
     'session_dependencies',
+    'KernelStatistics',
     'KernelStatus',
     'ComputeContainer',
     'ComputeSession',
@@ -503,6 +506,30 @@ async def get_all_kernels(
     return [*session_id_to_rowsets.values()]
 
 
+class KernelStatistics:
+    @classmethod
+    async def batch_load_by_kernel(
+        cls,
+        ctx: GraphQueryContext,
+        session_ids: Sequence[SessionId],
+    ) -> Sequence[Optional[Mapping[str, Any]]]:
+
+        def _build_pipeline(redis: aioredis.Redis) -> aioredis.client.Pipeline:
+            pipe = redis.pipeline()
+            for sess_id in session_ids:
+                pipe.get(str(sess_id))
+            return pipe
+
+        stats = []
+        results = await redis.execute(ctx.redis_stat, _build_pipeline)
+        for result in results:
+            if result is not None:
+                stats.append(msgpack.unpackb(result))
+            else:
+                stats.append(None)
+        return stats
+
+
 class ComputeContainer(graphene.ObjectType):
     class Meta:
         interfaces = (Item, )
@@ -579,8 +606,7 @@ class ComputeContainer(graphene.ObjectType):
             'resource_opts': row['resource_opts'],
 
             # statistics
-            # live_stat is resolved by Graphene
-            'last_stat': row['last_stat'],
+            # last_stat is resolved by Graphene (resolve_last_stat method)
         }
 
     @classmethod
@@ -590,20 +616,16 @@ class ComputeContainer(graphene.ObjectType):
         props = cls.parse_row(ctx, row)
         return cls(**props)
 
+    # last_stat also fetches data from Redis, meaning that
+    # both live_stat and last_stat will reference same data from same source
+    # we can leave last_stat value for legacy support, as an alias to last_stat
     async def resolve_live_stat(self, info: graphene.ResolveInfo) -> Optional[Mapping[str, Any]]:
-        if not hasattr(self, 'status'):
-            return None
         graph_ctx: GraphQueryContext = info.context
-        if KernelStatus[self.status] in LIVE_STATUS:
-            raw_live_stat = await redis.execute(
-                graph_ctx.redis_stat,
-                lambda r: r.get(str(self.id)))
-            if raw_live_stat is not None:
-                live_stat = msgpack.unpackb(raw_live_stat)
-                return live_stat
-            return None
-        else:
-            return self.last_stat
+        loader = graph_ctx.dataloader_manager.get_loader(graph_ctx, 'KernelStatistics.by_kernel')
+        return await loader.load(self.id)
+
+    async def resolve_last_stat(self, info: graphene.ResolveInfo) -> Optional[Mapping[str, Any]]:
+        return await self.resolve_live_stat(info)
 
     _queryfilter_fieldspec = {
         "image": ("image", None),
@@ -1184,27 +1206,16 @@ class LegacyComputeSession(graphene.ObjectType):
     io_max_scratch_size = BigInt()
     io_cur_scratch_size = BigInt()
 
-    @classmethod
-    async def _resolve_live_stat(
-        cls,
-        redis_stat: RedisConnectionInfo,
-        kernel_id: str,
-    ) -> Optional[Mapping[str, Any]]:
-        cstat = await redis.execute(
-            redis_stat,
-            lambda r: r.get(kernel_id))
-        if cstat is not None:
-            cstat = msgpack.unpackb(cstat)
-        return cstat
-
+    # last_stat also fetches data from Redis, meaning that
+    # both live_stat and last_stat will reference same data from same source
+    # we can leave last_stat value for legacy support, as an alias to last_stat
     async def resolve_live_stat(self, info: graphene.ResolveInfo) -> Optional[Mapping[str, Any]]:
-        if not hasattr(self, 'status'):
-            return None
         graph_ctx: GraphQueryContext = info.context
-        if KernelStatus[self.status] not in LIVE_STATUS:
-            return self.last_stat
-        else:
-            return await type(self)._resolve_live_stat(graph_ctx.redis_stat, str(self.id))
+        loader = graph_ctx.dataloader_manager.get_loader(graph_ctx, 'KernelStatistics.by_kernel')
+        return await loader.load(self.id)
+
+    async def resolve_last_stat(self, info: graphene.ResolveInfo) -> Optional[Mapping[str, Any]]:
+        return await self.resolve_live_stat(info)
 
     async def _resolve_legacy_metric(
         self,
@@ -1227,7 +1238,8 @@ class LegacyComputeSession(graphene.ObjectType):
                 return convert_type(0)
             return convert_type(value)
         else:
-            kstat = await type(self)._resolve_live_stat(graph_ctx.redis_stat, str(self.id))
+            loader = graph_ctx.dataloader_manager.get_loader(graph_ctx, 'KernelStatistics.by_kernel')
+            kstat = await loader.load(self.id)
             if kstat is None:
                 return convert_type(0)
             metric = kstat.get(metric_key)
@@ -1312,7 +1324,7 @@ class LegacyComputeSession(graphene.ObjectType):
             'agent': row['agent'] if not hide_agents else None,
             'container_id': row['container_id'] if not hide_agents else None,
             # live_stat is resolved by Graphene
-            'last_stat': row['last_stat'],
+            # last_stat is resolved by Graphene
             'user_email': row['email'],
             # Legacy fields
             # NOTE: currently graphene always uses resolve methods!
