@@ -106,7 +106,7 @@ from .exceptions import MultiAgentError
 from .defs import DEFAULT_ROLE, INTRINSIC_SLOTS
 from .types import SessionGetter, UserScope
 from .models import (
-    agents, kernels, keypairs,
+    agents, kernels,
     keypair_resource_policies,
     session_dependencies,
     AgentStatus, KernelStatus,
@@ -1268,7 +1268,6 @@ class AgentRegistry:
                     "agent(s) raise errors during kernel creation",
                     errors=agent_errors,
                 )
-            await self.recalc_resource_usage()
         # If all is well, let's say the session is ready.
         await self.event_producer.produce_event(
             SessionStartedEvent(scheduled_session.session_id, session_creation_id),
@@ -1581,7 +1580,7 @@ class AgentRegistry:
         ) as rpc:
             await rpc.call.update_scaling_group(scaling_group)
 
-    async def recalc_resource_usage(self) -> None:
+    async def recalc_resource_usage(self, do_fullscan: bool = False) -> None:
         concurrency_used_per_key: MutableMapping[str, int] = defaultdict(lambda: 0)
         occupied_slots_per_agent: MutableMapping[str, ResourceSlot] = \
             defaultdict(lambda: ResourceSlot({'cpu': 0, 'mem': 0}))
@@ -1604,31 +1603,6 @@ class AgentRegistry:
                 )
                 async for row in (await conn.stream(query)):
                     concurrency_used_per_key[row.access_key] += 1
-
-                if len(concurrency_used_per_key) > 0:
-                    # Update concurrency_used for keypairs with running containers.
-                    for ak, used in concurrency_used_per_key.items():
-                        query = (
-                            sa.update(keypairs)
-                            .values(concurrency_used=used)
-                            .where(keypairs.c.access_key == ak)
-                        )
-                        await conn.execute(query)
-                    # Update all other keypairs to have concurrency_used = 0.
-                    query = (
-                        sa.update(keypairs)
-                        .values(concurrency_used=0)
-                        .where(keypairs.c.concurrency_used != 0)
-                        .where(sa.not_(keypairs.c.access_key.in_(concurrency_used_per_key.keys())))
-                    )
-                    await conn.execute(query)
-                else:
-                    query = (
-                        sa.update(keypairs)
-                        .values(concurrency_used=0)
-                        .where(keypairs.c.concurrency_used != 0)
-                    )
-                    await conn.execute(query)
 
                 if len(occupied_slots_per_agent) > 0:
                     # Update occupied_slots for agents with running containers.
@@ -1656,6 +1630,35 @@ class AgentRegistry:
                     await conn.execute(query)
 
         await execute_with_retry(_recalc)
+
+        # Update keypair resource usage for keypairs with running containers.
+        kp_key = 'keypair.concurrency_used'
+
+        async def _update(r: aioredis.Redis):
+            updates: Mapping[str, int] = \
+                {f'{kp_key}.{k}': concurrency_used_per_key[k] for k in concurrency_used_per_key}
+            if updates:
+                await r.mset(updates)
+
+        async def _update_by_fullscan(r: aioredis.Redis):
+            updates: Dict[str, int] = {}
+            keys = await r.keys(f'{kp_key}.*')
+            for ak in keys:
+                usage = concurrency_used_per_key.get(ak, 0)
+                updates[f'{kp_key}.{ak}'] = usage
+            if updates:
+                await r.mset(updates)
+
+        if do_fullscan:
+            await redis.execute(
+                self.redis_stat,
+                _update_by_fullscan,
+            )
+        else:
+            await redis.execute(
+                self.redis_stat,
+                _update,
+            )
 
     async def destroy_session_lowlevel(
         self,
@@ -1806,27 +1809,35 @@ class AgentRegistry:
                             destroyed_kernels.append(kernel)
 
                         async def _update() -> None:
+                            kern_stat = await redis.execute(
+                                self.redis_stat,
+                                lambda r: r.get(str(kernel['id'])),
+                            )
                             async with self.db.begin() as conn:
-                                if kernel['cluster_role'] == DEFAULT_ROLE:
-                                    # The main session is terminated;
-                                    # decrement the user's concurrency counter
-                                    await conn.execute(
-                                        sa.update(keypairs)
-                                        .values({
-                                            'concurrency_used': keypairs.c.concurrency_used - 1,
-                                        })
-                                        .where(keypairs.c.access_key == kernel['access_key']),
-                                    )
+                                values = {
+                                    'status': KernelStatus.TERMINATED,
+                                    'status_info': reason,
+                                    'status_changed': now,
+                                    'terminated_at': now,
+                                }
+                                if kern_stat:
+                                    values['last_stat'] = msgpack.unpackb(kern_stat)
                                 await conn.execute(
                                     sa.update(kernels)
-                                    .values({
-                                        'status': KernelStatus.TERMINATED,
-                                        'status_info': reason,
-                                        'status_changed': now,
-                                        'terminated_at': now,
-                                    })
+                                    .values(values)
                                     .where(kernels.c.id == kernel['id']),
                                 )
+
+                        if kernel['cluster_role'] == DEFAULT_ROLE:
+                            # The main session is terminated;
+                            # decrement the user's concurrency counter
+                            await redis.execute(
+                                self.redis_stat,
+                                lambda r: r.incrby(
+                                    f"keypair.concurrency_used.{kernel['access_key']}",
+                                    -1,
+                                ),
+                            )
 
                         await execute_with_retry(_update)
                         await self.event_producer.produce_event(
@@ -1836,16 +1847,6 @@ class AgentRegistry:
 
                         async def _update() -> None:
                             async with self.db.begin() as conn:
-                                if kernel['cluster_role'] == DEFAULT_ROLE:
-                                    # The main session is terminated;
-                                    # decrement the user's concurrency counter
-                                    await conn.execute(
-                                        sa.update(keypairs)
-                                        .values({
-                                            'concurrency_used': keypairs.c.concurrency_used - 1,
-                                        })
-                                        .where(keypairs.c.access_key == kernel['access_key']),
-                                    )
                                 await conn.execute(
                                     sa.update(kernels)
                                     .values({
@@ -1859,6 +1860,17 @@ class AgentRegistry:
                                     })
                                     .where(kernels.c.id == kernel['id']),
                                 )
+
+                        if kernel['cluster_role'] == DEFAULT_ROLE:
+                            # The main session is terminated;
+                            # decrement the user's concurrency counter
+                            await redis.execute(
+                                self.redis_stat,
+                                lambda r: r.incrby(
+                                    f"keypair.concurrency_used.{kernel['access_key']}",
+                                    -1,
+                                ),
+                            )
 
                         await execute_with_retry(_update)
                         await self.event_producer.produce_event(
@@ -2609,6 +2621,11 @@ class AgentRegistry:
             except asyncio.CancelledError:
                 pass
 
+        kern_stat = await redis.execute(
+            self.redis_stat,
+            lambda r: r.get(str(kernel_id)),
+        )
+
         async def _update_kernel_status() -> Row | None:
             async with self.db.begin() as conn:
                 # Check the current status.
@@ -2640,19 +2657,22 @@ class AgentRegistry:
                 # Change the status to TERMINATED.
                 # (we don't delete the row for later logging and billing)
                 now = datetime.now(tzutc())
+                values = {
+                    'status': KernelStatus.TERMINATED,
+                    'status_info': reason,
+                    'status_changed': now,
+                    'status_data': sql_json_merge(
+                        kernels.c.status_data,
+                        ("kernel",),
+                        {"exit_code": exit_code},
+                    ),
+                    'terminated_at': now,
+                }
+                if kern_stat:
+                    values['last_stat'] = msgpack.unpackb(kern_stat)
                 update_query = (
                     sa.update(kernels)
-                    .values({
-                        'status': KernelStatus.TERMINATED,
-                        'status_info': reason,
-                        'status_changed': now,
-                        'status_data': sql_json_merge(
-                            kernels.c.status_data,
-                            ("kernel",),
-                            {"exit_code": exit_code},
-                        ),
-                        'terminated_at': now,
-                    })
+                    .values(values)
                     .where(kernels.c.id == kernel_id)
                 )
                 await conn.execute(update_query)
@@ -2665,7 +2685,7 @@ class AgentRegistry:
         async def _recalc() -> None:
             assert kernel is not None
             async with self.db.begin() as conn:
-                await recalc_concurrency_used(conn, kernel['access_key'])
+                await recalc_concurrency_used(conn, self.redis_stat, kernel['access_key'])
                 await recalc_agent_resource_occupancy(conn, kernel['agent'])
 
         await execute_with_retry(_recalc)
