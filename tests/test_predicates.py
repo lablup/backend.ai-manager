@@ -139,9 +139,9 @@ async def test_allowed_session_types_check(mock_query):
     mock_query.return_value = [
         {
             'name': 'a',
-            'scheduler_opts': {
+            'scheduler_opts': ScalingGroupOpts.from_json({
                 'allowed_session_types': ['batch'],
-            },
+            }),
         },
     ]
 
