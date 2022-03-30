@@ -45,6 +45,7 @@ from ..defs import DEFAULT_ROLE
 from ..models import (
     kernels, keypairs,
 )
+from ..models.scaling_group import ScalingGroupOpts
 from ..registry import AgentRegistry
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.scheduler'))
@@ -396,11 +397,11 @@ class AbstractScheduler(metaclass=ABCMeta):
     ``schedule()`` method is a pure function.
     """
 
-    sgroup_opts: Mapping[str, Any]
-    config: Mapping[str, Any]
+    sgroup_opts: ScalingGroupOpts  # sgroup-specific config
+    config: Mapping[str, Any]   # scheduler-specific config
     config_iv: t.Dict
 
-    def __init__(self, sgroup_opts: Mapping[str, Any], config: Mapping[str, Any]) -> None:
+    def __init__(self, sgroup_opts: ScalingGroupOpts, config: Mapping[str, Any]) -> None:
         self.sgroup_opts = sgroup_opts
         self.config = self.config_iv.check(config)
 

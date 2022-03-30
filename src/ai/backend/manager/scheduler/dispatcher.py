@@ -61,6 +61,7 @@ from ..models import (
     AgentStatus, KernelStatus,
     AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
 )
+from ..models.scaling_group import ScalingGroupOpts
 from ..models.utils import (
     ExtendedAsyncSAEngine as SAEngine,
     execute_with_retry,
@@ -104,14 +105,17 @@ _log_args: ContextVar[Tuple[Any, ...]] = ContextVar('_log_args')
 _key_schedule_prep_tasks: Final = "scheduler.preptasks"
 
 
-def load_scheduler(name: str, scheduler_opts: dict[str, Any]) -> AbstractScheduler:
+def load_scheduler(
+    name: str,
+    sgroup_opts: ScalingGroupOpts,
+    scheduler_config: dict[str, Any],
+) -> AbstractScheduler:
     entry_prefix = 'backendai_scheduler_v10'
     for entrypoint in pkg_resources.iter_entry_points(entry_prefix):
         if entrypoint.name == name:
             log.debug('loading scheduler plugin "{}" from {}', name, entrypoint.module_name)
             scheduler_cls = entrypoint.load()
-            scheduler_specific_config = scheduler_opts.pop(name, {})
-            return scheduler_cls(scheduler_opts, scheduler_specific_config)
+            return scheduler_cls(sgroup_opts, scheduler_config)
     raise ImportError('Cannot load the scheduler plugin', name)
 
 
@@ -255,12 +259,12 @@ class SchedulerDispatcher(aobject):
         result = await db_conn.execute(query)
         row = result.first()
         scheduler_name = row['scheduler']
-        local_scheduler_opts = row['scheduler_opts']
+        sgroup_opts: ScalingGroupOpts = row['scheduler_opts']
         global_scheduler_opts = {}
         if self.shared_config['plugins']['scheduler']:
             global_scheduler_opts = self.shared_config['plugins']['scheduler'][scheduler_name]
-        scheduler_opts = {**global_scheduler_opts, **local_scheduler_opts}
-        return load_scheduler(scheduler_name, scheduler_opts)
+        scheduler_specific_config = {**global_scheduler_opts, **sgroup_opts.config}
+        return load_scheduler(scheduler_name, sgroup_opts, scheduler_specific_config)
 
     async def _schedule_in_sgroup(
         self,
@@ -875,7 +879,7 @@ async def _list_pending_sessions(
     scheduler: AbstractScheduler,
     sgroup_name: str,
 ) -> tuple[list[Row], list[Row]]:
-    pending_timeout: timedelta = scheduler.sgroup_opts['pending_timeout']
+    pending_timeout: timedelta = scheduler.sgroup_opts.pending_timeout
     query = (
         PendingSession.base_query()
         .where(
