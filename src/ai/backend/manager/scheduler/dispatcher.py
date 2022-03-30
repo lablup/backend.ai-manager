@@ -269,11 +269,12 @@ class SchedulerDispatcher(aobject):
     ) -> None:
         async with self.db.begin_readonly() as kernel_db_conn:
             scheduler = await self._load_scheduler(kernel_db_conn, sgroup_name)
-            pending_sessions, cancelled_sessions = \
+            pending_session_rows, cancelled_session_rows = \
                 await _list_pending_sessions(kernel_db_conn, scheduler, sgroup_name)
+            pending_sessions = PendingSession.from_rows(pending_session_rows)
             existing_sessions = await _list_existing_sessions(kernel_db_conn, sgroup_name)
 
-        if cancelled_sessions:
+        if cancelled_session_rows:
             now = datetime.now(tzutc())
 
             async def _apply_cancellation():
@@ -284,7 +285,7 @@ class SchedulerDispatcher(aobject):
                         'status_info': "pending-timeout",
                         'terminated_at': now,
                     }).where(kernels.c.session_id.in_([
-                        item['session_id'] for item in cancelled_sessions
+                        item['session_id'] for item in cancelled_session_rows
                     ]))
                     await db_conn.execute(query)
 
@@ -292,7 +293,7 @@ class SchedulerDispatcher(aobject):
 
         log.debug(
             "running scheduler (sgroup:{}, pending:{}, existing:{}, cancelled:{})",
-            sgroup_name, len(pending_sessions), len(existing_sessions), len(cancelled_sessions),
+            sgroup_name, len(pending_sessions), len(existing_sessions), len(cancelled_session_rows),
         )
         zero = ResourceSlot()
         num_scheduled = 0
@@ -873,8 +874,8 @@ async def _list_pending_sessions(
     db_conn: SAConnection,
     scheduler: AbstractScheduler,
     sgroup_name: str,
-) -> tuple[list[PendingSession], list[Row]]:
-    pending_timeout = timedelta(seconds=scheduler.sgroup_opts['pending_timeout'])
+) -> tuple[list[Row], list[Row]]:
+    pending_timeout: timedelta = scheduler.sgroup_opts['pending_timeout']
     query = (
         PendingSession.base_query()
         .where(
@@ -890,11 +891,11 @@ async def _list_pending_sessions(
     now = datetime.now(tzutc())
     for row in rows:
         elapsed_pending_time = now - row['created_at']
-        if pending_timeout > 0 and elapsed_pending_time >= pending_timeout:
+        if pending_timeout.total_seconds() > 0 and elapsed_pending_time >= pending_timeout:
             cancelled_rows.append(row)
         else:
             candidate_rows.append(row)
-    return PendingSession.from_rows(candidate_rows), cancelled_rows
+    return candidate_rows, cancelled_rows
 
 
 async def _list_existing_sessions(

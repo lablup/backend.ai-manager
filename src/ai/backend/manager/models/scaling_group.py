@@ -73,7 +73,7 @@ scaling_groups = sa.Table(
             t.Key('allowed_session_types', default=['interactive', 'batch']):
                 t.List(tx.Enum(SessionTypes), min_length=1),
             t.Key('pending_timeout', default=0):
-                t.ToInt(gte=0),
+                tx.TimeDuration(allow_negative=False),
             # Each scheduler impl may have a additional sub-dict with their name as the key,
             # which is validated by scheduler's config_iv.
         }).allow_extra('*'),

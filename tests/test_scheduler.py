@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from decimal import Decimal
-from dateutil.parser import parse as dtparse
 import secrets
+from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import (
     Any,
     Mapping,
@@ -15,6 +15,8 @@ from pprint import pprint
 
 import attr
 import pytest
+import trafaret as t
+from dateutil.parser import parse as dtparse
 
 from ai.backend.common.docker import ImageRef
 from ai.backend.common.types import (
@@ -30,7 +32,11 @@ from ai.backend.manager.scheduler.types import (
     AgentContext,
 )
 from ai.backend.manager.registry import AgentRegistry
-from ai.backend.manager.scheduler.dispatcher import load_scheduler, SchedulerDispatcher
+from ai.backend.manager.scheduler.dispatcher import (
+    load_scheduler,
+    SchedulerDispatcher,
+    _list_pending_sessions,
+)
 from ai.backend.manager.scheduler.fifo import FIFOSlotScheduler, LIFOSlotScheduler
 from ai.backend.manager.scheduler.drf import DRFScheduler
 from ai.backend.manager.scheduler.mof import MOFScheduler
@@ -42,6 +48,34 @@ def test_load_intrinsic():
     assert isinstance(load_scheduler('lifo', {}), LIFOSlotScheduler)
     assert isinstance(load_scheduler('drf', {}), DRFScheduler)
     assert isinstance(load_scheduler('mof', {}), MOFScheduler)
+
+
+def test_scheduler_configs():
+    example_scheduler_opts = {
+        'allowed_session_types': SessionTypes.BATCH,      # already processed by column trafaret
+        'pending_timeout': timedelta(seconds=86400 * 2),  # already processed by column trafaret
+        'extra_opts': True,
+        'fifo': {
+            'extra_config': None,
+            'num_retries_to_skip': 5,
+        },
+    }
+
+    scheduler = load_scheduler('fifo', example_scheduler_opts.copy())
+    assert isinstance(scheduler, FIFOSlotScheduler)
+    assert scheduler.sgroup_opts == {
+        'allowed_session_types': SessionTypes.BATCH,
+        'pending_timeout': timedelta(days=2),
+        'extra_opts': True,
+    }
+    assert scheduler.config == {
+        'extra_config': None,
+        'num_retries_to_skip': 5,
+    }
+
+    with pytest.raises(t.DataError):
+        example_scheduler_opts['fifo']['num_retries_to_skip'] = -1  # invalid value
+        scheduler = load_scheduler('fifo', example_scheduler_opts.copy())
 
 
 example_group_id = uuid4()
@@ -882,7 +916,11 @@ def test_lifo_scheduler_favor_cpu_for_requests_without_accelerators(
             assert agent_id == AgentId('i-cpu')
 
 
-def test_drf_scheduler(example_agents, example_pending_sessions, example_existing_sessions):
+def test_drf_scheduler(
+    example_agents,
+    example_pending_sessions,
+    example_existing_sessions,
+):
     scheduler = DRFScheduler({}, {})
     picked_session_id = scheduler.pick_session(
         example_total_capacity,
@@ -899,7 +937,11 @@ def test_drf_scheduler(example_agents, example_pending_sessions, example_existin
     assert agent_id == 'i-001'
 
 
-def test_mof_scheduler_first_assign(example_agents, example_pending_sessions, example_existing_sessions):
+def test_mof_scheduler_first_assign(
+    example_agents,
+    example_pending_sessions,
+    example_existing_sessions,
+):
     scheduler = MOFScheduler({}, {})
     picked_session_id = scheduler.pick_session(
         example_total_capacity,
@@ -913,8 +955,11 @@ def test_mof_scheduler_first_assign(example_agents, example_pending_sessions, ex
     assert agent_id == 'i-001'
 
 
-def test_mof_scheduler_second_assign(example_agents_first_one_assigned, example_pending_sessions,
-                                     example_existing_sessions):
+def test_mof_scheduler_second_assign(
+    example_agents_first_one_assigned,
+    example_pending_sessions,
+    example_existing_sessions,
+):
     scheduler = MOFScheduler({}, {})
     picked_session_id = scheduler.pick_session(
         example_total_capacity,
@@ -929,8 +974,11 @@ def test_mof_scheduler_second_assign(example_agents_first_one_assigned, example_
     assert agent_id == 'i-101'
 
 
-def test_mof_scheduler_no_valid_agent(example_agents_no_valid, example_pending_sessions,
-                                      example_existing_sessions):
+def test_mof_scheduler_no_valid_agent(
+    example_agents_no_valid,
+    example_pending_sessions,
+    example_existing_sessions,
+):
     scheduler = MOFScheduler({}, {})
     picked_session_id = scheduler.pick_session(
         example_total_capacity,
@@ -942,6 +990,41 @@ def test_mof_scheduler_no_valid_agent(example_agents_no_valid, example_pending_s
 
     agent_id = scheduler.assign_agent_for_session(example_agents_no_valid, picked_session)
     assert agent_id is None
+
+
+@pytest.mark.asyncio
+async def test_pending_timeout(mocker):
+
+    class MockDatetime:
+        @classmethod
+        def now(cls, tzinfo):
+            return datetime(2021, 1, 1, 0, 0, 0)
+
+    mocker.patch('ai.backend.manager.scheduler.dispatcher.datetime', MockDatetime)
+    mock_query_result = MagicMock()
+    mock_query_result.fetchall = MagicMock(return_value=[
+        {'id': 'session3', 'created_at': datetime(2020, 12, 31, 23, 59, 59)},
+        {'id': 'session2', 'created_at': datetime(2020, 12, 30, 23, 59, 59)},
+        {'id': 'session1', 'created_at': datetime(2020, 12, 29, 23, 59, 59)},
+    ])
+    mock_execute = AsyncMock(return_value=mock_query_result)
+    mock_dbconn = MagicMock()
+    mock_dbconn.execute = mock_execute
+
+    scheduler = FIFOSlotScheduler({'pending_timeout': timedelta(seconds=86400 * 2)}, {})
+    candidate_session_rows, cancelled_session_rows = await _list_pending_sessions(
+        mock_dbconn, scheduler, 'default',
+    )
+    assert len(candidate_session_rows) == 2
+    assert len(cancelled_session_rows) == 1
+    assert cancelled_session_rows[0]['id'] == 'session1'
+
+    scheduler = FIFOSlotScheduler({'pending_timeout': timedelta(seconds=0)}, {})
+    candidate_session_rows, cancelled_session_rows = await _list_pending_sessions(
+        mock_dbconn, scheduler, 'default',
+    )
+    assert len(candidate_session_rows) == 3
+    assert len(cancelled_session_rows) == 0
 
 
 class DummyEtcd:
