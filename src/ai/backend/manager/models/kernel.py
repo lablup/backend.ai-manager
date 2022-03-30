@@ -21,6 +21,8 @@ from typing import (
 from uuid import UUID
 import uuid
 
+import aioredis
+import aioredis.client
 from dateutil.parser import parse as dtparse
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -35,12 +37,13 @@ from ai.backend.common.types import (
     BinarySize,
     ClusterMode,
     KernelId,
+    RedisConnectionInfo,
     SessionId,
     SessionTypes,
     SessionResult,
     SlotName,
-    RedisConnectionInfo,
     ResourceSlot,
+    VFolderMount,
 )
 
 from ..defs import DEFAULT_ROLE
@@ -53,6 +56,7 @@ from .base import (
     PaginatedList,
     ResourceSlotColumn,
     SessionIDColumnType,
+    StructuredJSONObjectListColumn,
     batch_result,
     batch_multiresult,
     metadata,
@@ -61,13 +65,13 @@ from .group import groups
 from .minilang.queryfilter import QueryFilterParser
 from .minilang.ordering import QueryOrderParser
 from .user import users
-from .keypair import keypairs
 if TYPE_CHECKING:
     from .gql import GraphQueryContext
 
-__all__: Sequence[str] = (
+__all__ = (
     'kernels',
     'session_dependencies',
+    'KernelStatistics',
     'KernelStatus',
     'ComputeContainer',
     'ComputeSession',
@@ -175,6 +179,7 @@ kernels = sa.Table(
     sa.Column('user_uuid', GUID, sa.ForeignKey('users.uuid'), nullable=False),
     sa.Column('access_key', sa.String(length=20), sa.ForeignKey('keypairs.access_key')),
     sa.Column('image', sa.String(length=512)),
+    sa.Column('architecture', sa.String(length=32), default='x86_64'),
     sa.Column('registry', sa.String(length=512)),
     sa.Column('tag', sa.String(length=64), nullable=True),
 
@@ -183,8 +188,9 @@ kernels = sa.Table(
     sa.Column('occupied_slots', ResourceSlotColumn(), nullable=False),
     sa.Column('occupied_shares', pgsql.JSONB(), nullable=False, default={}),  # legacy
     sa.Column('environ', sa.ARRAY(sa.String), nullable=True),
-    sa.Column('mounts', sa.ARRAY(sa.String), nullable=True),  # list of list
-    sa.Column('mount_map', pgsql.JSONB(), nullable=True, default={}),
+    sa.Column('mounts', sa.ARRAY(sa.String), nullable=True),  # list of list; legacy since 22.03
+    sa.Column('mount_map', pgsql.JSONB(), nullable=True, default={}),  # legacy since 22.03
+    sa.Column('vfolder_mounts', StructuredJSONObjectListColumn(VFolderMount), nullable=True),
     sa.Column('attached_devices', pgsql.JSONB(), nullable=True, default={}),
     sa.Column('resource_opts', pgsql.JSONB(), nullable=True, default={}),
     sa.Column('bootstrap_script', sa.String(length=16 * 1024), nullable=True),
@@ -500,6 +506,30 @@ async def get_all_kernels(
     return [*session_id_to_rowsets.values()]
 
 
+class KernelStatistics:
+    @classmethod
+    async def batch_load_by_kernel(
+        cls,
+        ctx: GraphQueryContext,
+        session_ids: Sequence[SessionId],
+    ) -> Sequence[Optional[Mapping[str, Any]]]:
+
+        def _build_pipeline(redis: aioredis.Redis) -> aioredis.client.Pipeline:
+            pipe = redis.pipeline()
+            for sess_id in session_ids:
+                pipe.get(str(sess_id))
+            return pipe
+
+        stats = []
+        results = await redis.execute(ctx.redis_stat, _build_pipeline)
+        for result in results:
+            if result is not None:
+                stats.append(msgpack.unpackb(result))
+            else:
+                stats.append(None)
+        return stats
+
+
 class ComputeContainer(graphene.ObjectType):
     class Meta:
         interfaces = (Item, )
@@ -515,6 +545,7 @@ class ComputeContainer(graphene.ObjectType):
 
     # image
     image = graphene.String()
+    architecture = graphene.String()
     registry = graphene.String()
 
     # status
@@ -556,6 +587,7 @@ class ComputeContainer(graphene.ObjectType):
 
             # image
             'image': row['image'],
+            'architecture': row['architecture'],
             'registry': row['registry'],
 
             # status
@@ -574,8 +606,7 @@ class ComputeContainer(graphene.ObjectType):
             'resource_opts': row['resource_opts'],
 
             # statistics
-            # live_stat is resolved by Graphene
-            'last_stat': row['last_stat'],
+            # last_stat is resolved by Graphene (resolve_last_stat method)
         }
 
     @classmethod
@@ -585,23 +616,20 @@ class ComputeContainer(graphene.ObjectType):
         props = cls.parse_row(ctx, row)
         return cls(**props)
 
+    # last_stat also fetches data from Redis, meaning that
+    # both live_stat and last_stat will reference same data from same source
+    # we can leave last_stat value for legacy support, as an alias to last_stat
     async def resolve_live_stat(self, info: graphene.ResolveInfo) -> Optional[Mapping[str, Any]]:
-        if not hasattr(self, 'status'):
-            return None
         graph_ctx: GraphQueryContext = info.context
-        if KernelStatus[self.status] in LIVE_STATUS:
-            raw_live_stat = await redis.execute(
-                graph_ctx.redis_stat,
-                lambda r: r.get(str(self.id)))
-            if raw_live_stat is not None:
-                live_stat = msgpack.unpackb(raw_live_stat)
-                return live_stat
-            return None
-        else:
-            return self.last_stat
+        loader = graph_ctx.dataloader_manager.get_loader(graph_ctx, 'KernelStatistics.by_kernel')
+        return await loader.load(self.id)
+
+    async def resolve_last_stat(self, info: graphene.ResolveInfo) -> Optional[Mapping[str, Any]]:
+        return await self.resolve_live_stat(info)
 
     _queryfilter_fieldspec = {
         "image": ("image", None),
+        "architecture": ("architecture", None),
         "agent": ("agent", None),
         "cluster_idx": ("cluster_idx", None),
         "cluster_role": ("cluster_role", None),
@@ -615,6 +643,7 @@ class ComputeContainer(graphene.ObjectType):
 
     _queryorder_colmap = {
         "image": "image",
+        "architecture": "architecture",
         "agent": "agent",
         "cluster_idx": "cluster_idx",
         "cluster_role": "cluster_role",
@@ -639,7 +668,7 @@ class ComputeContainer(graphene.ObjectType):
         filter: str = None,
     ) -> int:
         query = (
-            sa.select([sa.func.count(kernels.c.id)])
+            sa.select([sa.func.count()])
             .select_from(kernels)
             .where(kernels.c.session_id == session_id)
         )
@@ -759,8 +788,9 @@ class ComputeSession(graphene.ObjectType):
     session_id = graphene.UUID()
 
     # image
-    image = graphene.String()     # image for the main container
-    registry = graphene.String()  # image registry for the main container
+    image = graphene.String()         # image for the main container
+    architecture = graphene.String()  # image architecture for the main container
+    registry = graphene.String()      # image registry for the main container
     cluster_template = graphene.String()
     cluster_mode = graphene.String()
     cluster_size = graphene.Int()
@@ -815,6 +845,7 @@ class ComputeSession(graphene.ObjectType):
 
             # image
             'image': row['image'],
+            'architecture': row['architecture'],
             'registry': row['registry'],
             'cluster_template': None,  # TODO: implement
             'cluster_mode': row['cluster_mode'],
@@ -894,6 +925,7 @@ class ComputeSession(graphene.ObjectType):
         "type": ("kernels_session_type", lambda s: SessionTypes[s]),
         "name": ("kernels_session_name", None),
         "image": ("kernels_image", None),
+        "architecture": ("kernels_architecture", None),
         "domain_name": ("kernels_domain_name", None),
         "group_name": ("groups_group_name", None),
         "user_email": ("users_email", None),
@@ -919,6 +951,7 @@ class ComputeSession(graphene.ObjectType):
         "type": "kernels_session_type",
         "name": "kernels_session_name",
         "image": "kernels_image",
+        "architecture": "kernels_architecture",
         "domain_name": "kernels_domain_name",
         "group_name": "kernels_group_name",
         "user_email": "users_email",
@@ -957,7 +990,7 @@ class ComputeSession(graphene.ObjectType):
             .join(users, users.c.uuid == kernels.c.user_uuid)
         )
         query = (
-            sa.select([sa.func.count(kernels.c.id)])
+            sa.select([sa.func.count()])
             .select_from(j)
             .where(kernels.c.cluster_role == DEFAULT_ROLE)
         )
@@ -1122,6 +1155,7 @@ class LegacyComputeSession(graphene.ObjectType):
     session_type = graphene.String()
     role = graphene.String()
     image = graphene.String()
+    architecture = graphene.String()
     registry = graphene.String()
     domain_name = graphene.String()
     group_name = graphene.String()
@@ -1172,27 +1206,16 @@ class LegacyComputeSession(graphene.ObjectType):
     io_max_scratch_size = BigInt()
     io_cur_scratch_size = BigInt()
 
-    @classmethod
-    async def _resolve_live_stat(
-        cls,
-        redis_stat: RedisConnectionInfo,
-        kernel_id: str,
-    ) -> Optional[Mapping[str, Any]]:
-        cstat = await redis.execute(
-            redis_stat,
-            lambda r: r.get(kernel_id))
-        if cstat is not None:
-            cstat = msgpack.unpackb(cstat)
-        return cstat
-
+    # last_stat also fetches data from Redis, meaning that
+    # both live_stat and last_stat will reference same data from same source
+    # we can leave last_stat value for legacy support, as an alias to last_stat
     async def resolve_live_stat(self, info: graphene.ResolveInfo) -> Optional[Mapping[str, Any]]:
-        if not hasattr(self, 'status'):
-            return None
         graph_ctx: GraphQueryContext = info.context
-        if KernelStatus[self.status] not in LIVE_STATUS:
-            return self.last_stat
-        else:
-            return await type(self)._resolve_live_stat(graph_ctx.redis_stat, str(self.id))
+        loader = graph_ctx.dataloader_manager.get_loader(graph_ctx, 'KernelStatistics.by_kernel')
+        return await loader.load(self.id)
+
+    async def resolve_last_stat(self, info: graphene.ResolveInfo) -> Optional[Mapping[str, Any]]:
+        return await self.resolve_live_stat(info)
 
     async def _resolve_legacy_metric(
         self,
@@ -1215,7 +1238,8 @@ class LegacyComputeSession(graphene.ObjectType):
                 return convert_type(0)
             return convert_type(value)
         else:
-            kstat = await type(self)._resolve_live_stat(graph_ctx.redis_stat, str(self.id))
+            loader = graph_ctx.dataloader_manager.get_loader(graph_ctx, 'KernelStatistics.by_kernel')
+            kstat = await loader.load(self.id)
             if kstat is None:
                 return convert_type(0)
             metric = kstat.get(metric_key)
@@ -1275,6 +1299,7 @@ class LegacyComputeSession(graphene.ObjectType):
             'role': row['cluster_role'],
             'tag': row['tag'],
             'image': row['image'],
+            'architecture': row['architecture'],
             'registry': row['registry'],
             'domain_name': row['domain_name'],
             'group_name': row['name'],  # group.name (group is omitted since use_labels=True is not used)
@@ -1292,14 +1317,14 @@ class LegacyComputeSession(graphene.ObjectType):
             'result': row['result'].name,
             'service_ports': row['service_ports'],
             'occupied_slots': row['occupied_slots'].to_json(),
-            'mounts': row['mounts'],
+            'vfolder_mounts': row['vfolder_mounts'],
             'resource_opts': row['resource_opts'],
             'num_queries': row['num_queries'],
             # optionally hidden
             'agent': row['agent'] if not hide_agents else None,
             'container_id': row['container_id'] if not hide_agents else None,
             # live_stat is resolved by Graphene
-            'last_stat': row['last_stat'],
+            # last_stat is resolved by Graphene
             'user_email': row['email'],
             # Legacy fields
             # NOTE: currently graphene always uses resolve methods!
@@ -1343,7 +1368,7 @@ class LegacyComputeSession(graphene.ObjectType):
         elif isinstance(status, KernelStatus):
             status_list = [status]
         query = (
-            sa.select([sa.func.count(kernels.c.session_id)])
+            sa.select([sa.func.count()])
             .select_from(kernels)
             .where(kernels.c.cluster_role == DEFAULT_ROLE)
         )
@@ -1488,21 +1513,28 @@ class LegacyComputeSessionList(graphene.ObjectType):
     items = graphene.List(LegacyComputeSession, required=True)
 
 
-async def recalc_concurrency_used(db_conn: SAConnection, access_key: AccessKey) -> None:
+async def recalc_concurrency_used(
+    db_conn: SAConnection,
+    redis_stat: RedisConnectionInfo,
+    access_key: AccessKey,
+) -> None:
+
+    concurrency_used: int
     async with db_conn.begin_nested():
         query = (
-            sa.update(keypairs)
-            .values(
-                concurrency_used=(
-                    sa.select([sa.func.count(kernels.c.id)])
-                    .select_from(kernels)
-                    .where(
-                        (kernels.c.access_key == access_key) &
-                        (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
-                    )
-                    .scalar_subquery()
-                ),
+            sa.select([sa.func.count()])
+            .select_from(kernels)
+            .where(
+                (kernels.c.access_key == access_key) &
+                (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
             )
-            .where(keypairs.c.access_key == access_key)
         )
-        await db_conn.execute(query)
+        result = await db_conn.execute(query)
+        concurrency_used = result.first()[0]
+
+    await redis.execute(
+        redis_stat,
+        lambda r: r.set(
+            f'keypair.concurrency_used.{access_key}', concurrency_used,
+        ),
+    )

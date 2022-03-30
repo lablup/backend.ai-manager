@@ -78,6 +78,7 @@ agents = sa.Table(
     sa.Column('lost_at', sa.DateTime(timezone=True), nullable=True),
 
     sa.Column('version', sa.String(length=64), nullable=False),
+    sa.Column('architecture', sa.String(length=32), nullable=False),
     sa.Column('compute_plugins', pgsql.JSONB(), nullable=False, default={}),
 )
 
@@ -95,6 +96,7 @@ class Agent(graphene.ObjectType):
     available_slots = graphene.JSONString()
     occupied_slots = graphene.JSONString()
     addr = graphene.String()
+    architecture = graphene.String()
     first_contact = GQLDateTime()
     lost_at = GQLDateTime()
     live_stat = graphene.JSONString()
@@ -135,6 +137,7 @@ class Agent(graphene.ObjectType):
             available_slots=row['available_slots'].to_json(),
             occupied_slots=row['occupied_slots'].to_json(),
             addr=row['addr'],
+            architecture=row['architecture'],
             first_contact=row['first_contact'],
             lost_at=row['lost_at'],
             version=row['version'],
@@ -226,7 +229,7 @@ class Agent(graphene.ObjectType):
         filter: str = None,
     ) -> int:
         query = (
-            sa.select([sa.func.count(agents.c.id)])
+            sa.select([sa.func.count()])
             .select_from(agents)
         )
         if scaling_group is not None:

@@ -45,6 +45,8 @@ import sqlalchemy as sa
 from sqlalchemy.sql.expression import true, null
 import trafaret as t
 
+from ai.backend.manager.models.image import ImageRow
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
@@ -88,11 +90,13 @@ from ai.backend.common.types import (
 from ai.backend.common.plugin.monitor import GAUGE
 
 from ..config import DEFAULT_CHUNK_SIZE
-from ..defs import DEFAULT_ROLE, REDIS_STREAM_DB
+from ..defs import DEFAULT_IMAGE_ARCH, DEFAULT_ROLE, REDIS_STREAM_DB
+from ..types import UserScope
 from ..models import (
     domains,
     association_groups_users as agus, groups,
-    keypairs, kernels, query_bootstrap_script,
+    keypairs, kernels, AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
+    query_bootstrap_script,
     keypair_resource_policies,
     scaling_groups,
     users, UserRole,
@@ -379,7 +383,7 @@ async def _query_userinfo(
     return owner_uuid, group_id, resource_policy
 
 
-async def _create(request: web.Request, params: Any) -> web.Response:
+async def _create(request: web.Request, params: dict[str, Any]) -> web.Response:
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
     scopes_param = {
@@ -424,8 +428,12 @@ async def _create(request: web.Request, params: Any) -> web.Response:
 
     # Resolve the image reference.
     try:
-        requested_image_ref = \
-            await ImageRef.resolve_alias(params['image'], root_ctx.shared_config.etcd)
+        async with root_ctx.db.begin_readonly_session() as session:
+            image_row = await ImageRow.resolve(session, [
+                ImageRef(params['image'], ['*'], params['architecture']),
+                params['image'],
+            ])
+        requested_image_ref = image_row.image_ref
         async with root_ctx.db.begin_readonly() as conn:
             query = (
                 sa.select([domains.c.allowed_docker_registries])
@@ -443,7 +451,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
         # NOTE: We can reuse the session IDs of TERMINATED sessions only.
         # NOTE: Reusing a session in the PENDING status returns an empty value in service_ports.
         kern = await root_ctx.registry.get_session(params['session_name'], owner_access_key)
-        running_image_ref = ImageRef(kern['image'], [kern['registry']])
+        running_image_ref = ImageRef(kern['image'], [kern['registry']], kern['architecture'])
         if running_image_ref != requested_image_ref:
             # The image must be same if get_or_create() called multiple times
             # against an existing (non-terminated) session
@@ -479,6 +487,9 @@ async def _create(request: web.Request, params: Any) -> web.Response:
     if params['cluster_size'] > 1:
         log.debug(" -> cluster_mode:{} (replicate)", params['cluster_mode'])
 
+    if params['dependencies'] is None:
+        params['dependencies'] = []
+
     session_creation_id = secrets.token_urlsafe(16)
     start_event = asyncio.Event()
     kernel_id: Optional[KernelId] = None
@@ -511,16 +522,18 @@ async def _create(request: web.Request, params: Any) -> web.Response:
                 params['config']['scaling_group'],
                 params['session_type'],
                 resource_policy,
-                domain_name=params['domain'],  # type: ignore  # params always have it
-                group_id=group_id,
-                user_uuid=owner_uuid,
-                user_role=request['user']['role'],
+                user_scope=UserScope(
+                    domain_name=params['domain'],  # type: ignore  # params always have it
+                    group_id=group_id,
+                    user_uuid=owner_uuid,
+                    user_role=request['user']['role'],
+                ),
                 cluster_mode=params['cluster_mode'],
                 cluster_size=params['cluster_size'],
-                startup_command=params['startup_command'],
                 session_tag=params['tag'],
                 starts_at=starts_at,
                 agent_list=params['config']['agent_list'],
+                dependency_sessions=params['dependencies'],
             )),
         )
         resp['sessionId'] = str(kernel_id)  # changed since API v5
@@ -595,6 +608,7 @@ async def _create(request: web.Request, params: Any) -> web.Response:
         tx.AliasedKey(['name', 'clientSessionToken'], default=undefined) >> 'session_name':
             UndefChecker | t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
         tx.AliasedKey(['image', 'lang'], default=undefined): UndefChecker | t.Null | t.String,
+        tx.AliasedKey(['arch', 'architecture'], default=DEFAULT_IMAGE_ARCH) >> 'architecture': t.String,
         tx.AliasedKey(['type', 'sessionType'], default='interactive') >> 'session_type':
             tx.Enum(SessionTypes),
         tx.AliasedKey(['group', 'groupName', 'group_name'], default=undefined):
@@ -615,10 +629,12 @@ async def _create(request: web.Request, params: Any) -> web.Response:
             UndefChecker | t.Null | t.String,
         tx.AliasedKey(['bootstrap_script', 'bootstrapScript'], default=undefined):
             UndefChecker | t.Null | t.String,
+        t.Key('dependencies', default=undefined):
+            UndefChecker | t.Null | t.List(tx.UUID) | t.List(t.String),
         t.Key('owner_access_key', default=undefined): UndefChecker | t.Null | t.String,
     },
 ), loads=_json_loads)
-async def create_from_template(request: web.Request, params: Any) -> web.Response:
+async def create_from_template(request: web.Request, params: dict[str, Any]) -> web.Response:
     # TODO: we need to refactor session_template model to load the template configs
     #       by one batch. Currently, we need to set every template configs one by one.
     root_ctx: RootContext = request.app['_root.context']
@@ -670,6 +686,7 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
 
     param_from_template = {
         'image': template['spec']['kernel']['image'],
+        'architecture': template['spec']['kernel'].get('architecture', DEFAULT_IMAGE_ARCH),
     }
     if 'domain_name' in template_info:
         param_from_template['domain'] = template_info['domain_name']
@@ -768,6 +785,7 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
         tx.AliasedKey(['name', 'clientSessionToken']) >> 'session_name':
             t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
         tx.AliasedKey(['image', 'lang']): t.String,
+        tx.AliasedKey(['arch', 'architecture'], default=DEFAULT_IMAGE_ARCH) >> 'architecture': t.String,
         tx.AliasedKey(['type', 'sessionType'], default='interactive') >> 'session_type':
             tx.Enum(SessionTypes),
         tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
@@ -784,10 +802,11 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
         t.Key('reuseIfExists', default=True) >> 'reuse': t.ToBool,
         t.Key('startupCommand', default=None) >> 'startup_command': t.Null | t.String,
         tx.AliasedKey(['bootstrap_script', 'bootstrapScript'], default=None): t.Null | t.String,
+        t.Key('dependencies', default=None): t.Null | t.List(tx.UUID) | t.List(t.String),
         t.Key('owner_access_key', default=None): t.Null | t.String,
     }),
     loads=_json_loads)
-async def create_from_params(request: web.Request, params: Any) -> web.Response:
+async def create_from_params(request: web.Request, params: dict[str, Any]) -> web.Response:
     if params['session_name'] in ['from-template']:
         raise InvalidAPIParameters(f'Requested session ID {params["session_name"]} is reserved word')
     api_version = request['api_version']
@@ -845,7 +864,7 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
         t.Key('owner_access_key', default=None): t.Null | t.String,
     }),
     loads=_json_loads)
-async def create_cluster(request: web.Request, params: Any) -> web.Response:
+async def create_cluster(request: web.Request, params: dict[str, Any]) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     app_ctx: PrivateContext = request.app['session.context']
     if params['domain'] is None:
@@ -909,7 +928,8 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
     for node in template['spec']['nodes']:
         # Resolve session template.
         kernel_config = {
-            'image_ref': template['spec']['kernel']['image'],
+            'image': template['spec']['kernel']['image'],
+            'architecture': template['spec']['kernel'].get('architecture', DEFAULT_IMAGE_ARCH),
             'cluster_role': node['cluster_role'],
             'creation_config': {
                 'mount': mounts,
@@ -963,9 +983,12 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
 
         # Resolve the image reference.
         try:
-            requested_image_ref = \
-                await ImageRef.resolve_alias(kernel_config['image_ref'],
-                                                root_ctx.shared_config.etcd)
+            async with root_ctx.db.begin_readonly_session() as session:
+                image_row = await ImageRow.resolve(session, [
+                    ImageRef(kernel_config['image'], ['*'], kernel_config['architecture']),
+                    kernel_config['image'],
+                ])
+            requested_image_ref = image_row.image_ref
             async with root_ctx.db.begin_readonly() as conn:
                 query = (
                     sa.select([domains.c.allowed_docker_registries])
@@ -1006,10 +1029,12 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
                 params['scaling_group'],
                 params['sess_type'],
                 resource_policy,
-                domain_name=params['domain'],  # type: ignore
-                group_id=group_id,
-                user_uuid=owner_uuid,
-                user_role=request['user']['role'],
+                user_scope=UserScope(
+                    domain_name=params['domain'],  # type: ignore
+                    group_id=group_id,
+                    user_uuid=owner_uuid,
+                    user_role=request['user']['role'],
+                ),
                 session_tag=params['tag'],
             ),
         ))
@@ -1209,10 +1234,10 @@ async def handle_kernel_creation_lifecycle(
         await root_ctx.registry.set_kernel_status(event.kernel_id, KernelStatus.PREPARING, event.reason)
     elif isinstance(event, KernelStartedEvent):
         # post_create_kernel() coroutines are waiting for the creation tracker events to be set.
-        if tracker := root_ctx.registry.kernel_creation_tracker.get(ck_id):
+        if (tracker := root_ctx.registry.kernel_creation_tracker.get(ck_id)) and not tracker.done():
             tracker.set_result(None)
     elif isinstance(event, KernelCancelledEvent):
-        if tracker := root_ctx.registry.kernel_creation_tracker.get(ck_id):
+        if (tracker := root_ctx.registry.kernel_creation_tracker.get(ck_id)) and not tracker.done():
             tracker.cancel()
 
 
@@ -1287,7 +1312,8 @@ async def handle_kernel_stat_sync(
     event: DoSyncKernelStatsEvent,
 ) -> None:
     root_ctx: RootContext = app['_root.context']
-    await root_ctx.registry.sync_kernel_stats(event.kernel_ids)
+    if root_ctx.local_config['debug']['periodic-sync-stats']:
+        await root_ctx.registry.sync_kernel_stats(event.kernel_ids)
 
 
 async def handle_batch_result(
@@ -1430,13 +1456,16 @@ async def report_stats(root_ctx: RootContext, interval: float) -> None:
 
     async with root_ctx.db.begin_readonly() as conn:
         query = (
-            sa.select([sa.func.sum(keypairs.c.concurrency_used)])
-            .select_from(keypairs)
+            sa.select([sa.func.count()])
+            .select_from(kernels)
+            .where(
+                (kernels.c.cluster_role == DEFAULT_ROLE) &
+                (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)),
+            )
         )
         n = await conn.scalar(query)
         await stats_monitor.report_metric(
             GAUGE, 'ai.backend.manager.active_kernels', n)
-
         subquery = (
             sa.select([sa.func.count()])
             .select_from(keypairs)
@@ -1582,6 +1611,7 @@ async def get_info(request: web.Request) -> web.Response:
         resp['userId'] = str(kern['user_uuid'])
         resp['lang'] = kern['image']  # legacy
         resp['image'] = kern['image']
+        resp['architecture'] = kern['architecture']
         resp['registry'] = kern['registry']
         resp['tag'] = kern['tag']
 

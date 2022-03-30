@@ -1,1 +1,0 @@
-Allow admins to take actions on behalf of "inactivated" keypairs, such as terminating an RUNNING compute session created by the inactive keypair.

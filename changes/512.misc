@@ -1,1 +1,0 @@
-Change the default values of max concurrent sessions (30 -> 5) and idle timeout (600 -> 3600) in keypair resource policy fixture to conform to the preferable defaults.

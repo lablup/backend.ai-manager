@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 from datetime import datetime
 import functools
@@ -1200,7 +1202,7 @@ async def invite(request: web.Request, params: Any) -> web.Response:
         j = sa.join(vfolders, vfolder_permissions,
                     vfolders.c.id == vfolder_permissions.c.vfolder)
         query = (
-            sa.select([sa.func.count(vfolders.c.id)])
+            sa.select([sa.func.count()])
             .select_from(j)
             .where(
                 (
@@ -1221,7 +1223,7 @@ async def invite(request: web.Request, params: Any) -> web.Response:
             inviter = request['user']['id']
             # Do not create invitation if already exists.
             query = (
-                sa.select([sa.func.count('*')])
+                sa.select([sa.func.count()])
                 .select_from(vfolder_invitations)
                 .where(
                     (vfolder_invitations.c.inviter == inviter) &
@@ -1345,7 +1347,7 @@ async def accept_invitation(request: web.Request, params: Any) -> web.Response:
             isouter=True,
         )
         query = (
-            sa.select([sa.func.count(vfolders.c.id)])
+            sa.select([sa.func.count()])
             .select_from(j)
             .where(
                 ((vfolders.c.user == user_uuid) |
