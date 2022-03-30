@@ -20,7 +20,7 @@ import aiotools
 import graphene
 from graphql.execution.executors.asyncio import AsyncioExecutor
 import sqlalchemy as sa
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import (
     relationship,
     selectinload,
@@ -254,7 +254,6 @@ class ImageRow(Base):
         if len(candidates) == 1 and not strict_arch:
             return candidates[0]
         for row in candidates:
-            log.debug('row: {}', row)
             if row.architecture == ref.architecture:
                 return row
         raise UnknownImageReference(ref)
@@ -262,36 +261,33 @@ class ImageRow(Base):
     @classmethod
     async def resolve(
         cls,
-        session: AsyncConnection,
+        session: AsyncSession,
         reference_candidates: List[Union[ImageAlias, ImageRef]],
         *,
         strict_arch: bool = False,
         load_aliases: bool = True,
     ) -> ImageRow:
         """
-        Resolves a matching row in the image table from multiple image references and/or aliases.
-
-        Passing image canonical directly to resolve image data is no longer possible.
-        You need to declare ImageRef object explicitly if you're using string
-        as an image canonical. For example:
-
+        Resolves a matching row in the image table from image references and/or aliases.
+        If candidate element is `ImageRef`, this method will try to resolve image with matching
+        `ImageRef` description. Otherwise, if element is `str`, this will try to follow the alias.
+        If multiple elements are supplied, this method will return the first matched `ImageRow`
+        among those elements.
+        Passing the canonical image reference as string directly to resolve image data
+        is no longer possible. You need to declare ImageRef object explicitly if you're using string
+        as an canonical image references. For example:
         .. code-block::
-
            await ImageRow.resolve(
                conn,
                [
                    ImageRef(
-                       params['image'],
-                       params['image'],
-                       params['architecture'],
+                       image,
+                       registry,
+                       architecture,
                    ),
+                   image_alias,
                ],
            )
-
-        This kind of pattern is considered as 'good use case',
-        since accepting multiple reference candidates is intended to make
-        user explicitly declare that the code will first try to consider string
-        as an image canonical and try to load image, and changes to alias if it fails.
 
         When *strict_arch* is False and the image table has only one row
         with respect to requested canonical, this function will
