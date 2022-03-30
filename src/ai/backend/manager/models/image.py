@@ -255,7 +255,6 @@ class ImageRow(Base):
         if len(candidates) == 1 and not strict:
             return candidates[0]
         for row in candidates:
-            log.debug('row: {}', row)
             if row.architecture == ref.architecture:
                 return row
         raise UnknownImageReference
