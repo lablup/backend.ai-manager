@@ -1,1 +1,1 @@
-Do not call `MSET` to redis with empty key-value lists
+Do not call `MSET` to Redis with empty key-value lists when recalculating resource usage
