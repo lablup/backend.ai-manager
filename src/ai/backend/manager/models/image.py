@@ -20,7 +20,7 @@ import aiotools
 import graphene
 from graphql.execution.executors.asyncio import AsyncioExecutor
 import sqlalchemy as sa
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import (
     relationship,
     selectinload,
@@ -263,7 +263,7 @@ class ImageRow(Base):
     @classmethod
     async def resolve(
         cls,
-        session: AsyncConnection,
+        session: AsyncSession,
         reference_candidates: List[Union[ImageAlias, ImageRef]],
         load_aliases=True,
         strict=False,
