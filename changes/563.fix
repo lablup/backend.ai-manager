@@ -1,0 +1,1 @@
+prevent doing mset() to redis if the given Map is empty
