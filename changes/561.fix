@@ -1,1 +1,1 @@
-Fixed a broken session usage statistics API due to recently changed structure of kernel's mount information in DB.
+Fix a regression in the session usage statistics API due to recently changed structure of kernel's mount information in DB
