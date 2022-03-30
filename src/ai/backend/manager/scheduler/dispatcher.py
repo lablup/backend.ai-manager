@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-from contextvars import ContextVar
-from datetime import datetime
 import logging
 import pkg_resources
+from contextvars import ContextVar
+from datetime import datetime, timedelta
 from typing import (
     Any,
     Awaitable,
@@ -874,7 +874,7 @@ async def _list_pending_sessions(
     scheduler: AbstractScheduler,
     sgroup_name: str,
 ) -> tuple[list[PendingSession], list[Row]]:
-    pending_timeout = scheduler.sgroup_opts['pending_timeout']
+    pending_timeout = timedelta(seconds=scheduler.sgroup_opts['pending_timeout'])
     query = (
         PendingSession.base_query()
         .where(
@@ -889,7 +889,7 @@ async def _list_pending_sessions(
     cancelled_rows = []
     now = datetime.now(tzutc())
     for row in rows:
-        elapsed_pending_time = (now - row['created_at']).seconds
+        elapsed_pending_time = now - row['created_at']
         if pending_timeout > 0 and elapsed_pending_time >= pending_timeout:
             cancelled_rows.append(row)
         else:
