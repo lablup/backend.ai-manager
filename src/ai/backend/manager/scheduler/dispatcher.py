@@ -262,7 +262,7 @@ class SchedulerDispatcher(aobject):
         sgroup_opts: ScalingGroupOpts = row['scheduler_opts']
         global_scheduler_opts = {}
         if self.shared_config['plugins']['scheduler']:
-            global_scheduler_opts = self.shared_config['plugins']['scheduler'][scheduler_name]
+            global_scheduler_opts = self.shared_config['plugins']['scheduler'].get(scheduler_name, {})
         scheduler_specific_config = {**global_scheduler_opts, **sgroup_opts.config}
         return load_scheduler(scheduler_name, sgroup_opts, scheduler_specific_config)
 

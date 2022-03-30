@@ -245,18 +245,18 @@ class StructuredJSONObjectColumn(TypeDecorator):
     impl = JSONB
     cache_ok = True
 
-    def __init__(self, attr_cls: Type[JSONSerializableMixin]) -> None:
+    def __init__(self, schema: Type[JSONSerializableMixin]) -> None:
         super().__init__()
-        self._attr_cls = attr_cls
+        self._schema = schema
 
     def process_bind_param(self, value, dialect):
-        return self._attr_cls.to_json(value)
+        return self._schema.to_json(value)
 
     def process_result_value(self, raw_value, dialect):
-        return self._attr_cls.from_json(raw_value)
+        return self._schema.from_json(raw_value)
 
     def copy(self):
-        return StructuredJSONObjectColumn(self._attr_cls)
+        return StructuredJSONObjectColumn(self._schema)
 
 
 class StructuredJSONObjectListColumn(TypeDecorator):
@@ -268,20 +268,20 @@ class StructuredJSONObjectListColumn(TypeDecorator):
     impl = JSONB
     cache_ok = True
 
-    def __init__(self, attr_cls: Type[JSONSerializableMixin]) -> None:
+    def __init__(self, schema: Type[JSONSerializableMixin]) -> None:
         super().__init__()
-        self._attr_cls = attr_cls
+        self._schema = schema
 
     def process_bind_param(self, value, dialect):
-        return [self._attr_cls.to_json(item) for item in value]
+        return [self._schema.to_json(item) for item in value]
 
     def process_result_value(self, raw_value, dialect):
         if raw_value is None:
             return []
-        return [self._attr_cls.from_json(item) for item in raw_value]
+        return [self._schema.from_json(item) for item in raw_value]
 
     def copy(self):
-        return StructuredJSONObjectListColumn(self._attr_cls)
+        return StructuredJSONObjectListColumn(self._schema)
 
 
 class CurrencyTypes(enum.Enum):
@@ -804,4 +804,7 @@ async def populate_fixture(
                 elif isinstance(col.type, EnumValueType):
                     for row in rows:
                         row[col.name] = col.type._enum_cls(row[col.name])
+                elif isinstance(col.type, (StructuredJSONObjectColumn, StructuredJSONObjectListColumn)):
+                    for row in rows:
+                        row[col.name] = col.type._schema.from_json(row[col.name])
             await conn.execute(sa.dialects.postgresql.insert(table, rows).on_conflict_do_nothing())
