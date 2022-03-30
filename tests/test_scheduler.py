@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime
-from datetime import timedelta
 from decimal import Decimal
 from dateutil.parser import parse as dtparse
-from dateutil.tz import tzutc
 import secrets
 from typing import (
     Any,
@@ -32,7 +29,6 @@ from ai.backend.manager.scheduler.types import (
     ExistingSession,
     AgentContext,
 )
-from ai.backend.common.plugin.hook import HookPluginContext
 from ai.backend.manager.registry import AgentRegistry
 from ai.backend.manager.scheduler.dispatcher import load_scheduler, SchedulerDispatcher
 from ai.backend.manager.scheduler.fifo import FIFOSlotScheduler, LIFOSlotScheduler
