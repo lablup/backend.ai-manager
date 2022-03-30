@@ -461,51 +461,51 @@ def example_pending_sessions():
             **_common_dummy_for_pending_session,
             created_at=dtparse('2021-12-01T23:59:59+00:00'),
         ),
-        PendingSession(  # pending timeout session
-            kernels=[
-                KernelInfo(
-                    kernel_id=pending_session_kernel_ids[3].kernel_ids[0],
-                    session_id=pending_session_kernel_ids[3].session_id,
-                    access_key='dummy-access-key',
-                    agent_id=None,
-                    agent_addr=None,
-                    cluster_role=DEFAULT_ROLE,
-                    cluster_idx=1,
-                    cluster_hostname=f"{DEFAULT_ROLE}0",
-                    image_ref=common_image_ref,
-                    resource_opts={},
-                    requested_slots=ResourceSlot({
-                        'cpu': Decimal('1.0'),
-                        'mem': Decimal('2048'),
-                        'cuda.shares': Decimal('0'),
-                        'rocm.devices': Decimal('0'),
-                    }),
-                    bootstrap_script=None,
-                    startup_command=None,
-                    created_at=datetime.now(tzutc()) - timedelta(seconds=30),
-                ),
-            ],
-            access_key=AccessKey('user04'),
-            agent_id=None,
-            agent_addr=None,
-            status_data={},
-            session_id=pending_session_kernel_ids[3].session_id,
-            session_creation_id='aaa103',
-            session_name='es01',
-            session_type=SessionTypes.BATCH,
-            cluster_mode='single-node',
-            cluster_size=1,
-            scaling_group='sg01',
-            requested_slots=ResourceSlot({
-                'cpu': Decimal('1.0'),
-                'mem': Decimal('2048'),
-                'cuda.shares': Decimal('0.5'),
-                'rocm.devices': Decimal('0'),
-            }),
-            target_sgroup_names=[],
-            **_common_dummy_for_pending_session,
-            created_at=datetime.now(tzutc()) - timedelta(seconds=30),
-        ),
+        # PendingSession(  # pending timeout session
+        #     kernels=[
+        #         KernelInfo(
+        #             kernel_id=pending_session_kernel_ids[3].kernel_ids[0],
+        #             session_id=pending_session_kernel_ids[3].session_id,
+        #             access_key='dummy-access-key',
+        #             agent_id=None,
+        #             agent_addr=None,
+        #             cluster_role=DEFAULT_ROLE,
+        #             cluster_idx=1,
+        #             cluster_hostname=f"{DEFAULT_ROLE}0",
+        #             image_ref=common_image_ref,
+        #             resource_opts={},
+        #             requested_slots=ResourceSlot({
+        #                 'cpu': Decimal('1.0'),
+        #                 'mem': Decimal('2048'),
+        #                 'cuda.shares': Decimal('0'),
+        #                 'rocm.devices': Decimal('0'),
+        #             }),
+        #             bootstrap_script=None,
+        #             startup_command=None,
+        #             created_at=datetime.now(tzutc()) - timedelta(seconds=30),
+        #         ),
+        #     ],
+        #     access_key=AccessKey('user04'),
+        #     agent_id=None,
+        #     agent_addr=None,
+        #     status_data={},
+        #     session_id=pending_session_kernel_ids[3].session_id,
+        #     session_creation_id='aaa103',
+        #     session_name='es01',
+        #     session_type=SessionTypes.BATCH,
+        #     cluster_mode='single-node',
+        #     cluster_size=1,
+        #     scaling_group='sg01',
+        #     requested_slots=ResourceSlot({
+        #         'cpu': Decimal('1.0'),
+        #         'mem': Decimal('2048'),
+        #         'cuda.shares': Decimal('0.5'),
+        #         'rocm.devices': Decimal('0'),
+        #     }),
+        #     target_sgroup_names=[],
+        #     **_common_dummy_for_pending_session,
+        #     created_at=datetime.now(tzutc()) - timedelta(seconds=30),
+        # ),
     ]
 
 
@@ -664,29 +664,36 @@ def _find_and_pop_picked_session(pending_sessions, picked_session_id):
 
 
 def test_fifo_scheduler(example_agents, example_pending_sessions, example_existing_sessions):
-    scheduler = FIFOSlotScheduler({})
+    scheduler = FIFOSlotScheduler({}, {})
     picked_session_id = scheduler.pick_session(
         example_total_capacity,
         example_pending_sessions,
-        example_existing_sessions)
+        example_existing_sessions,
+    )
     assert picked_session_id == example_pending_sessions[0].session_id
     picked_session = _find_and_pop_picked_session(
-        example_pending_sessions, picked_session_id)
-
-    agent_id = scheduler.assign_agent_for_session(example_agents, picked_session)
+        example_pending_sessions,
+        picked_session_id,
+    )
+    agent_id = scheduler.assign_agent_for_session(
+        example_agents,
+        picked_session,
+    )
     assert agent_id == AgentId('i-001')
 
 
 def test_lifo_scheduler(example_agents, example_pending_sessions, example_existing_sessions):
-    scheduler = LIFOSlotScheduler({})
+    scheduler = LIFOSlotScheduler({}, {})
     picked_session_id = scheduler.pick_session(
         example_total_capacity,
         example_pending_sessions,
-        example_existing_sessions)
+        example_existing_sessions,
+    )
     assert picked_session_id == example_pending_sessions[2].session_id
     picked_session = _find_and_pop_picked_session(
-        example_pending_sessions, picked_session_id)
-
+        example_pending_sessions,
+        picked_session_id,
+    )
     agent_id = scheduler.assign_agent_for_session(example_agents, picked_session)
     assert agent_id == 'i-001'
 
@@ -695,15 +702,18 @@ def test_fifo_scheduler_favor_cpu_for_requests_without_accelerators(
     example_mixed_agents,
     example_pending_sessions,
 ):
-    scheduler = FIFOSlotScheduler({})
+    scheduler = FIFOSlotScheduler({}, {})
     for idx in range(3):
         picked_session_id = scheduler.pick_session(
             example_total_capacity,
             example_pending_sessions,
-            [])
+            [],
+        )
         assert picked_session_id == example_pending_sessions[0].session_id
         picked_session = _find_and_pop_picked_session(
-            example_pending_sessions, picked_session_id)
+            example_pending_sessions,
+            picked_session_id,
+        )
         agent_id = scheduler.assign_agent_for_session(example_mixed_agents, picked_session)
         if idx == 0:
             # example_mixed_agents do not have any agent with ROCM accelerators.
@@ -741,7 +751,7 @@ def test_fifo_scheduler_hol_blocking_avoidance_empty_status_data():
     """
     Without any status_data, it should just pick the first session.
     """
-    scheduler = FIFOSlotScheduler({'num_retries_to_skip': 5})
+    scheduler = FIFOSlotScheduler({}, {'num_retries_to_skip': 5})
     pending_sessions = [
         gen_pending_for_holb_tests("s0", {}),
         gen_pending_for_holb_tests("s1", {}),
@@ -759,7 +769,7 @@ def test_fifo_scheduler_hol_blocking_avoidance_config():
     If the upfront sessions have enough number of retries,
     it should skip them.
     """
-    scheduler = FIFOSlotScheduler({'num_retries_to_skip': 0})
+    scheduler = FIFOSlotScheduler({}, {'num_retries_to_skip': 0})
     pending_sessions = [
         gen_pending_for_holb_tests("s0", {'scheduler': {'retries': 5}}),
         gen_pending_for_holb_tests("s1", {}),
@@ -771,7 +781,7 @@ def test_fifo_scheduler_hol_blocking_avoidance_config():
         [])
     assert picked_session_id == 's0'
 
-    scheduler = FIFOSlotScheduler({'num_retries_to_skip': 5})
+    scheduler = FIFOSlotScheduler({}, {'num_retries_to_skip': 5})
     pending_sessions = [
         gen_pending_for_holb_tests("s0", {'scheduler': {'retries': 5}}),
         gen_pending_for_holb_tests("s1", {'scheduler': {'retries': 4}}),
@@ -789,7 +799,7 @@ def test_fifo_scheduler_hol_blocking_avoidance_skips():
     If the upfront sessions have enough number of retries,
     it should skip them.
     """
-    scheduler = FIFOSlotScheduler({'num_retries_to_skip': 5})
+    scheduler = FIFOSlotScheduler({}, {'num_retries_to_skip': 5})
     pending_sessions = [
         gen_pending_for_holb_tests("s0", {'scheduler': {'retries': 5}}),
         gen_pending_for_holb_tests("s1", {}),
@@ -818,7 +828,7 @@ def test_fifo_scheduler_hol_blocking_avoidance_all_skipped():
     If all sessions are skipped due to excessive number of retries,
     then we go back to the normal FIFO by choosing the first of them.
     """
-    scheduler = FIFOSlotScheduler({'num_retries_to_skip': 5})
+    scheduler = FIFOSlotScheduler({}, {'num_retries_to_skip': 5})
     pending_sessions = [
         gen_pending_for_holb_tests("s0", {'scheduler': {'retries': 5}}),
         gen_pending_for_holb_tests("s1", {'scheduler': {'retries': 5}}),
@@ -836,7 +846,7 @@ def test_fifo_scheduler_hol_blocking_avoidance_no_skip():
     If non-first sessions have to be skipped, the scheduler should still
     choose the first session.
     """
-    scheduler = FIFOSlotScheduler({'num_retries_to_skip': 5})
+    scheduler = FIFOSlotScheduler({}, {'num_retries_to_skip': 5})
     pending_sessions = [
         gen_pending_for_holb_tests("s0", {}),
         gen_pending_for_holb_tests("s1", {'scheduler': {'retries': 10}}),
@@ -855,7 +865,7 @@ def test_lifo_scheduler_favor_cpu_for_requests_without_accelerators(
 ):
     # Check the reverse with the LIFO scheduler.
     # The result must be same.
-    scheduler = LIFOSlotScheduler({})
+    scheduler = LIFOSlotScheduler({}, {})
     for idx in range(3):
         picked_session_id = scheduler.pick_session(
             example_total_capacity,
@@ -877,22 +887,24 @@ def test_lifo_scheduler_favor_cpu_for_requests_without_accelerators(
 
 
 def test_drf_scheduler(example_agents, example_pending_sessions, example_existing_sessions):
-    scheduler = DRFScheduler({})
+    scheduler = DRFScheduler({}, {})
     picked_session_id = scheduler.pick_session(
         example_total_capacity,
         example_pending_sessions,
-        example_existing_sessions)
+        example_existing_sessions,
+    )
     pprint(example_pending_sessions)
     assert picked_session_id == example_pending_sessions[1].session_id
     picked_session = _find_and_pop_picked_session(
-        example_pending_sessions, picked_session_id)
-
+        example_pending_sessions,
+        picked_session_id,
+    )
     agent_id = scheduler.assign_agent_for_session(example_agents, picked_session)
     assert agent_id == 'i-001'
 
 
 def test_mof_scheduler_first_assign(example_agents, example_pending_sessions, example_existing_sessions):
-    scheduler = MOFScheduler({})
+    scheduler = MOFScheduler({}, {})
     picked_session_id = scheduler.pick_session(
         example_total_capacity,
         example_pending_sessions,
@@ -907,7 +919,7 @@ def test_mof_scheduler_first_assign(example_agents, example_pending_sessions, ex
 
 def test_mof_scheduler_second_assign(example_agents_first_one_assigned, example_pending_sessions,
                                      example_existing_sessions):
-    scheduler = MOFScheduler({})
+    scheduler = MOFScheduler({}, {})
     picked_session_id = scheduler.pick_session(
         example_total_capacity,
         example_pending_sessions,
@@ -923,7 +935,7 @@ def test_mof_scheduler_second_assign(example_agents_first_one_assigned, example_
 
 def test_mof_scheduler_no_valid_agent(example_agents_no_valid, example_pending_sessions,
                                       example_existing_sessions):
-    scheduler = MOFScheduler({})
+    scheduler = MOFScheduler({}, {})
     picked_session_id = scheduler.pick_session(
         example_total_capacity,
         example_pending_sessions,
@@ -942,59 +954,22 @@ class DummyEtcd:
 
 
 @pytest.mark.asyncio
-async def test_manually_assign_agent_available(example_agents, example_pending_sessions):
-    sess_ctx = example_pending_sessions[0]
-
+async def test_manually_assign_agent_available(
+    registry_ctx: tuple[AgentRegistry, MagicMock, MagicMock, MagicMock, MagicMock, MagicMock],
+    example_agents,
+    example_pending_sessions,
+):
     mock_local_config = MagicMock()
-
-    mock_shared_config = MagicMock()
-    mock_shared_config.update_resource_slots = AsyncMock()
-    mock_shared_config.etcd = None
-    mock_shared_config.get_redis_url = MagicMock()
-
-    mock_event_dispatcher = MagicMock()
-    mock_event_producer = MagicMock()
-    mock_event_producer.produce_event = AsyncMock()
-
-    mock_db = MagicMock()
-    mock_db_conn = MagicMock()
-    mock_dbconn_ctx = MagicMock()
-    mock_dbconn = MagicMock()
-    mock_dbresult = MagicMock()
-    mock_db.connect = MagicMock(return_value=mock_dbconn_ctx)
-    mock_db.begin = MagicMock(return_value=mock_dbconn_ctx)
-    mock_db_conn.execute = AsyncMock(return_value=None)
-    mock_dbconn_ctx.__aenter__ = AsyncMock(return_value=mock_dbconn)
-    mock_dbconn_ctx.__aexit__ = AsyncMock()
-    mock_dbconn.execute = AsyncMock(return_value=mock_dbresult)
-
-    mock_redis_stat = MagicMock()
-    mock_redis_live = MagicMock()
-    mock_redis_live.hset = AsyncMock()
-    mock_redis_image = MagicMock()
-
+    registry, mock_db, mock_dbresult, mock_shared_config, mock_event_dispatcher, mock_event_producer = \
+        registry_ctx
+    sess_ctx = example_pending_sessions[0]
     mock_sched_ctx = MagicMock()
     mock_check_result = MagicMock()
-    scheduler = FIFOSlotScheduler({})
+    scheduler = FIFOSlotScheduler({}, {})
     sgroup_name = example_agents[0].scaling_group
     candidate_agents = example_agents
     example_pending_sessions[0].agent_id = 'i-001'
     sess_ctx = example_pending_sessions[0]
-    mocked_etcd = DummyEtcd()
-    hook_plugin_ctx = HookPluginContext(mocked_etcd, {})
-
-    registry = AgentRegistry(
-        shared_config=mock_shared_config,
-        db=mock_db,
-        redis_stat=mock_redis_stat,
-        redis_live=mock_redis_live,
-        redis_image=mock_redis_image,
-        event_dispatcher=mock_event_dispatcher,
-        event_producer=mock_event_producer,
-        storage_manager=None,  # type: ignore
-        hook_plugin_ctx=hook_plugin_ctx,
-    )
-    await registry.init()
 
     dispatcher = SchedulerDispatcher(
         local_config=mock_local_config,
