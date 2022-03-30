@@ -299,7 +299,7 @@ class ImageRow(Base):
         searched_refs = []
         for reference in reference_candidates:
             resolver_func: Any = None
-            if isinstance(reference, (ImageAlias, str)):
+            if isinstance(reference, str):
                 resolver_func = cls.from_alias
                 searched_refs.append(f"alias:{reference!r}")
             elif isinstance(reference, ImageRef):
