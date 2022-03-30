@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from ai.backend.common.types import SessionTypes
+from ai.backend.manager.models.scaling_group import ScalingGroupOpts
 from ai.backend.manager.scheduler.predicates import check_scaling_group
 
 
@@ -15,21 +16,21 @@ async def test_allowed_session_types_check(mock_query):
     mock_query.return_value = [
         {
             'name': 'a',
-            'scheduler_opts': {
+            'scheduler_opts': ScalingGroupOpts().from_json({
                 'allowed_session_types': ['batch'],
-            },
+            }),
         },
         {
             'name': 'b',
-            'scheduler_opts': {
+            'scheduler_opts': ScalingGroupOpts().from_json({
                 'allowed_session_types': ['interactive'],
-            },
+            }),
         },
         {
             'name': 'c',
-            'scheduler_opts': {
+            'scheduler_opts': ScalingGroupOpts().from_json({
                 'allowed_session_types': ['batch', 'interactive'],
-            },
+            }),
         },
     ]
     mock_conn = MagicMock()
@@ -138,9 +139,9 @@ async def test_allowed_session_types_check(mock_query):
     mock_query.return_value = [
         {
             'name': 'a',
-            'scheduler_opts': {
+            'scheduler_opts': ScalingGroupOpts.from_json({
                 'allowed_session_types': ['batch'],
-            },
+            }),
         },
     ]
 
