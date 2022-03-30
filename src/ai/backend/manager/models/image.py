@@ -250,14 +250,14 @@ class ImageRow(Base):
         candidates: List[ImageRow] = result.scalars().all()
 
         if len(candidates) == 0:
-            raise UnknownImageReference
+            raise UnknownImageReference(ref)
         if len(candidates) == 1 and not strict_arch:
             return candidates[0]
         for row in candidates:
             log.debug('row: {}', row)
             if row.architecture == ref.architecture:
                 return row
-        raise UnknownImageReference
+        raise UnknownImageReference(ref)
 
     @classmethod
     async def resolve(
@@ -296,22 +296,25 @@ class ImageRow(Base):
         When *strict_arch* is False and the image table has only one row
         with respect to requested canonical, this function will
         return that row regardless of the image architecture.
+
+        When *load_aliases* is True, it tries to resolve the alias chain.
+        Otherwise it finds only the direct image references.
         """
-        err_msg = 'Unkown image canonical or alias'
+        searched_refs = []
         for reference in reference_candidates:
             resolver_func: Any = None
-            if isinstance(reference, str):
+            if isinstance(reference, (ImageAlias, str)):
                 resolver_func = cls.from_alias
-                err_msg += f', alias name: {reference}'
+                searched_refs.append(f"alias:{reference!r}")
             elif isinstance(reference, ImageRef):
                 resolver_func = functools.partial(cls.from_image_ref, strict_arch=strict_arch)
-                err_msg += f', reference canonical: {reference.canonical}'
+                searched_refs.append(f"ref:{reference.canonical!r}")
             try:
                 if (row := await resolver_func(session, reference, load_aliases=load_aliases)):
                     return row
             except UnknownImageReference:
                 continue
-        raise ImageNotFound(err_msg)
+        raise ImageNotFound("Unkown image references: " + ", ".join(searched_refs))
 
     @classmethod
     async def list(cls, session: AsyncSession, load_aliases=False) -> List[ImageRow]:
