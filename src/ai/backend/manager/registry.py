@@ -1635,19 +1635,19 @@ class AgentRegistry:
         kp_key = 'keypair.concurrency_used'
 
         async def _update(r: aioredis.Redis):
-            m: Mapping[str, int] = \
+            updates: Mapping[str, int] = \
                 {f'{kp_key}.{k}': concurrency_used_per_key[k] for k in concurrency_used_per_key}
-            if m != {}:
-                await r.mset(m)
+            if updates:
+                await r.mset(updates)
 
         async def _update_by_fullscan(r: aioredis.Redis):
-            m: Dict[str, int] = {}
+            updates: Dict[str, int] = {}
             keys = await r.keys(f'{kp_key}.*')
             for ak in keys:
                 usage = concurrency_used_per_key.get(ak, 0)
-                m[f'{kp_key}.{ak}'] = usage
-            if m != {}:
-                await r.mset(m)
+                updates[f'{kp_key}.{ak}'] = usage
+            if updates:
+                await r.mset(updates)
 
         if do_fullscan:
             await redis.execute(
