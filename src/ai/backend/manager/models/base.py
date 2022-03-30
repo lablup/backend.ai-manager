@@ -219,7 +219,14 @@ class StructuredJSONColumn(TypeDecorator):
     def process_bind_param(self, value, dialect):
         if value is None:
             return self._schema.check({})
-        return self._schema.check(value)
+        try:
+            self._schema.check(value)
+        except t.DataError as e:
+            raise ValueError(
+                "The given value does not conform with the structured json column format.",
+                e.as_dict(),
+            )
+        return value
 
     def process_result_value(self, raw_value, dialect):
         if raw_value is None:
