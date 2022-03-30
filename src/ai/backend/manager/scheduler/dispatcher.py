@@ -294,6 +294,14 @@ class SchedulerDispatcher(aobject):
                     await db_conn.execute(query)
 
             await execute_with_retry(_apply_cancellation)
+            for item in cancelled_session_rows:
+                await self.event_producer.produce_event(
+                    SessionCancelledEvent(
+                        item['session_id'],
+                        item['session_creation_id'],
+                        reason="pending timeout",
+                    ),
+                )
 
         log.debug(
             "running scheduler (sgroup:{}, pending:{}, existing:{}, cancelled:{})",
