@@ -36,8 +36,8 @@ class DRFScheduler(AbstractScheduler):
     per_user_dominant_share: Dict[AccessKey, Decimal]
     total_capacity: ResourceSlot
 
-    def __init__(self, config: Mapping[str, Any]) -> None:
-        super().__init__(config)
+    def __init__(self, sgroup_opts: Mapping[str, Any], config: Mapping[str, Any]) -> None:
+        super().__init__(sgroup_opts, config)
         self.per_user_dominant_share = defaultdict(lambda: Decimal(0))
 
     def pick_session(

@@ -10,7 +10,6 @@ from typing import (
     Awaitable,
     Final,
     List,
-    Mapping,
     Sequence,
     Tuple,
     Union,
@@ -21,6 +20,7 @@ from typing import (
 import aiotools
 from dateutil.tz import tzutc
 import sqlalchemy as sa
+from sqlalchemy.engine.row import Row
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import (
     AsyncConnection as SAConnection,
@@ -104,14 +104,14 @@ _log_args: ContextVar[Tuple[Any, ...]] = ContextVar('_log_args')
 _key_schedule_prep_tasks: Final = "scheduler.preptasks"
 
 
-def load_scheduler(name: str, scheduler_configs: Mapping[str, Any]) -> AbstractScheduler:
+def load_scheduler(name: str, scheduler_opts: dict[str, Any]) -> AbstractScheduler:
     entry_prefix = 'backendai_scheduler_v10'
     for entrypoint in pkg_resources.iter_entry_points(entry_prefix):
         if entrypoint.name == name:
             log.debug('loading scheduler plugin "{}" from {}', name, entrypoint.module_name)
             scheduler_cls = entrypoint.load()
-            scheduler_config = scheduler_configs.get(name, {})
-            return scheduler_cls(scheduler_config)
+            scheduler_specific_config = scheduler_opts.pop(name, {})
+            return scheduler_cls(scheduler_opts, scheduler_specific_config)
     raise ImportError('Cannot load the scheduler plugin', name)
 
 
@@ -269,15 +269,36 @@ class SchedulerDispatcher(aobject):
     ) -> None:
         async with self.db.begin_readonly() as kernel_db_conn:
             scheduler = await self._load_scheduler(kernel_db_conn, sgroup_name)
-            pending_sessions = await _list_pending_sessions(kernel_db_conn, sgroup_name)
+            pending_sessions, cancelled_sessions = \
+                await _list_pending_sessions(kernel_db_conn, scheduler, sgroup_name)
             existing_sessions = await _list_existing_sessions(kernel_db_conn, sgroup_name)
-        log.debug('running scheduler (sgroup:{}, pending:{}, existing:{})',
-                  sgroup_name, len(pending_sessions), len(existing_sessions))
+
+        if cancelled_sessions:
+            now = datetime.now(tzutc())
+
+            async def _apply_cancellation():
+                async with self.db.begin() as db_conn:
+                    query = kernels.update().values({
+                        'status': KernelStatus.CANCELLED,
+                        'status_changed': now,
+                        'status_info': "pending-timeout",
+                        'terminated_at': now,
+                    }).where(kernels.c.session_id.in_([
+                        item['session_id'] for item in cancelled_sessions
+                    ]))
+                    await db_conn.execute(query)
+
+            await execute_with_retry(_apply_cancellation)
+
+        log.debug(
+            "running scheduler (sgroup:{}, pending:{}, existing:{}, cancelled:{})",
+            sgroup_name, len(pending_sessions), len(existing_sessions), len(cancelled_sessions),
+        )
         zero = ResourceSlot()
         num_scheduled = 0
         while len(pending_sessions) > 0:
 
-            async with self.db.begin() as conn:
+            async with self.db.begin_readonly() as conn:
                 candidate_agents = await _list_agents_by_sgroup(conn, sgroup_name)
                 total_capacity = sum((ag.available_slots for ag in candidate_agents), zero)
 
@@ -396,7 +417,7 @@ class SchedulerDispatcher(aobject):
                         query = kernels.update().values({
                             'status_info': "predicate-checks-failed",
                             'status_data': sql_json_increment(
-                                kernels.c.status_data,
+                                kernels.c.stats_data,
                                 ('scheduler', 'retries'),
                                 parent_updates={
                                     'last_try': datetime.now(tzutc()).isoformat(),
@@ -428,32 +449,6 @@ class SchedulerDispatcher(aobject):
                         await conn.execute(query)
 
                 await execute_with_retry(_update)
-
-            async with self.db.begin_readonly() as conn:
-                query = (
-                    sa.select(scaling_groups.c.scheduler_opts)
-                    .select_from(scaling_groups)
-                    .where(scaling_groups.c.name == sgroup_name)
-                )
-                scheduler_opts_result = await conn.execute(query)
-
-            row = scheduler_opts_result.first()
-            pending_timeout = row['scheduler_opts']['pending_timeout']
-            if pending_timeout > 0:
-                pending_time = (datetime.now(tzutc()) - sess_ctx.kernels[0].created_at).seconds
-                if pending_time > pending_timeout:
-                    async def _update() -> None:
-                        async with self.db.begin() as db_conn:
-                            now = datetime.now(tzutc())
-                            query = kernels.update().values({
-                                'status': KernelStatus.CANCELLED,
-                                'status_changed': now,
-                                'status_info': "pending-timeut",
-                                'terminated_at': now,
-                            }).where(kernels.c.session_id == sess_ctx.session_id)
-                            await db_conn.execute(query)
-
-                    await execute_with_retry(_update)
 
             if sess_ctx.cluster_mode == ClusterMode.SINGLE_NODE:
                 # Single node session can't have multiple containers with different arch
@@ -876,8 +871,10 @@ class SchedulerDispatcher(aobject):
 
 async def _list_pending_sessions(
     db_conn: SAConnection,
+    scheduler: AbstractScheduler,
     sgroup_name: str,
-) -> List[PendingSession]:
+) -> tuple[list[PendingSession], list[Row]]:
+    pending_timeout = scheduler.sgroup_opts['pending_timeout']
     query = (
         PendingSession.base_query()
         .where(
@@ -888,7 +885,16 @@ async def _list_pending_sessions(
         )
     )
     rows = (await db_conn.execute(query)).fetchall()
-    return PendingSession.from_rows(rows)
+    candidate_rows = []
+    cancelled_rows = []
+    now = datetime.now(tzutc())
+    for row in rows:
+        elapsed_pending_time = (now - row['created_at']).seconds
+        if pending_timeout > 0 and elapsed_pending_time >= pending_timeout:
+            cancelled_rows.append(row)
+        else:
+            candidate_rows.append(row)
+    return PendingSession.from_rows(candidate_rows), cancelled_rows
 
 
 async def _list_existing_sessions(

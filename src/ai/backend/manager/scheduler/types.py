@@ -396,10 +396,12 @@ class AbstractScheduler(metaclass=ABCMeta):
     ``schedule()`` method is a pure function.
     """
 
+    sgroup_opts: Mapping[str, Any]
     config: Mapping[str, Any]
     config_iv: t.Dict
 
-    def __init__(self, config: Mapping[str, Any]) -> None:
+    def __init__(self, sgroup_opts: Mapping[str, Any], config: Mapping[str, Any]) -> None:
+        self.sgroup_opts = sgroup_opts
         self.config = self.config_iv.check(config)
 
     @abstractmethod
