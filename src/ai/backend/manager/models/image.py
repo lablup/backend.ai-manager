@@ -268,24 +268,34 @@ class ImageRow(Base):
         load_aliases=True,
         strict=False,
     ) -> ImageRow:
-        """Tries to resolve matching row of image table by iterating through reference_candidates.
-        If type of candidate element is `str`, it'll be considered only as an alias to image.
-        Passing image canonical directly to resolve image data is no longer possible.
-        You need to declare ImageRef object explicitly if you're using string
-        as an image canonical. For example:
-        ```
-        await resolve_image_row(conn, [
-            ImageRef(params['image'], params['image'],
-            params['architecture']),
-        ])
-        ```
-        This kind of pattern is considered as 'good use case',
-        since accepting multiple reference candidates is intended to make
-        user explicitly declare that the code will first try to consider string
-        as an image canonical and try to load image, and changes to alias if it fails.
-        if `strict` is False and image table has only one row
+        """
+        Resolves a matching row in the image table from image references and/or aliases.
+        If candidate element is `ImageRef`, this method will try to resolve image with matching
+        `ImageRef` description. Otherwise, if element is `str`, this will try to follow the alias.
+        If multiple elements are supplied, this method will return the first matched `ImageRow`
+        among those elements.
+        Passing the canonical image reference as string directly to resolve image data
+        is no longer possible. You need to declare ImageRef object explicitly if you're using string
+        as an canonical image references. For example:
+        .. code-block::
+           await ImageRow.resolve(
+               conn,
+               [
+                   ImageRef(
+                       image,
+                       registry,
+                       architecture,
+                   ),
+                   image_alias,
+               ],
+           )
+
+        When *strict_arch* is False and the image table has only one row
         with respect to requested canonical, this function will
-        return that row regardless of actual architecture.
+        return that row regardless of the image architecture.
+
+        When *load_aliases* is True, it tries to resolve the alias chain.
+        Otherwise it finds only the direct image references.
         """
 
         for reference in reference_candidates:
