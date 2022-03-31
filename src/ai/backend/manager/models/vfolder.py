@@ -622,24 +622,24 @@ class VirtualFolder(graphene.ObjectType):
         if row is None:
             return None
         return cls(
-            id=row['vfolders_id'],
-            host=row['vfolders_host'],
-            name=row['vfolders_name'],
-            user=row['vfolders_user'],
+            id=row['id'],
+            host=row['host'],
+            name=row['name'],
+            user=row['user'],
             user_email=row['users_email'],
-            group=row['vfolders_group'],
+            group=row['group'],
             group_name=row['groups_name'],
-            creator=row['vfolders_creator'],
-            unmanaged_path=row['vfolders_unmanaged_path'],
-            usage_mode=row['vfolders_usage_mode'],
-            permission=row['vfolders_permission'],
-            ownership_type=row['vfolders_ownership_type'],
-            max_files=row['vfolders_max_files'],
-            max_size=row['vfolders_max_size'],    # in MiB
-            created_at=row['vfolders_created_at'],
-            last_used=row['vfolders_last_used'],
+            creator=row['creator'],
+            unmanaged_path=row['unmanaged_path'],
+            usage_mode=row['usage_mode'],
+            permission=row['permission'],
+            ownership_type=row['ownership_type'],
+            max_files=row['max_files'],
+            max_size=row['max_size'],    # in MiB
+            created_at=row['created_at'],
+            last_used=row['last_used'],
             # num_attached=row['num_attached'],
-            cloneable=row['vfolders_cloneable'],
+            cloneable=row['cloneable'],
         )
 
     async def resolve_num_files(self, info: graphene.ResolveInfo) -> int:
@@ -743,7 +743,7 @@ class VirtualFolder(graphene.ObjectType):
             .join(groups, vfolders.c.group == groups.c.id, isouter=True)
         )
         query = (
-            sa.select([vfolders, users.c.email, groups.c.name], use_labels=True)
+            sa.select([vfolders, users.c.email, groups.c.name.label('groups_name')])
             .select_from(j)
             .limit(limit)
             .offset(offset)
