@@ -21,6 +21,7 @@ from typing import (
     Tuple,
     Type,
 )
+from unittest.mock import MagicMock, AsyncMock
 from urllib.parse import quote_plus as urlquote
 
 import aiohttp
@@ -31,6 +32,7 @@ import pytest
 from sqlalchemy.ext.asyncio.engine import AsyncEngine as SAEngine
 
 from ai.backend.common.config import redis_config_iv
+from ai.backend.common.plugin.hook import HookPluginContext
 from ai.backend.common.types import HostPortPair
 from ai.backend.manager.api.context import RootContext
 from ai.backend.manager.config import LocalConfig, SharedConfig, load as load_config
@@ -47,6 +49,7 @@ from ai.backend.manager.models import (
     kernels, keypairs, vfolders,
 )
 from ai.backend.manager.models.utils import connect_database
+from ai.backend.manager.registry import AgentRegistry
 
 here = Path(__file__).parent
 
@@ -520,3 +523,60 @@ async def prepare_kernel(request, create_app_and_client,
         await root_ctx.registry.destroy_session(sess_id, access_key)
     except Exception:
         pass
+
+
+class DummyEtcd:
+    async def get_prefix(self, key: str) -> Mapping[str, Any]:
+        return {}
+
+
+@pytest.fixture
+async def registry_ctx(mocker):
+    mock_shared_config = MagicMock()
+    mock_shared_config.update_resource_slots = AsyncMock()
+    mock_shared_config.etcd = None
+    mock_db = MagicMock()
+    mock_dbconn = MagicMock()
+    mock_dbconn_ctx = MagicMock()
+    mock_dbresult = MagicMock()
+    mock_dbresult.rowcount = 1
+    mock_db.connect = MagicMock(return_value=mock_dbconn_ctx)
+    mock_db.begin = MagicMock(return_value=mock_dbconn_ctx)
+    mock_dbconn_ctx.__aenter__ = AsyncMock(return_value=mock_dbconn)
+    mock_dbconn_ctx.__aexit__ = AsyncMock()
+    mock_dbconn.execute = AsyncMock(return_value=mock_dbresult)
+    mock_dbconn.begin = MagicMock(return_value=mock_dbconn_ctx)
+    mock_redis_stat = MagicMock()
+    mock_redis_live = MagicMock()
+    mock_redis_live.hset = AsyncMock()
+    mock_redis_image = MagicMock()
+    mock_event_dispatcher = MagicMock()
+    mock_event_producer = MagicMock()
+    mock_event_producer.produce_event = AsyncMock()
+    mocked_etcd = DummyEtcd()
+    # mocker.object.patch(mocked_etcd, 'get_prefix', AsyncMock(return_value={}))
+    hook_plugin_ctx = HookPluginContext(mocked_etcd, {})  # type: ignore
+
+    registry = AgentRegistry(
+        shared_config=mock_shared_config,
+        db=mock_db,
+        redis_stat=mock_redis_stat,
+        redis_live=mock_redis_live,
+        redis_image=mock_redis_image,
+        event_dispatcher=mock_event_dispatcher,
+        event_producer=mock_event_producer,
+        storage_manager=None,  # type: ignore
+        hook_plugin_ctx=hook_plugin_ctx,
+    )
+    await registry.init()
+    try:
+        yield (
+            registry,
+            mock_dbconn,
+            mock_dbresult,
+            mock_shared_config,
+            mock_event_dispatcher,
+            mock_event_producer,
+        )
+    finally:
+        await registry.shutdown()

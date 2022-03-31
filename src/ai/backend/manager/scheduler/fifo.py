@@ -1,12 +1,9 @@
 from __future__ import annotations
-
 from decimal import Decimal
 from typing import (
-    Any,
     List,
     Optional,
     Sequence,
-    Mapping,
     Tuple,
 )
 
@@ -119,9 +116,6 @@ class FIFOSlotScheduler(AbstractScheduler):
 class LIFOSlotScheduler(AbstractScheduler):
 
     config_iv = t.Dict({}).allow_extra('*')
-
-    def __init__(self, config: Mapping[str, Any]) -> None:
-        super().__init__(config)
 
     def pick_session(
         self,

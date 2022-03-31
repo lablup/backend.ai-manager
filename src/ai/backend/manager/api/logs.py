@@ -109,7 +109,7 @@ async def list_logs(request: web.Request, params: Any) -> web.Response:
             .limit(params['page_size'])
         )
         count_query = (
-            sa.select([sa.func.count(error_logs.c.message)])
+            sa.select([sa.func.count()])
             .select_from(error_logs)
         )
         if params['page_no'] > 1:

@@ -20,7 +20,7 @@ import aiotools
 import graphene
 from graphql.execution.executors.asyncio import AsyncioExecutor
 import sqlalchemy as sa
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import (
     relationship,
     selectinload,
@@ -214,13 +214,10 @@ class ImageRow(Base):
         alias: str,
         load_aliases=False,
     ) -> ImageRow:
-        query = \
-            sa.select(ImageRow).select_from(
-                sa.join(ImageRow, ImageAliasRow, (
-                    (ImageAliasRow.image == ImageRow.id) &
-                    (ImageAliasRow.alias == alias)
-                )),
-            )
+        query = (
+            sa.select(ImageRow).select_from(ImageRow)
+            .join(ImageAliasRow, ImageRow.aliases.and_(ImageAliasRow.alias == alias))
+        )
         if load_aliases:
             query = query.options(selectinload(ImageRow.aliases))
         result = await session.scalar(query)
@@ -234,14 +231,16 @@ class ImageRow(Base):
         cls,
         session: AsyncSession,
         ref: ImageRef,
-        strict=False,
-        load_aliases=False,
+        *,
+        strict_arch: bool = False,
+        load_aliases: bool = False,
     ) -> ImageRow:
         """
-        loads image row with given ImageRef object.
-        if `strict` is False and image table has only one row
+        Loads a image row that corresponds to the given ImageRef object.
+
+        When *strict_arch* is False and the image table has only one row
         with respect to requested canonical, this function will
-        return that row regardless of actual architecture.
+        return that row regardless of the image architecture.
         """
         query = sa.select(ImageRow).where(ImageRow.name == ref.canonical)
         if load_aliases:
@@ -251,52 +250,67 @@ class ImageRow(Base):
         candidates: List[ImageRow] = result.scalars().all()
 
         if len(candidates) == 0:
-            raise UnknownImageReference
-        if len(candidates) == 1 and not strict:
+            raise UnknownImageReference(ref)
+        if len(candidates) == 1 and not strict_arch:
             return candidates[0]
         for row in candidates:
-            log.debug('row: {}', row)
             if row.architecture == ref.architecture:
                 return row
-        raise UnknownImageReference
+        raise UnknownImageReference(ref)
 
     @classmethod
     async def resolve(
         cls,
-        session: AsyncConnection,
+        session: AsyncSession,
         reference_candidates: List[Union[ImageAlias, ImageRef]],
-        load_aliases=True,
-        strict=False,
+        *,
+        strict_arch: bool = False,
+        load_aliases: bool = True,
     ) -> ImageRow:
-        """Tries to resolve matching row of image table by iterating through reference_candidates.
-        If type of candidate element is `str`, it'll be considered only as an alias to image.
-        Passing image canonical directly to resolve image data is no longer possible.
-        You need to declare ImageRef object explicitly if you're using string
-        as an image canonical. For example:
-        ```
-        await resolve_image_row(conn, [
-            ImageRef(params['image'], params['image'],
-            params['architecture']),
-        ])
-        ```
-        This kind of pattern is considered as 'good use case',
-        since accepting multiple reference candidates is intended to make
-        user explicitly declare that the code will first try to consider string
-        as an image canonical and try to load image, and changes to alias if it fails.
-        if `strict` is False and image table has only one row
-        with respect to requested canonical, this function will
-        return that row regardless of actual architecture.
         """
+        Resolves a matching row in the image table from image references and/or aliases.
+        If candidate element is `ImageRef`, this method will try to resolve image with matching
+        `ImageRef` description. Otherwise, if element is `str`, this will try to follow the alias.
+        If multiple elements are supplied, this method will return the first matched `ImageRow`
+        among those elements.
+        Passing the canonical image reference as string directly to resolve image data
+        is no longer possible. You need to declare ImageRef object explicitly if you're using string
+        as an canonical image references. For example:
+        .. code-block::
+           await ImageRow.resolve(
+               conn,
+               [
+                   ImageRef(
+                       image,
+                       registry,
+                       architecture,
+                   ),
+                   image_alias,
+               ],
+           )
 
+        When *strict_arch* is False and the image table has only one row
+        with respect to requested canonical, this function will
+        return that row regardless of the image architecture.
+
+        When *load_aliases* is True, it tries to resolve the alias chain.
+        Otherwise it finds only the direct image references.
+        """
+        searched_refs = []
         for reference in reference_candidates:
             resolver_func: Any = None
             if isinstance(reference, str):
                 resolver_func = cls.from_alias
+                searched_refs.append(f"alias:{reference!r}")
             elif isinstance(reference, ImageRef):
-                resolver_func = functools.partial(cls.from_image_ref, strict=strict)
-            if (row := await resolver_func(session, reference, load_aliases=load_aliases)):
-                return row
-        raise UnknownImageReference
+                resolver_func = functools.partial(cls.from_image_ref, strict_arch=strict_arch)
+                searched_refs.append(f"ref:{reference.canonical!r}")
+            try:
+                if (row := await resolver_func(session, reference, load_aliases=load_aliases)):
+                    return row
+            except UnknownImageReference:
+                continue
+        raise ImageNotFound("Unkown image references: " + ", ".join(searched_refs))
 
     @classmethod
     async def list(cls, session: AsyncSession, load_aliases=False) -> List[ImageRow]:

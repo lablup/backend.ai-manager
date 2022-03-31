@@ -756,7 +756,6 @@ async def signup(request: web.Request, params: Any) -> web.Response:
                 'is_active': True if data.get('status') == UserStatus.ACTIVE else False,
                 'is_admin': False,
                 'resource_policy': resource_policy,
-                'concurrency_used': 0,
                 'rate_limit': 1000,
                 'num_queries': 0,
                 'user': user.uuid,

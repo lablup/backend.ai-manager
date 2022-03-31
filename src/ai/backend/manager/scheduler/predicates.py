@@ -8,6 +8,7 @@ from dateutil.tz import tzutc
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
+from ai.backend.common import redis
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
     ResourceSlot,
@@ -16,7 +17,7 @@ from ai.backend.common.types import (
 )
 
 from ..models import (
-    domains, groups, kernels, keypairs,
+    domains, groups, kernels,
     keypair_resource_policies,
     session_dependencies,
     query_allowed_sgroups,
@@ -30,6 +31,23 @@ from .types import (
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.scheduler'))
+
+_check_keypair_concurrency_script = '''
+local key = KEYS[1]
+local limit = tonumber(ARGV[1])
+local result = {}
+redis.call('SETNX', key, 0)
+local count = tonumber(redis.call('GET', key))
+if limit > 0 and count >= limit then
+    result[1] = 0
+    result[2] = count
+    return result
+end
+redis.call('INCR', key)
+result[1] = 1
+result[2] = count + 1
+return result
+'''
 
 
 async def check_reserved_batch_session(
@@ -61,44 +79,36 @@ async def check_concurrency(
     sess_ctx: PendingSession,
 ) -> PredicateResult:
 
-    async def _check() -> PredicateResult:
-        async with db_conn.begin_nested():
-            select_query = (
-                sa.select([keypair_resource_policies])
-                .select_from(keypair_resource_policies)
-                .where(keypair_resource_policies.c.name == sess_ctx.resource_policy)
-            )
-            result = await db_conn.execute(select_query)
-            resource_policy = result.first()
-            select_query = (
-                sa.select([keypairs.c.concurrency_used])
-                .select_from(keypairs)
-                .where(keypairs.c.access_key == sess_ctx.access_key)
-                .with_for_update()
-            )
-            concurrency_used = (await db_conn.execute(select_query)).scalar()
-            log.debug(
-                'access_key: {0} ({1} / {2})',
-                sess_ctx.access_key, concurrency_used,
-                resource_policy['max_concurrent_sessions'],
-            )
-            if concurrency_used >= resource_policy['max_concurrent_sessions']:
-                return PredicateResult(
-                    False,
-                    "You cannot run more than "
-                    f"{resource_policy['max_concurrent_sessions']} concurrent sessions",
-                )
+    async def _get_max_concurrent_sessions() -> int:
+        select_query = (
+            sa.select([keypair_resource_policies])
+            .select_from(keypair_resource_policies)
+            .where(keypair_resource_policies.c.name == sess_ctx.resource_policy)
+        )
+        result = await db_conn.execute(select_query)
+        return result.first()['max_concurrent_sessions']
 
-            # Increment concurrency usage of keypair.
-            update_query = (
-                sa.update(keypairs)
-                .values(concurrency_used=keypairs.c.concurrency_used + 1)
-                .where(keypairs.c.access_key == sess_ctx.access_key)
-            )
-            await db_conn.execute(update_query)
-            return PredicateResult(True)
-
-    return await execute_with_retry(_check)
+    max_concurrent_sessions = await execute_with_retry(_get_max_concurrent_sessions)
+    ok, concurrency_used = await redis.execute_script(
+        sched_ctx.registry.redis_stat,
+        'check_keypair_concurrency_used',
+        _check_keypair_concurrency_script,
+        [f"keypair.concurrency_used.{sess_ctx.access_key}"],
+        [max_concurrent_sessions],
+    )
+    if ok == 0:
+        return PredicateResult(
+            False,
+            "You cannot run more than "
+            f"{max_concurrent_sessions} concurrent sessions",
+        )
+    log.debug(
+        'number of concurrent sessions of ak:{0} = {1} / {2}',
+        sess_ctx.access_key,
+        concurrency_used,
+        max_concurrent_sessions,
+    )
+    return PredicateResult(True)
 
 
 async def check_dependencies(
@@ -260,7 +270,7 @@ async def check_scaling_group(
                 f"You do not have access to the scaling group '{preferred_sgroup_name}'.",
                 permanent=True,
             )
-        allowed_session_types = sgroup['scheduler_opts']['allowed_session_types']
+        allowed_session_types = sgroup['scheduler_opts'].allowed_session_types
         if sess_ctx.session_type.value.lower() not in allowed_session_types:
             return PredicateResult(
                 False,
@@ -273,7 +283,7 @@ async def check_scaling_group(
         # Consider all allowed scaling groups.
         usable_sgroups = []
         for sgroup in sgroups:
-            allowed_session_types = sgroup['scheduler_opts']['allowed_session_types']
+            allowed_session_types = sgroup['scheduler_opts'].allowed_session_types
             if sess_ctx.session_type.value.lower() in allowed_session_types:
                 usable_sgroups.append(sgroup)
         if not usable_sgroups:

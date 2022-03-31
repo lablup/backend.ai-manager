@@ -706,7 +706,7 @@ class VirtualFolder(graphene.ObjectType):
             .join(groups, vfolders.c.group == groups.c.id, isouter=True)
         )
         query = (
-            sa.select([sa.func.count(vfolders.c.id)])
+            sa.select([sa.func.count()])
             .select_from(j)
         )
         if domain_name is not None:

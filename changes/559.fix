@@ -1,1 +1,0 @@
-Alter the `agents.architecture` column type from `CHAR` to `String` to prevent implicit addition of trailing whitespaces
