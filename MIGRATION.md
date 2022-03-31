@@ -13,6 +13,14 @@ Backend.AI Migration Guide
   - The `kernels.last_stat` column is still there but it will get updated only when the kernels terminate.
     There is a backup option to restore prior behavior of periodic sync: `debug.periodic-sync-stats` in
     `manager.toml`, though.
+
+* The Redis container used with the manager should be reconfigured to use a persistent database.
+  The Docker official image uses `/data` as the directory to store RDB/AOF files.
+  In HA setup, it is recommended to enable AOF by `appendonly yes` in the Redis configuration to make it
+  recoverable after hardware failures.
+
+  Consult [the official doc](https://redis.io/docs/manual/persistence/) for more details.
+
 * Configure an explicit cron job to execute `backend.ai mgr clear-history -r {retention}` which trims old
   sessions execution logs from the PostgreSQL and Redis databases to avoid indefinite grow of disk and
   memory usage of the manager.
