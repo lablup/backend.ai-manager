@@ -1360,6 +1360,7 @@ async def invoke_session_callback(
         "type": "session_lifecycle",
         "event": event.name.removeprefix("session_"),
         "session_id": event.session_id,
+        "when": datetime.now(tzutc()).isoformat(),
     }
     try:
         session = await root_ctx.registry.get_session_by_session_id(event.session_id)
