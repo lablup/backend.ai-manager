@@ -21,6 +21,13 @@ Backend.AI Migration Guide
 
   Consult [the official doc](https://redis.io/docs/manual/persistence/) for more details.
 
+* The image metadata database is migrated from etcd to PostgreSQL while the registry configuration is
+  still inside the etcd.
+
+  Run `backend.ai mgr image rescan` in the manager venv or `backend.ai admin image rescan` from clients
+  with the superadmin privilege to resync the image database.  The old etcd image database will no longer
+  be used.
+
 * Configure an explicit cron job to execute `backend.ai mgr clear-history -r {retention}` which trims old
   sessions' execution records from the PostgreSQL and Redis databases to avoid indefinite grow of disk
   and memory usage of the manager.
