@@ -1327,7 +1327,7 @@ async def handle_kernel_stat_sync(
 async def _make_session_callback(data: dict[str, Any], url: yarl.URL) -> None:
     async with aiohttp.ClientSession() as session:
         try:
-            async with session.post(url, data=data) as response:
+            async with session.post(url, json=data) as response:
                 if response.content_length > 0:
                     log.warning(
                         "Session lifecycle callbacks should respond with an empty body: "
