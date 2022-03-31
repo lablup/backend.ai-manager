@@ -178,10 +178,29 @@ def clear_history(cli_ctx: CLIContext, retention, vacuum_full) -> None:
                             )
                         # Each DEL command returns the number of keys deleted.
                         delete_count += sum(results)
-                log.info(
-                    "Cleaned up {:,} redis statistics records older than {:}.",
-                    delete_count, expiration_date,
-                )
+                        log.info(
+                            "Cleaned up {:,} redis statistics records older than {:}.",
+                            delete_count, expiration_date,
+                        )
+
+                async with redis_ctx(cli_ctx) as redis_conn_set:
+                    # Sync and compact the persistent database of Redis
+                    redis_config = await redis_helper.execute(
+                        redis_conn_set.stat,
+                        lambda r: r.config_get("appendonly")
+                    )
+                    if redis_config['appendonly'] == 'yes':
+                        await redis_helper.execute(
+                            redis_conn_set.stat,
+                            lambda r: r.bgrewriteaof()
+                        )
+                        log.info("Issued BGREWRITEAOF to the Redis database.")
+                    else:
+                        await redis_helper.execute(
+                            redis_conn_set.stat,
+                            lambda r: r.bgsave()
+                        )
+                        log.info("Issued BGSAVE to the Redis database.")
             except:
                 log.exception("Unexpected error while cleaning up redis history")
 
