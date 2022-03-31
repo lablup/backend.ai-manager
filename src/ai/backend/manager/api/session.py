@@ -71,6 +71,9 @@ from ai.backend.common.events import (
     KernelStartedEvent,
     KernelTerminatedEvent,
     KernelTerminatingEvent,
+    SessionEnqueuedEvent,
+    SessionScheduledEvent,
+    SessionPreparingEvent,
     SessionCancelledEvent,
     SessionFailureEvent,
     SessionStartedEvent,
@@ -1321,7 +1324,7 @@ async def handle_kernel_stat_sync(
         await root_ctx.registry.sync_kernel_stats(event.kernel_ids)
 
 
-async def _make_webhook_call(data: dict[str, Any], url: yarl.URL) -> None:
+async def _make_session_callback(data: dict[str, Any], url: yarl.URL) -> None:
     async with aiohttp.ClientSession() as session:
         try:
             async with session.post(url, data=data) as response:
@@ -1347,21 +1350,26 @@ async def _make_webhook_call(data: dict[str, Any], url: yarl.URL) -> None:
 async def invoke_session_callback(
     app: web.Application,
     source: AgentId,
-    event: SessionStartedEvent | SessionCancelledEvent | SessionTerminatedEvent
-            | SessionSuccessEvent | SessionFailureEvent,
+    event: SessionEnqueuedEvent | SessionScheduledEvent | SessionPreparingEvent
+           | SessionStartedEvent | SessionCancelledEvent | SessionTerminatedEvent
+           | SessionSuccessEvent | SessionFailureEvent,
 ) -> None:
     app_ctx: PrivateContext = app['session.context']
     root_ctx: RootContext = app['_root.context']
     data = {
-        "name": event.name,
+        "type": "session_lifecycle",
+        "event": event.name.removeprefix("session_"),
         "session_id": event.session_id,
     }
-    session = await root_ctx.registry.get_session_by_session_id(event.session_id)
+    try:
+        session = await root_ctx.registry.get_session_by_session_id(event.session_id)
+    except SessionNotFound:
+        return
     url = session['callback_url']
     if url is None:
         return
     app_ctx.webhook_ptask_group.create_task(
-        _make_webhook_call(data, url),
+        _make_session_callback(data, url),
     )
 
 
@@ -2166,6 +2174,9 @@ async def init(app: web.Application) -> None:
     evd.consume(
         SessionTerminatedEvent, app, handle_session_termination_lifecycle, name="api.session.sterm",
     )
+    evd.consume(SessionEnqueuedEvent, app, invoke_session_callback)
+    evd.consume(SessionScheduledEvent, app, invoke_session_callback)
+    evd.consume(SessionPreparingEvent, app, invoke_session_callback)
     evd.consume(SessionStartedEvent, app, invoke_session_callback)
     evd.consume(SessionCancelledEvent, app, invoke_session_callback)
     evd.consume(SessionTerminatedEvent, app, invoke_session_callback)
