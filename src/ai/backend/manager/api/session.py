@@ -30,6 +30,7 @@ from typing import (
 )
 from urllib.parse import urlparse
 import uuid
+import yarl
 
 import aiohttp
 from aiohttp import web, hdrs
@@ -534,6 +535,7 @@ async def _create(request: web.Request, params: dict[str, Any]) -> web.Response:
                 starts_at=starts_at,
                 agent_list=params['config']['agent_list'],
                 dependency_sessions=params['dependencies'],
+                callback_url=params['callback_url'],
             )),
         )
         resp['sessionId'] = str(kernel_id)  # changed since API v5
@@ -631,6 +633,8 @@ async def _create(request: web.Request, params: dict[str, Any]) -> web.Response:
             UndefChecker | t.Null | t.String,
         t.Key('dependencies', default=undefined):
             UndefChecker | t.Null | t.List(tx.UUID) | t.List(t.String),
+        tx.AliasedKey(['callback_url', 'callbackUrl', 'callbackURL'], defualt=undefined):
+            UndefChecker | t.Null | tx.URL,
         t.Key('owner_access_key', default=undefined): UndefChecker | t.Null | t.String,
     },
 ), loads=_json_loads)
@@ -803,6 +807,7 @@ async def create_from_template(request: web.Request, params: dict[str, Any]) -> 
         t.Key('startupCommand', default=None) >> 'startup_command': t.Null | t.String,
         tx.AliasedKey(['bootstrap_script', 'bootstrapScript'], default=None): t.Null | t.String,
         t.Key('dependencies', default=None): t.Null | t.List(tx.UUID) | t.List(t.String),
+        tx.AliasedKey(['callback_url', 'callbackUrl', 'callbackURL'], defualt=None): t.Null | tx.URL,
         t.Key('owner_access_key', default=None): t.Null | t.String,
     }),
     loads=_json_loads)
@@ -1314,6 +1319,50 @@ async def handle_kernel_stat_sync(
     root_ctx: RootContext = app['_root.context']
     if root_ctx.local_config['debug']['periodic-sync-stats']:
         await root_ctx.registry.sync_kernel_stats(event.kernel_ids)
+
+
+async def _make_webhook_call(data: dict[str, Any], url: yarl.URL) -> None:
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.post(url, data=data) as response:
+                if response.content_length > 0:
+                    log.warning(
+                        "Session lifecycle callbacks should respond with an empty body: "
+                        "(e:{}, s:{}, url:{})",
+                        data['name'], data['session_id'], url,
+                    )
+            log.info(
+                "Session lifecycle callback result (e:{}, s:{}, url:{}): {} {}",
+                data['name'], data['session_id'], url,
+                response.status, response.reason,
+            )
+        except aiohttp.ClientError as e:
+            log.warning(
+                "Session lifecycle callback failed (e:{}, s:{}, url:{}): {}",
+                data['name'], data['session_id'], url,
+                repr(e),
+            )
+
+
+async def invoke_session_callback(
+    app: web.Application,
+    source: AgentId,
+    event: SessionStartedEvent | SessionCancelledEvent | SessionTerminatedEvent
+            | SessionSuccessEvent | SessionFailureEvent,
+) -> None:
+    app_ctx: PrivateContext = app['session.context']
+    root_ctx: RootContext = app['_root.context']
+    data = {
+        "name": event.name,
+        "session_id": event.session_id,
+    }
+    session = await root_ctx.registry.get_session_by_session_id(event.session_id)
+    url = session['callback_url']
+    if url is None:
+        return
+    app_ctx.webhook_ptask_group.create_task(
+        _make_webhook_call(data, url),
+    )
 
 
 async def handle_batch_result(
@@ -2084,6 +2133,7 @@ class PrivateContext:
     stats_task: asyncio.Task[None]
     database_ptask_group: aiotools.PersistentTaskGroup
     rpc_ptask_group: aiotools.PersistentTaskGroup
+    webhook_ptask_group: aiotools.PersistentTaskGroup
 
 
 async def init(app: web.Application) -> None:
@@ -2092,6 +2142,7 @@ async def init(app: web.Application) -> None:
     app_ctx.session_creation_tracker = {}
     app_ctx.database_ptask_group = aiotools.PersistentTaskGroup()
     app_ctx.rpc_ptask_group = aiotools.PersistentTaskGroup()
+    app_ctx.webhook_ptask_group = aiotools.PersistentTaskGroup()
 
     # passive events
     evd = root_ctx.event_dispatcher
@@ -2115,6 +2166,11 @@ async def init(app: web.Application) -> None:
     evd.consume(
         SessionTerminatedEvent, app, handle_session_termination_lifecycle, name="api.session.sterm",
     )
+    evd.consume(SessionStartedEvent, app, invoke_session_callback)
+    evd.consume(SessionCancelledEvent, app, invoke_session_callback)
+    evd.consume(SessionTerminatedEvent, app, invoke_session_callback)
+    evd.consume(SessionSuccessEvent, app, invoke_session_callback)
+    evd.consume(SessionFailureEvent, app, invoke_session_callback)
     evd.consume(SessionSuccessEvent, app, handle_batch_result)
     evd.consume(SessionFailureEvent, app, handle_batch_result)
     evd.consume(AgentStartedEvent, app, handle_agent_lifecycle)
@@ -2143,6 +2199,7 @@ async def shutdown(app: web.Application) -> None:
     app_ctx.stats_task.cancel()
     await app_ctx.stats_task
 
+    await app_ctx.webhook_ptask_group.shutdown()
     await app_ctx.database_ptask_group.shutdown()
     await app_ctx.rpc_ptask_group.shutdown()
 

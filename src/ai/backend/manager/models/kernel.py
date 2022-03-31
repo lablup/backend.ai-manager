@@ -57,6 +57,7 @@ from .base import (
     ResourceSlotColumn,
     SessionIDColumnType,
     StructuredJSONObjectListColumn,
+    URLColumn,
     batch_result,
     batch_multiresult,
     metadata,
@@ -257,6 +258,7 @@ kernels = sa.Table(
     #         // used to prevent duplication of SessionTerminatedEvent
     #   }
     # }
+    sa.Column('callback_url', URLColumn, nullable=True),
 
     sa.Column('startup_command', sa.Text, nullable=True),
     sa.Column('result', EnumType(SessionResult),

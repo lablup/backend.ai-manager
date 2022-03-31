@@ -51,6 +51,7 @@ from sqlalchemy.types import (
     CHAR,
 )
 from sqlalchemy.dialects.postgresql import UUID, ENUM, JSONB
+import yarl
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
@@ -282,6 +283,26 @@ class StructuredJSONObjectListColumn(TypeDecorator):
 
     def copy(self):
         return StructuredJSONObjectListColumn(self._schema)
+
+
+class URLColumn(TypeDecorator):
+    """
+    A column type for URL strings
+    """
+
+    impl = sa.types.UnicodeText
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if isinstance(value, yarl.URL):
+            return str(value)
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        if value is not None:
+            return yarl.URL(value)
 
 
 class CurrencyTypes(enum.Enum):
