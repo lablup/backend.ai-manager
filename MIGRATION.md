@@ -31,6 +31,8 @@ Backend.AI Migration Guide
   with the superadmin privilege to resync the image database.  The old etcd image database will no longer
   be used.
 
+* (TODO) storage-proxy related stuffs
+
 * Configure an explicit cron job to execute `backend.ai mgr clear-history -r {retention}` which trims old
   sessions' execution records from the PostgreSQL and Redis databases to avoid indefinite grow of disk
   and memory usage of the manager.
