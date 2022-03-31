@@ -699,11 +699,9 @@ class VirtualFolder(graphene.ObjectType):
         filter: str = None,
     ) -> int:
         from .user import users
-        from .group import groups
         j = (
             vfolders
             .join(users, vfolders.c.user == users.c.uuid, isouter=True)
-            .join(groups, vfolders.c.group == groups.c.id, isouter=True)
         )
         query = (
             sa.select([sa.func.count()])

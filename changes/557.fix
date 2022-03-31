@@ -1,1 +1,1 @@
-Refactor #449 to query both user and project folders and add `user_email` and `group_name` to the query parameters.
+Outer join the user table so that the project vfolder is also counted, and add `user_email` and `group_name` fields to the vfolder's load parameter.
