@@ -158,7 +158,7 @@ def clear_history(cli_ctx: CLIContext, retention, vacuum_full) -> None:
                         target_kernels = [str(x['id']) for x in result.all()]
 
                 delete_count = 0
-                if len(target_kernels) > 0:
+                async with redis_ctx(cli_ctx) as redis_conn_set:
 
                     def _build_pipe(
                         r: aioredis.Redis,
@@ -168,7 +168,7 @@ def clear_history(cli_ctx: CLIContext, retention, vacuum_full) -> None:
                         pipe.delete(*kernel_ids)
                         return pipe
 
-                    async with redis_ctx(cli_ctx) as redis_conn_set:
+                    if len(target_kernels) > 0:
                         # Apply chunking to avoid excessive length of command params
                         # and indefinite blocking of the Redis server.
                         for kernel_ids in chunked(target_kernels, 32):
@@ -183,7 +183,6 @@ def clear_history(cli_ctx: CLIContext, retention, vacuum_full) -> None:
                             delete_count, expiration_date,
                         )
 
-                async with redis_ctx(cli_ctx) as redis_conn_set:
                     # Sync and compact the persistent database of Redis
                     redis_config = await redis_helper.execute(
                         redis_conn_set.stat,
