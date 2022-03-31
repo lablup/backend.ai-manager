@@ -22,8 +22,8 @@ Backend.AI Migration Guide
   Consult [the official doc](https://redis.io/docs/manual/persistence/) for more details.
 
 * Configure an explicit cron job to execute `backend.ai mgr clear-history -r {retention}` which trims old
-  sessions execution logs from the PostgreSQL and Redis databases to avoid indefinite grow of disk and
-  memory usage of the manager.
+  sessions' execution records from the PostgreSQL and Redis databases to avoid indefinite grow of disk
+  and memory usage of the manager.
 
   The retention argument may be given as human-readable duration expressions, such as `30m`, `6h`, `3d`,
   `2w`, `3mo`, and `1yr`.  If there is no unit suffix, the value is interpreted as seconds.
