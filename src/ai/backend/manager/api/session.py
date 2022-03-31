@@ -1328,7 +1328,7 @@ async def _make_session_callback(data: dict[str, Any], url: yarl.URL) -> None:
     async with aiohttp.ClientSession() as session:
         try:
             async with session.post(url, json=data) as response:
-                if response.content_length > 0:
+                if response.content_length is not None and response.content_length > 0:
                     log.warning(
                         "Session lifecycle callbacks should respond with an empty body: "
                         "(e:{}, s:{}, url:{})",
@@ -1351,8 +1351,8 @@ async def invoke_session_callback(
     app: web.Application,
     source: AgentId,
     event: SessionEnqueuedEvent | SessionScheduledEvent | SessionPreparingEvent
-           | SessionStartedEvent | SessionCancelledEvent | SessionTerminatedEvent
-           | SessionSuccessEvent | SessionFailureEvent,
+        | SessionStartedEvent | SessionCancelledEvent | SessionTerminatedEvent
+        | SessionSuccessEvent | SessionFailureEvent,
 ) -> None:
     app_ctx: PrivateContext = app['session.context']
     root_ctx: RootContext = app['_root.context']
@@ -1363,7 +1363,8 @@ async def invoke_session_callback(
         "when": datetime.now(tzutc()).isoformat(),
     }
     try:
-        session = await root_ctx.registry.get_session_by_session_id(event.session_id)
+        async with root_ctx.db.begin_readonly() as db:
+            session = await root_ctx.registry.get_session_by_session_id(event.session_id, db_connection=db)
     except SessionNotFound:
         return
     url = session['callback_url']
