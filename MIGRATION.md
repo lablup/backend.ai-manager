@@ -15,11 +15,14 @@ Backend.AI Migration Guide
     `manager.toml`, though.
 
 * The Redis container used with the manager should be reconfigured to use a persistent database.
-  The Docker official image uses `/data` as the directory to store RDB/AOF files.
   In HA setup, it is recommended to enable AOF by `appendonly yes` in the Redis configuration to make it
   recoverable after hardware failures.
 
   Consult [the official doc](https://redis.io/docs/manual/persistence/) for more details.
+
+  - FYI: The Docker official image uses `/data` as the directory to store RDB/AOF files.  It may be
+    configured to use an explicit bind-mount of a host directory.  If not configured, by default it will
+    create an anonymous volume and mount it.
 
 * The image metadata database is migrated from etcd to PostgreSQL while the registry configuration is
   still inside the etcd.
