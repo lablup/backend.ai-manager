@@ -258,7 +258,7 @@ kernels = sa.Table(
     #         // used to prevent duplication of SessionTerminatedEvent
     #   }
     # }
-    sa.Column('callback_url', URLColumn, nullable=True),
+    sa.Column('callback_url', URLColumn, nullable=True, default=sa.null()),
 
     sa.Column('startup_command', sa.Text, nullable=True),
     sa.Column('result', EnumType(SessionResult),
