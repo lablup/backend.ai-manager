@@ -187,18 +187,18 @@ def clear_history(cli_ctx: CLIContext, retention, vacuum_full) -> None:
                     # Sync and compact the persistent database of Redis
                     redis_config = await redis_helper.execute(
                         redis_conn_set.stat,
-                        lambda r: r.config_get("appendonly")
+                        lambda r: r.config_get("appendonly"),
                     )
                     if redis_config['appendonly'] == 'yes':
                         await redis_helper.execute(
                             redis_conn_set.stat,
-                            lambda r: r.bgrewriteaof()
+                            lambda r: r.bgrewriteaof(),
                         )
                         log.info("Issued BGREWRITEAOF to the Redis database.")
                     else:
                         await redis_helper.execute(
                             redis_conn_set.stat,
-                            lambda r: r.bgsave()
+                            lambda r: r.bgsave(),
                         )
                         log.info("Issued BGSAVE to the Redis database.")
             except:
