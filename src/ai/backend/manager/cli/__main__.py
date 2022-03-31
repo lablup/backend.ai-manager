@@ -197,7 +197,7 @@ def clear_history(cli_ctx: CLIContext, retention, vacuum_full) -> None:
                     else:
                         await redis_helper.execute(
                             redis_conn_set.stat,
-                            lambda r: r.bgsave(),
+                            lambda r: r.execute_command("BGSAVE SCHEDULE"),
                         )
                         log.info("Issued BGSAVE to the Redis database.")
             except:
