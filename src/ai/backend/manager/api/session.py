@@ -636,7 +636,7 @@ async def _create(request: web.Request, params: dict[str, Any]) -> web.Response:
             UndefChecker | t.Null | t.String,
         t.Key('dependencies', default=undefined):
             UndefChecker | t.Null | t.List(tx.UUID) | t.List(t.String),
-        tx.AliasedKey(['callback_url', 'callbackUrl', 'callbackURL'], defualt=undefined):
+        tx.AliasedKey(['callback_url', 'callbackUrl', 'callbackURL'], default=undefined):
             UndefChecker | t.Null | tx.URL,
         t.Key('owner_access_key', default=undefined): UndefChecker | t.Null | t.String,
     },
@@ -810,7 +810,7 @@ async def create_from_template(request: web.Request, params: dict[str, Any]) -> 
         t.Key('startupCommand', default=None) >> 'startup_command': t.Null | t.String,
         tx.AliasedKey(['bootstrap_script', 'bootstrapScript'], default=None): t.Null | t.String,
         t.Key('dependencies', default=None): t.Null | t.List(tx.UUID) | t.List(t.String),
-        tx.AliasedKey(['callback_url', 'callbackUrl', 'callbackURL'], defualt=None): t.Null | tx.URL,
+        tx.AliasedKey(['callback_url', 'callbackUrl', 'callbackURL'], default=None): t.Null | tx.URL,
         t.Key('owner_access_key', default=None): t.Null | t.String,
     }),
     loads=_json_loads)
