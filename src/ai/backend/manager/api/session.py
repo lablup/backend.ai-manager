@@ -1326,6 +1326,9 @@ async def handle_kernel_stat_sync(
 
 
 async def _make_session_callback(data: dict[str, Any], url: yarl.URL) -> None:
+    err_msg: str = ""
+    err_fmt: str = ""
+    err_arg: Any = None
     begin = time.monotonic()
     try:
         async with aiohttp.ClientSession(
@@ -1345,16 +1348,16 @@ async def _make_session_callback(data: dict[str, Any], url: yarl.URL) -> None:
                     response.status, response.reason,
                 )
             except aiohttp.ClientError as e:
-                log.warning(
-                    "Session lifecycle callback failed (e:{}, s:{}, url:{}): {}",
-                    data['name'], data['session_id'], url,
-                    repr(e),
-                )
+                err_msg, err_fmt, err_arg = "failed", "{}", repr(e)
+    except asyncio.CancelledError:
+        err_msg, err_fmt, err_arg = "cancelled", "elapsed_time = {:.6f}", time.monotonic() - begin
     except asyncio.TimeoutError:
+        err_msg, err_fmt, err_arg = "timeout", "elapsed_time = {:.6f}", time.monotonic() - begin
+    if err_msg:
         log.warning(
-            "Session lifecycle callback timeout (e:{}, s:{}, url:{}): {:.6f} sec",
+            "Session lifecycle callback " + err_msg + " (e:{}, s:{}, url:{}): " + err_fmt,
             data['name'], data['session_id'], url,
-            time.monotonic() - begin,
+            err_arg,
         )
 
 
