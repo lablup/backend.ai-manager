@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.sql.expression import true
 
+from ai.backend.common.distributed import GlobalTimer
 from ai.backend.common.events import (
     AgentStartedEvent,
     CoalescingOptions,
@@ -49,7 +50,6 @@ from ai.backend.common.types import (
 )
 
 from ..api.exceptions import GenericBadRequest, InstanceNotAvailable
-from ..distributed import GlobalTimer
 from ..defs import (
     AdvisoryLock,
 )
@@ -68,6 +68,7 @@ from ..models.utils import (
     sql_json_increment,
     sql_json_merge,
 )
+from ..pglock import PgAdvisoryLock
 from .types import (
     PredicateResult,
     PendingSession,
@@ -167,15 +168,13 @@ class SchedulerDispatcher(aobject):
         evd.consume(DoScheduleEvent, None, self.schedule, coalescing_opts)
         evd.consume(DoPrepareEvent, None, self.prepare)
         self.schedule_timer = GlobalTimer(
-            self.db,
-            AdvisoryLock.LOCKID_SCHEDULE_TIMER,
+            PgAdvisoryLock(self.db, AdvisoryLock.LOCKID_SCHEDULE_TIMER),
             self.event_producer,
             lambda: DoScheduleEvent(),
             interval=10.0,
         )
         self.prepare_timer = GlobalTimer(
-            self.db,
-            AdvisoryLock.LOCKID_PREPARE_TIMER,
+            PgAdvisoryLock(self.db, AdvisoryLock.LOCKID_PREPARE_TIMER),
             self.event_producer,
             lambda: DoPrepareEvent(),
             interval=10.0,
