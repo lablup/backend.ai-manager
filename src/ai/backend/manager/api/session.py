@@ -1326,9 +1326,10 @@ async def handle_kernel_stat_sync(
 
 
 async def _make_session_callback(data: dict[str, Any], url: yarl.URL) -> None:
-    err_msg: str = ""
-    err_fmt: str = ""
-    err_arg: Any = None
+    log_func = log.info
+    log_msg: str = ""
+    log_fmt: str = ""
+    log_arg: Any = None
     begin = time.monotonic()
     try:
         async with aiohttp.ClientSession(
@@ -1337,27 +1338,29 @@ async def _make_session_callback(data: dict[str, Any], url: yarl.URL) -> None:
             try:
                 async with session.post(url, json=data) as response:
                     if response.content_length is not None and response.content_length > 0:
-                        log.warning(
-                            "Session lifecycle callbacks should respond with an empty body: "
-                            "(e:{}, s:{}, url:{})",
-                            data['name'], data['session_id'], url,
-                        )
-                log.info(
-                    "Session lifecycle callback result (e:{}, s:{}, url:{}): {} {}",
-                    data['name'], data['session_id'], url,
-                    response.status, response.reason,
-                )
+                        log_func = log.warning
+                        log_msg = "warning"
+                        log_fmt = "{3[0]} {3[1]} - the callback response body was not empty! " \
+                                  "(len: {3[2]:,} bytes)"
+                        log_arg = (response.status, response.reason, response.content_length)
+                    else:
+                        log_msg = "result"
+                        log_fmt = "{3[0]} {3[1]}"
+                        log_arg = (response.status, response.reason)
             except aiohttp.ClientError as e:
-                err_msg, err_fmt, err_arg = "failed", "{}", repr(e)
+                log_func = log.warning
+                log_msg, log_fmt, log_arg = "failed", "{3}", repr(e)
     except asyncio.CancelledError:
-        err_msg, err_fmt, err_arg = "cancelled", "elapsed_time = {:.6f}", time.monotonic() - begin
+        log_func = log.warning
+        log_msg, log_fmt, log_arg = "cancelled", "elapsed_time = {3:.6f}", time.monotonic() - begin
     except asyncio.TimeoutError:
-        err_msg, err_fmt, err_arg = "timeout", "elapsed_time = {:.6f}", time.monotonic() - begin
-    if err_msg:
-        log.warning(
-            "Session lifecycle callback " + err_msg + " (e:{}, s:{}, url:{}): " + err_fmt,
+        log_func = log.warning
+        log_msg, log_fmt, log_arg = "timeout", "elapsed_time = {3:.6f}", time.monotonic() - begin
+    finally:
+        log_func(
+            "Session lifecycle callback " + log_msg + " (e:{0}, s:{1}, url:{2}): " + log_fmt,
             data['name'], data['session_id'], url,
-            err_arg,
+            log_arg,
         )
 
 
