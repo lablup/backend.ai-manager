@@ -810,7 +810,7 @@ class ClearImages(graphene.Mutation):
     allowed_roles = (UserRole.SUPERADMIN,)
 
     class Arguments:
-        pass
+        registry = graphene.String()
 
     ok = graphene.Boolean()
     msg = graphene.String()
@@ -819,13 +819,19 @@ class ClearImages(graphene.Mutation):
     async def mutate(
         executor: AsyncioExecutor,
         info: graphene.ResolveInfo,
+        registry: str,
     ) -> ClearImages:
         log.info('clear all images by API request')
         ctx: GraphQueryContext = info.context
         try:
             async with ctx.db.begin_session() as session:
-                await session.execute(sa.delete(ImageAliasRow))
-                await session.execute(sa.delete(ImageRow))
+                result = await session.execute(
+                    sa.select(ImageRow).where(ImageRow.registry == registry))
+                image_ids = [x.id for x in result.scalars().all()]
+
+                await session.execute(
+                    sa.delete(ImageAliasRow).where(ImageAliasRow.image_id.in_(image_ids)))
+                await session.execute(sa.delete(ImageRow).where(ImageRow.registry == registry))
         except ValueError as e:
             return ClearImages(ok=False, msg=str(e))
         return ClearImages(ok=True, msg='')
