@@ -9,6 +9,7 @@ from typing import (
     Any,
     List,
     Mapping,
+    MutableMapping,
     Optional,
     Sequence,
     TYPE_CHECKING,
@@ -47,7 +48,8 @@ from ai.backend.manager.defs import DEFAULT_IMAGE_ARCH
 
 from .base import (
     BigInt, ForeignKeyIDColumn, IDColumn,
-    KVPair, ResourceLimit, Base, StructuredJSONColumn,
+    KVPair, ResourceLimit, KVPairInput, ResourceLimitInput,
+    Base, StructuredJSONColumn, set_if_set,
 )
 from .user import UserRole
 from .utils import ExtendedAsyncSAEngine
@@ -70,8 +72,10 @@ __all__ = (
     'PreloadImage',
     'RescanImages',
     'ForgetImage',
+    'ModifyImage',
     'AliasImage',
     'DealiasImage',
+    'ClearImages',
 )
 
 
@@ -458,6 +462,7 @@ ImageAliasRow.image = relationship('ImageRow', back_populates='aliases')
 
 
 class Image(graphene.ObjectType):
+    id = graphene.UUID()
     name = graphene.String()
     humanized_name = graphene.String()
     tag = graphene.String()
@@ -484,15 +489,21 @@ class Image(graphene.ObjectType):
         installed = (
             await redis.execute(ctx.redis_image, lambda r: r.scard(row.name))
         ) > 0
-        installed_agents = await redis.execute(
+        _installed_agents = await redis.execute(
             ctx.redis_image,
             lambda r: r.smembers(row.name),
         )
-        if installed_agents is None:
-            installed_agents = []
+        installed_agents: List[str] = []
+        if installed_agents is not None:
+            for agent_id in _installed_agents:
+                if isinstance(agent_id, bytes):
+                    installed_agents.append(agent_id.decode())
+                else:
+                    installed_agents.append(agent_id)
         is_superadmin = (ctx.user['role'] == UserRole.SUPERADMIN)
         hide_agents = False if is_superadmin else ctx.local_config['manager']['hide-agents']
         return cls(
+            id=row.id,
             name=row.image,
             humanized_name=row.image,
             tag=row.tag,
@@ -792,3 +803,107 @@ class DealiasImage(graphene.Mutation):
         except ValueError as e:
             return DealiasImage(ok=False, msg=str(e))
         return DealiasImage(ok=True, msg='')
+
+
+class ClearImages(graphene.Mutation):
+
+    allowed_roles = (UserRole.SUPERADMIN,)
+
+    class Arguments:
+        pass
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @staticmethod
+    async def mutate(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+    ) -> ClearImages:
+        log.info('clear all images by API request')
+        ctx: GraphQueryContext = info.context
+        try:
+            async with ctx.db.begin_session() as session:
+                await session.execute(sa.delete(ImageAliasRow))
+                await session.execute(sa.delete(ImageRow))
+        except ValueError as e:
+            return ClearImages(ok=False, msg=str(e))
+        return ClearImages(ok=True, msg='')
+
+
+class ModifyImageInput(graphene.InputObjectType):
+    name = graphene.String(required=False)
+    registry = graphene.String(required=False)
+    image = graphene.String(required=False)
+    tag = graphene.String(required=False)
+    architecture = graphene.String(required=False)
+    size_bytes = graphene.Int(required=False)
+    type = graphene.String(required=False)
+
+    digest = graphene.String(required=False)
+    labels = graphene.List(lambda: KVPairInput, required=False)
+    supported_accelerators = graphene.List(graphene.String, required=False)
+    resource_limits = graphene.List(lambda: ResourceLimitInput, required=False)
+
+
+class ModifyImage(graphene.Mutation):
+
+    allowed_roles = (UserRole.SUPERADMIN,)
+
+    class Arguments:
+        target = graphene.String(required=True, default_value=None)
+        architecture = graphene.String(required=False, default_value=DEFAULT_IMAGE_ARCH)
+        props = ModifyImageInput(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @staticmethod
+    async def mutate(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        target: str,
+        architecture: str,
+        props: ModifyImageInput,
+    ) -> AliasImage:
+        log.info('modify image(ref: {0}) by API request', target)
+
+        ctx: GraphQueryContext = info.context
+        data: MutableMapping[str, Any] = {}
+        set_if_set(props, data, 'name')
+        set_if_set(props, data, 'registry')
+        set_if_set(props, data, 'image')
+        set_if_set(props, data, 'tag')
+        set_if_set(props, data, 'architecture')
+        set_if_set(props, data, 'size_bytes')
+        set_if_set(props, data, 'type')
+        set_if_set(props, data, 'digest', target_key='config_digest')
+        set_if_set(
+            props, data, 'supported_accelerators',
+            clean_func=lambda v: ','.join(v), target_key='accelerators',
+        )
+        set_if_set(props, data, 'labels', clean_func=lambda v: {pair.key: pair.value for pair in v})
+
+        if props.resource_limits is not None:
+            resources_data = {}
+            for limit_option in props.resource_limits:
+                limit_data = {}
+                if limit_option.min is not None and len(limit_option.min) > 0:
+                    limit_data['min'] = limit_option.min
+                if limit_option.max is not None and len(limit_option.max) > 0:
+                    limit_data['max'] = limit_option.max
+                resources_data[limit_option.key] = limit_data
+            data['resources'] = resources_data
+
+        try:
+            async with ctx.db.begin_session() as session:
+                image_ref = ImageRef(target, ['*'], architecture)
+                try:
+                    row = await ImageRow.from_image_ref(session, image_ref)
+                except UnknownImageReference:
+                    return ModifyImage(ok=False, msg='Image not found')
+                for k, v in data.items():
+                    setattr(row, k, v)
+        except ValueError as e:
+            return ModifyImage(ok=False, msg=str(e))
+        return ModifyImage(ok=True, msg='')
