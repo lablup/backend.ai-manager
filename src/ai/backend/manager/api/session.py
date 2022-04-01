@@ -1359,7 +1359,7 @@ async def _make_session_callback(data: dict[str, Any], url: yarl.URL) -> None:
     finally:
         log_func(
             "Session lifecycle callback " + log_msg + " (e:{0}, s:{1}, url:{2}): " + log_fmt,
-            data['name'], data['session_id'], url,
+            data['event'], data['session_id'], url,
             log_arg,
         )
 
@@ -1376,7 +1376,7 @@ async def invoke_session_callback(
     data = {
         "type": "session_lifecycle",
         "event": event.name.removeprefix("session_"),
-        "session_id": event.session_id,
+        "session_id": str(event.session_id),
         "when": datetime.now(tzutc()).isoformat(),
     }
     try:
