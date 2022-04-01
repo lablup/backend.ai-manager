@@ -31,6 +31,7 @@ from sqlalchemy.engine import Row
 
 import ai.backend.common.validators as tx
 from ai.backend.common import msgpack, redis
+from ai.backend.common.distributed import GlobalTimer
 from ai.backend.common.events import (
     AbstractEvent,
     DoIdleCheckEvent,
@@ -49,9 +50,9 @@ from ai.backend.common.types import AccessKey, aobject, SessionTypes
 from ai.backend.common.utils import nmget
 
 from .defs import DEFAULT_ROLE, REDIS_LIVE_DB, REDIS_STAT_DB, AdvisoryLock
-from .distributed import GlobalTimer
 from .models import kernels, keypair_resource_policies, keypairs
 from .models.kernel import LIVE_STATUS
+from .pglock import PgAdvisoryLock
 
 if TYPE_CHECKING:
     from .config import SharedConfig
@@ -106,8 +107,7 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
         )
         await self.populate_config(raw_config or {})
         self.timer = GlobalTimer(
-            self._db,
-            AdvisoryLock.LOCKID_IDLE_CHECK_TIMER,
+            PgAdvisoryLock(self._db, AdvisoryLock.LOCKID_IDLE_CHECK_TIMER),
             self._event_producer,
             lambda: DoIdleCheckEvent(),
             self.check_interval,
