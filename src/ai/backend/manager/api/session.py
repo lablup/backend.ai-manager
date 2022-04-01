@@ -5,15 +5,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from decimal import Decimal
-from datetime import datetime, timedelta
 import functools
-from io import BytesIO
 import json
 import logging
 import re
-from pathlib import PurePosixPath
 import secrets
+import time
+import uuid
+import yarl
 from typing import (
     Any,
     Dict,
@@ -28,23 +27,25 @@ from typing import (
     TYPE_CHECKING,
     cast,
 )
+from decimal import Decimal
+from datetime import datetime, timedelta
+from io import BytesIO
+from pathlib import PurePosixPath
 from urllib.parse import urlparse
-import uuid
-import yarl
 
 import aiohttp
-from aiohttp import web, hdrs
 import aiohttp_cors
 import aioredis
 import aiotools
-from async_timeout import timeout
 import attr
-from dateutil.parser import isoparse
-from dateutil.tz import tzutc
 import multidict
 import sqlalchemy as sa
-from sqlalchemy.sql.expression import true, null
 import trafaret as t
+from aiohttp import web, hdrs
+from async_timeout import timeout
+from dateutil.parser import isoparse
+from dateutil.tz import tzutc
+from sqlalchemy.sql.expression import true, null
 
 from ai.backend.manager.models.image import ImageRow
 
@@ -1325,26 +1326,36 @@ async def handle_kernel_stat_sync(
 
 
 async def _make_session_callback(data: dict[str, Any], url: yarl.URL) -> None:
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.post(url, json=data) as response:
-                if response.content_length is not None and response.content_length > 0:
-                    log.warning(
-                        "Session lifecycle callbacks should respond with an empty body: "
-                        "(e:{}, s:{}, url:{})",
-                        data['name'], data['session_id'], url,
-                    )
-            log.info(
-                "Session lifecycle callback result (e:{}, s:{}, url:{}): {} {}",
-                data['name'], data['session_id'], url,
-                response.status, response.reason,
-            )
-        except aiohttp.ClientError as e:
-            log.warning(
-                "Session lifecycle callback failed (e:{}, s:{}, url:{}): {}",
-                data['name'], data['session_id'], url,
-                repr(e),
-            )
+    begin = time.monotonic()
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=30.0),
+        ) as session:
+            try:
+                async with session.post(url, json=data) as response:
+                    if response.content_length is not None and response.content_length > 0:
+                        log.warning(
+                            "Session lifecycle callbacks should respond with an empty body: "
+                            "(e:{}, s:{}, url:{})",
+                            data['name'], data['session_id'], url,
+                        )
+                log.info(
+                    "Session lifecycle callback result (e:{}, s:{}, url:{}): {} {}",
+                    data['name'], data['session_id'], url,
+                    response.status, response.reason,
+                )
+            except aiohttp.ClientError as e:
+                log.warning(
+                    "Session lifecycle callback failed (e:{}, s:{}, url:{}): {}",
+                    data['name'], data['session_id'], url,
+                    repr(e),
+                )
+    except asyncio.TimeoutError:
+        log.warning(
+            "Session lifecycle callback timeout (e:{}, s:{}, url:{}): {:.6f} sec",
+            data['name'], data['session_id'], url,
+            time.monotonic() - begin,
+        )
 
 
 async def invoke_session_callback(
