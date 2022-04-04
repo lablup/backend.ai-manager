@@ -245,7 +245,7 @@ async def _set_vfolder_query(
                     vfolders.c.permission.label('permission'),
                     sa.case([(True, True)]).label('is_owner'),
                     sa.case([(True, None)]).label('group_name'),
-                ]
+                ],
             )
             .select_from(j)
             .where(vfolders.c.user == user_uuid)
@@ -286,16 +286,16 @@ async def _set_vfolder_query(
         # Scan group vfolders.
         if user_role == UserRole.ADMIN or user_role == 'admin':
             group_query = (sa.select([groups.c.id])
-                                .select_from(groups)
-                                .where(groups.c.domain_name == domain_name))
+                             .select_from(groups)
+                             .where(groups.c.domain_name == domain_name))
             result = await conn.execute(group_query)
             grps = result.fetchall()
             group_ids = [g.id for g in grps]
         else:
             j = sa.join(agus, users, agus.c.user_id == users.c.uuid)
             group_query = (sa.select([agus.c.group_id])
-                                .select_from(j)
-                                .where(agus.c.user_id == user_uuid))
+                             .select_from(j)
+                             .where(agus.c.user_id == user_uuid))
             result = await conn.execute(group_query)
             grps = result.fetchall()
             group_ids = [g.group_id for g in grps]
@@ -309,7 +309,7 @@ async def _set_vfolder_query(
                     sa.case(
                         [
                             ((user_role == UserRole.ADMIN or user_role == 'admin') or
-                             (user_role == UserRole.SUPERADMIN or user_role == 'superadmin'), True)
+                             (user_role == UserRole.SUPERADMIN or user_role == 'superadmin'), True),
                         ], else_=False,
                     ).label('is_owner'),
                     groups.c.name.label('group_name'),
@@ -347,14 +347,14 @@ async def _set_vfolder_query(
                     (vfolders.c.ownership_type == VFolderOwnershipType.USER) &
                     ((vfolders.c.id == vfolder_permissions.c.vfolder) &
                      (vfolders.c.user != user_uuid)),
-                    False
+                    False,
                 ),
                 (
                     (vfolders.c.ownership_type == VFolderOwnershipType.GROUP) &
                     ((user_role == UserRole.MONITOR or user_role == 'monitor') |
                      (user_role == UserRole.USER or user_role == 'user')),
-                    False
-                )
+                    False,
+                ),
             ], else_=True,
         ).label('is_owner')
     else:
@@ -372,8 +372,8 @@ async def _set_vfolder_query(
                     (vfolders.c.ownership_type == VFolderOwnershipType.GROUP) &
                     ((user_role == UserRole.MONITOR or user_role == 'monitor') |
                      (user_role == UserRole.USER or user_role == 'user')),
-                    False
-                )
+                    False,
+                ),
             ], else_=True,
         ).label('is_owner')
 
@@ -383,13 +383,13 @@ async def _set_vfolder_query(
         [
             (vfolders.c.ownership_type == VFolderOwnershipType.USER, users.c.email),
             (vfolders.c.ownership_type == VFolderOwnershipType.GROUP, None),
-        ]
+        ],
     ).label('email')
     _group_name = sa.case(
         [
             (vfolders.c.ownership_type == VFolderOwnershipType.USER, None),
-            (vfolders.c.ownership_type == VFolderOwnershipType.GROUP, groups.c.name)
-        ]
+            (vfolders.c.ownership_type == VFolderOwnershipType.GROUP, groups.c.name),
+        ],
     ).label('group_name')
     result_query = (
         sa.select(
@@ -398,8 +398,8 @@ async def _set_vfolder_query(
                 _email,
                 _perm,
                 _is_owner,
-                _group_name
-            ]
+                _group_name,
+            ],
         )
     )
 
