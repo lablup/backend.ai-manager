@@ -31,9 +31,11 @@ Backend.AI Migration Guide
   with the superadmin privilege to resync the image database.  The old etcd image database will no longer
   be used.
 
-* The manager now has replacible distributed lock backend.  The new default is "filelock" which is suitable
-  for single-node manager deployments.  Change this value to "pg_advisory" to restore the behavior of previous
-  versions.  Since 22.03, there is a new backend "etcd" which uses etcd as the highly-available lock backend.
+* The manager now has replacible distributed lock backend, configured by the key `manager.distributed-lock` in
+  `manager.toml`.  **The new default is "filelock"** which is suitable for single-node manager deployments.
+  Change this value to **"pg_advisory" to restore the behavior of previous versions.**
+  Since 22.03, there is a new backend "etcd" which uses etcd as the highly-available lock backend.
+  "redlock" is not currently supported as aioredis v2 has a limited implementation.
 
 * (TODO) storage-proxy related stuffs
 
