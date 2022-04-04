@@ -432,7 +432,7 @@ class SchedulerDispatcher(aobject):
                         query = kernels.update().values({
                             'status_info': "predicate-checks-failed",
                             'status_data': sql_json_increment(
-                                kernels.c.stats_data,
+                                kernels.c.status_data,
                                 ('scheduler', 'retries'),
                                 parent_updates={
                                     'last_try': datetime.now(tzutc()).isoformat(),
