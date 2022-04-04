@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from ai.backend.manager.defs import AdvisoryLock
+from ai.backend.manager.defs import LockID
 from ai.backend.manager.models.utils import ExtendedAsyncSAEngine
 
 
@@ -14,7 +14,7 @@ async def test_lock(database_engine: ExtendedAsyncSAEngine) -> None:
 
     async def critical_section(db: ExtendedAsyncSAEngine) -> None:
         nonlocal enter_count
-        async with db.advisory_lock(AdvisoryLock.LOCKID_TEST):
+        async with db.advisory_lock(LockID.LOCKID_TEST):
             enter_count += 1
             await asyncio.sleep(1.0)
 

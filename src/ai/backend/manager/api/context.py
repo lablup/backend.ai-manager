@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from ..plugin.webapp import WebappPluginContext
     from ..registry import AgentRegistry
     from ..config import LocalConfig, SharedConfig
+    from ..types import DistributedLockFactory
     from .types import CORSOptions
 
 
@@ -28,6 +29,7 @@ class BaseContext:
 class RootContext(BaseContext):
     pidx: int
     db: ExtendedAsyncSAEngine
+    distributed_lock_factory: DistributedLockFactory
     event_dispatcher: EventDispatcher
     event_producer: EventProducer
     redis_live: RedisConnectionInfo

@@ -19,12 +19,11 @@ from ai.backend.common.events import AbstractEvent, EmptyEventArgs
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import AgentId, LogSeverity, RedisConnectionInfo
 
-from ..defs import REDIS_LIVE_DB, AdvisoryLock
+from ..defs import REDIS_LIVE_DB, LockID
 from ..models import (
     error_logs, UserRole, groups,
     association_groups_users as agus,
 )
-from ..pglock import PgAdvisoryLock
 from .auth import auth_required
 from .manager import READ_ALLOWED, server_status_required
 from .types import CORSOptions, Iterable, WebMiddleware
@@ -256,7 +255,7 @@ async def init(app: web.Application) -> None:
         db=REDIS_LIVE_DB,
     )
     app_ctx.log_cleanup_timer = GlobalTimer(
-        PgAdvisoryLock(root_ctx.db, AdvisoryLock.LOCKID_LOG_CLEANUP_TIMER),
+        root_ctx.distributed_lock_factory(LockID.LOCKID_LOG_CLEANUP_TIMER),
         root_ctx.event_producer,
         lambda: DoLogCleanupEvent(),
         20.0,

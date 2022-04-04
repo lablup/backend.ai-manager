@@ -1,15 +1,16 @@
 import asyncio
-from datetime import datetime
 import hashlib, hmac
 import json
 import os
-from pathlib import Path
 import re
 import secrets
 import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
+from functools import partial
+from pathlib import Path
 from typing import (
     Any,
     AsyncContextManager,
@@ -91,17 +92,22 @@ def vfolder_host():
 
 
 @pytest.fixture(scope='session')
-def local_config(test_id, test_db) -> LocalConfig:
+def local_config(test_id, test_db) -> Iterator[LocalConfig]:
     cfg = load_config()
     assert isinstance(cfg, LocalConfig)
     cfg['db']['name'] = test_db
     cfg['manager']['num-proc'] = 1
+    ipc_base_path = Path(f'/tmp/backend.ai/manager-testing/ipc-{test_id}')
+    ipc_base_path.mkdir(parents=True, exist_ok=True)
+    cfg['manager']['ipc-base-path'] = ipc_base_path
+    cfg['manager']['distributed-lock'] = 'filelock'
     cfg['manager']['service-addr'] = HostPortPair('localhost', 29100)
     # In normal setups, this is read from etcd.
     cfg['redis'] = redis_config_iv.check({
         'addr': {'host': '127.0.0.1', 'port': '6379'},
     })
-    return cfg
+    yield cfg
+    shutil.rmtree(ipc_base_path)
 
 
 @pytest.fixture(scope='session')
@@ -291,6 +297,19 @@ def database_fixture(local_config, test_db, database):
             await engine.dispose()
 
     asyncio.run(clean_fixture())
+
+
+@pytest.fixture
+def file_lock_factory(local_config, request):
+    from ai.backend.common.lock import FileLock
+
+    def _make_lock(lock_id):
+        lock_path = local_config['manager']['ipc-base-path'] / f'testing.{lock_id}.lock'
+        lock = FileLock(lock_path, timeout=0)
+        request.addfinalizer(partial(lock_path.unlink, missing_ok=True))
+        return lock
+
+    return _make_lock
 
 
 class Client:
