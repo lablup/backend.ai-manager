@@ -169,76 +169,18 @@ async def push_session_events(
 @check_api_params(t.Dict({
     tx.AliasedKey(['task_id', 'taskId']): tx.UUID,
 }))
-@adefer
 async def push_background_task_events(
-    defer,
     request: web.Request,
     params: Mapping[str, Any],
 ) -> web.StreamResponse:
     root_ctx: RootContext = request.app['_root.context']
-    app_ctx: PrivateContext = request.app['events.context']
     task_id = params['task_id']
     access_key = request['keypair']['access_key']
     log.info('PUSH_BACKGROUND_TASK_EVENTS (ak:{}, t:{})', access_key, task_id)
-
-    tracker_key = f'bgtask.{task_id}'
-    task_info = await redis.execute(
-        root_ctx.redis_stream,
-        lambda r: r.hgetall(tracker_key),
-        encoding='utf-8',
-    )
-
-    log.debug('task info: {}', task_info)
-    if task_info is None:
-        # The task ID is invalid or represents a task completed more than 24 hours ago.
-        raise GenericNotFound('No such background task.')
-
-    if task_info['status'] != 'started':
-        # It is an already finished task!
-        async with sse_response(request) as resp:
-            try:
-                body = {
-                    'task_id': str(task_id),
-                    'status': task_info['status'],
-                    'current_progress': task_info['current'],
-                    'total_progress': task_info['total'],
-                    'message': task_info['msg'],
-                }
-                await resp.send(json.dumps(body), event=f"task_{task_info['status']}")
-            finally:
-                await resp.send('{}', event="server_close")
-        return resp
-
-    # It is an ongoing task.
-    my_queue: asyncio.Queue[BgtaskEvents | Sentinel] = asyncio.Queue()
-    app_ctx.task_update_queues.add(my_queue)
-    defer(lambda: app_ctx.task_update_queues.remove(my_queue))
-    async with sse_response(request) as resp:
-        try:
-            while True:
-                event = await my_queue.get()
-                try:
-                    if event is sentinel:
-                        break
-                    if task_id != event.task_id:
-                        continue
-                    body = {
-                        'task_id': str(task_id),
-                        'message': event.message,
-                    }
-                    if isinstance(event, BgtaskUpdatedEvent):
-                        body['current_progress'] = event.current_progress
-                        body['total_progress'] = event.total_progress
-                    await resp.send(json.dumps(body), event=event.name, retry=5)
-                    if (isinstance(event, BgtaskDoneEvent) or
-                        isinstance(event, BgtaskFailedEvent) or
-                        isinstance(event, BgtaskCancelledEvent)):
-                        await resp.send('{}', event="server_close")
-                        break
-                finally:
-                    my_queue.task_done()
-        finally:
-            return resp
+    try:
+        return await root_ctx.background_task_manager.push_bgtask_events(request, task_id)
+    except ValueError as e:
+        raise GenericNotFound(str(e))
 
 
 async def enqueue_kernel_creation_status_update(
@@ -422,27 +364,15 @@ async def enqueue_batch_task_result_update(
         q.put_nowait((event.name, row._mapping, event.reason))
 
 
-async def enqueue_bgtask_status_update(
-    app: web.Application,
-    source: AgentId,
-    event: BgtaskUpdatedEvent | BgtaskDoneEvent | BgtaskCancelledEvent | BgtaskFailedEvent,
-) -> None:
-    app_ctx: PrivateContext = app['events.context']
-    for q in app_ctx.task_update_queues:
-        q.put_nowait(event)
-
-
 @attr.s(slots=True, auto_attribs=True, init=False)
 class PrivateContext:
     session_event_queues: Set[asyncio.Queue[Sentinel | SessionEventInfo]]
-    task_update_queues: Set[asyncio.Queue[Sentinel | BgtaskEvents]]
 
 
 async def events_app_ctx(app: web.Application) -> AsyncIterator[None]:
     root_ctx: RootContext = app['_root.context']
     app_ctx: PrivateContext = app['events.context']
     app_ctx.session_event_queues = set()
-    app_ctx.task_update_queues = set()
     event_dispatcher: EventDispatcher = root_ctx.event_dispatcher
     event_dispatcher.subscribe(SessionEnqueuedEvent, app, enqueue_session_creation_status_update)
     event_dispatcher.subscribe(SessionScheduledEvent, app, enqueue_session_creation_status_update)
@@ -458,11 +388,7 @@ async def events_app_ctx(app: web.Application) -> AsyncIterator[None]:
     event_dispatcher.subscribe(SessionCancelledEvent, app, enqueue_session_creation_status_update)
     event_dispatcher.subscribe(SessionSuccessEvent, app, enqueue_batch_task_result_update)
     event_dispatcher.subscribe(SessionFailureEvent, app, enqueue_batch_task_result_update)
-    event_dispatcher.subscribe(BgtaskUpdatedEvent, app, enqueue_bgtask_status_update)
-    event_dispatcher.subscribe(BgtaskDoneEvent, app, enqueue_bgtask_status_update)
-    event_dispatcher.subscribe(BgtaskCancelledEvent, app, enqueue_bgtask_status_update)
-    event_dispatcher.subscribe(BgtaskFailedEvent, app, enqueue_bgtask_status_update)
-
+    root_ctx.background_task_manager.register_event_handlers(event_dispatcher)
     yield
 
 
@@ -474,9 +400,6 @@ async def events_shutdown(app: web.Application) -> None:
     for sq in app_ctx.session_event_queues:
         sq.put_nowait(sentinel)
         join_tasks.append(sq.join())
-    for tq in app_ctx.task_update_queues:
-        tq.put_nowait(sentinel)
-        join_tasks.append(tq.join())
     await asyncio.gather(*join_tasks)
 
 
