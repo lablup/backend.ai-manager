@@ -5,12 +5,12 @@ from typing import Sequence, TYPE_CHECKING
 import attr
 
 if TYPE_CHECKING:
+    from ai.backend.common.bgtask import BackgroundTaskManager
     from ai.backend.common.events import EventDispatcher, EventProducer
     from ai.backend.common.plugin.hook import HookPluginContext
     from ai.backend.common.plugin.monitor import ErrorPluginContext, StatsPluginContext
     from ai.backend.common.types import RedisConnectionInfo
 
-    from ..background import BackgroundTaskManager
     from ..models.storage import StorageSessionManager
     from ..models.utils import ExtendedAsyncSAEngine
     from ..idle import BaseIdleChecker

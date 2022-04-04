@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-from contextvars import ContextVar
 import logging
 import json
+from contextvars import ContextVar
 from typing import (
-    Any, AsyncIterator, Dict,
-    Mapping, Optional, TYPE_CHECKING,
+    Any,
+    AsyncIterator,
+    Dict,
+    Mapping,
+    Optional,
     cast,
 )
 
@@ -17,6 +20,7 @@ import yarl
 
 from abc import ABCMeta, abstractmethod
 
+from ai.backend.common.bgtask import ProgressReporter
 from ai.backend.common.docker import (
     ImageRef,
     MIN_KERNELSPEC, MAX_KERNELSPEC,
@@ -27,9 +31,6 @@ from ai.backend.common.logging import BraceStyleAdapter
 
 from ai.backend.manager.models.image import ImageRow, ImageType
 from ai.backend.manager.models.utils import ExtendedAsyncSAEngine
-
-if TYPE_CHECKING:
-    from ..background import ProgressReporter
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 
