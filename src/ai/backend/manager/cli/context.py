@@ -4,7 +4,6 @@ import atexit
 import contextlib
 import attr
 import os
-from pathlib import Path
 from typing import TYPE_CHECKING, AsyncIterator
 
 from ai.backend.common import redis
@@ -38,8 +37,8 @@ def init_logger(local_config: LocalConfig) -> Logger:
     if 'file' in local_config['logging']['drivers']:
         local_config['logging']['drivers'].remove('file')
     # log_endpoint = f'tcp://127.0.0.1:{find_free_port()}'
-    log_sockpath = Path(f'/tmp/backend.ai/ipc/manager-cli-{os.getpid()}.sock')
-    log_sockpath.parent.mkdir(parents=True, exist_ok=True)
+    ipc_base_path = local_config['manager']['ipc-base-path']
+    log_sockpath = ipc_base_path / f'manager-cli-{os.getpid()}.sock'
     log_endpoint = f'ipc://{log_sockpath}'
 
     def _clean_logger():

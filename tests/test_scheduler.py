@@ -983,6 +983,7 @@ class DummyEtcd:
 
 @pytest.mark.asyncio
 async def test_manually_assign_agent_available(
+    testing_lock_factory,
     registry_ctx: tuple[AgentRegistry, MagicMock, MagicMock, MagicMock, MagicMock, MagicMock],
     example_agents,
     example_pending_sessions,
@@ -1004,6 +1005,7 @@ async def test_manually_assign_agent_available(
         shared_config=mock_shared_config,
         event_dispatcher=mock_event_dispatcher,
         event_producer=mock_event_producer,
+        lock_factory=testing_lock_factory,
         registry=registry,
     )
 

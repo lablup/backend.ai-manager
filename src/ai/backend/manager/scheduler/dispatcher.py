@@ -49,9 +49,11 @@ from ai.backend.common.types import (
     ResourceSlot,
 )
 
+from ai.backend.manager.types import DistributedLockFactory
+
 from ..api.exceptions import GenericBadRequest, InstanceNotAvailable
 from ..defs import (
-    AdvisoryLock,
+    LockID,
 )
 from ..exceptions import convert_to_status_data
 from ..models import (
@@ -68,7 +70,6 @@ from ..models.utils import (
     sql_json_increment,
     sql_json_merge,
 )
-from ..pglock import PgAdvisoryLock
 from .types import (
     PredicateResult,
     PendingSession,
@@ -146,6 +147,7 @@ class SchedulerDispatcher(aobject):
         shared_config: SharedConfig,
         event_dispatcher: EventDispatcher,
         event_producer: EventProducer,
+        lock_factory: DistributedLockFactory,
         registry: AgentRegistry,
     ) -> None:
         self.local_config = local_config
@@ -153,6 +155,7 @@ class SchedulerDispatcher(aobject):
         self.event_dispatcher = event_dispatcher
         self.event_producer = event_producer
         self.registry = registry
+        self.lock_factory = lock_factory
         self.db = registry.db
 
     async def __ainit__(self) -> None:
@@ -168,13 +171,13 @@ class SchedulerDispatcher(aobject):
         evd.consume(DoScheduleEvent, None, self.schedule, coalescing_opts)
         evd.consume(DoPrepareEvent, None, self.prepare)
         self.schedule_timer = GlobalTimer(
-            PgAdvisoryLock(self.db, AdvisoryLock.LOCKID_SCHEDULE_TIMER),
+            self.lock_factory(LockID.LOCKID_SCHEDULE_TIMER),
             self.event_producer,
             lambda: DoScheduleEvent(),
             interval=10.0,
         )
         self.prepare_timer = GlobalTimer(
-            PgAdvisoryLock(self.db, AdvisoryLock.LOCKID_PREPARE_TIMER),
+            self.lock_factory(LockID.LOCKID_PREPARE_TIMER),
             self.event_producer,
             lambda: DoPrepareEvent(),
             interval=10.0,
@@ -216,7 +219,7 @@ class SchedulerDispatcher(aobject):
         try:
             # The schedule() method should be executed with a global lock
             # as its individual steps are composed of many short-lived transactions.
-            async with self.db.advisory_lock(AdvisoryLock.LOCKID_SCHEDULE):
+            async with self.db.advisory_lock(LockID.LOCKID_SCHEDULE):
                 async with self.db.begin_readonly() as conn:
                     query = (
                         sa.select([agents.c.scaling_group])
@@ -756,7 +759,7 @@ class SchedulerDispatcher(aobject):
             known_slot_types,
         )
         try:
-            async with self.db.advisory_lock(AdvisoryLock.LOCKID_PREPARE):
+            async with self.db.advisory_lock(LockID.LOCKID_PREPARE):
                 now = datetime.now(tzutc())
 
                 async def _mark_session_preparing() -> Sequence[PendingSession]:

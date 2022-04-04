@@ -74,6 +74,7 @@ from .models.utils import connect_database
 from .plugin.webapp import WebappPluginContext
 from .registry import AgentRegistry
 from .scheduler.dispatcher import SchedulerDispatcher
+from .types import DistributedLockFactory
 
 VALID_VERSIONS: Final = frozenset([
     # 'v1.20160915',  # deprecated
@@ -315,8 +316,13 @@ async def database_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 
 
 @actxmgr
-async def event_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
+async def distributed_lock_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
+    root_ctx.distributed_lock_factory = init_lock_factory(root_ctx)
+    yield
 
+
+@actxmgr
+async def event_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     root_ctx.event_producer = await EventProducer.new(
         root_ctx.shared_config.data['redis'],
         db=REDIS_STREAM_DB,
@@ -340,6 +346,7 @@ async def idle_checker_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
         root_ctx.shared_config,
         root_ctx.event_dispatcher,
         root_ctx.event_producer,
+        root_ctx.distributed_lock_factory,
     )
     yield
     for instance in root_ctx.idle_checkers:
@@ -394,6 +401,7 @@ async def sched_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     sched_dispatcher = await SchedulerDispatcher.new(
         root_ctx.local_config, root_ctx.shared_config,
         root_ctx.event_dispatcher, root_ctx.event_producer,
+        root_ctx.distributed_lock_factory,
         root_ctx.registry,
     )
     yield
@@ -474,6 +482,31 @@ def init_subapp(pkg_name: str, root_app: web.Application, create_subapp: AppCrea
     _init_subapp(pkg_name, root_app, subapp, global_middlewares)
 
 
+def init_lock_factory(root_ctx: RootContext) -> DistributedLockFactory:
+    ipc_base_path = root_ctx.local_config['manager']['ipc-base-path']
+    manager_id = root_ctx.local_config['manager']['id']
+    lock_backend = root_ctx.local_config['manager']['distributed-lock']
+    log.debug("using {} as the distributed lock backend", lock_backend)
+    match lock_backend:
+        case 'filelock':
+            from ai.backend.common.lock import FileLock
+            return lambda lock_id: FileLock(
+                ipc_base_path / f"{manager_id}.{lock_id}.lock",
+                timeout=0,
+            )
+        case 'pg_advisory':
+            from .pglock import PgAdvisoryLock
+            return lambda lock_id: PgAdvisoryLock(root_ctx.db, lock_id)
+        case 'redlock':
+            raise NotImplementedError("Redlock on aioredis v2 is not supported yet.")
+        case 'etcd':
+            # from ai.backend.common.lock import EtcdLock
+            # return lambda lock_id: EtcdLock(root_ctx.shared_config.etcd, lock_id)
+            raise NotImplementedError("TODO")
+        case other:
+            raise ValueError(f"Invalid lock backend: {other}")
+
+
 def build_root_app(
     pidx: int,
     local_config: LocalConfig, *,
@@ -514,6 +547,7 @@ def build_root_app(
             manager_status_ctx,
             redis_ctx,
             database_ctx,
+            distributed_lock_ctx,
             event_dispatcher_ctx,
             idle_checker_ctx,
             storage_manager_ctx,
@@ -678,8 +712,8 @@ def main(ctx: click.Context, config_path: Path, debug: bool) -> None:
 
     if ctx.invoked_subcommand is None:
         cfg['manager']['pid-file'].write_text(str(os.getpid()))
-        log_sockpath = Path(f'/tmp/backend.ai/ipc/manager-logger-{os.getpid()}.sock')
-        log_sockpath.parent.mkdir(parents=True, exist_ok=True)
+        ipc_base_path = cfg['manager']['ipc-base-path']
+        log_sockpath = ipc_base_path / f'manager-logger-{os.getpid()}.sock'
         log_endpoint = f'ipc://{log_sockpath}'
         try:
             logger = Logger(cfg['logging'], is_master=True, log_endpoint=log_endpoint)
