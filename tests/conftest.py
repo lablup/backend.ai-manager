@@ -1,15 +1,16 @@
 import asyncio
-from datetime import datetime
 import hashlib, hmac
 import json
 import os
-from pathlib import Path
 import re
 import secrets
 import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
+from functools import partial
+from pathlib import Path
 from typing import (
     Any,
     AsyncContextManager,
@@ -298,12 +299,17 @@ def database_fixture(local_config, test_db, database):
     asyncio.run(clean_fixture())
 
 
-def testing_lock_factory(local_config):
+@pytest.fixture
+def file_lock_factory(local_config, request):
     from ai.backend.common.lock import FileLock
-    return lambda lock_id: FileLock(
-        local_config['manager']['ipc-base-path'] / f'testing.{lock_id}.lock',
-        timeout=0,
-    )
+
+    def _make_lock(lock_id):
+        lock_path = local_config['manager']['ipc-base-path'] / f'testing.{lock_id}.lock'
+        lock = FileLock(lock_path, timeout=0)
+        request.addfinalizer(partial(lock_path.unlink, missing_ok=True))
+        return lock
+
+    return _make_lock
 
 
 class Client:
