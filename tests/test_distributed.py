@@ -2,28 +2,33 @@ from __future__ import annotations
 
 import asyncio
 from decimal import Decimal
-import threading
+from multiprocessing import Process, SimpleQueue
+from signal import SIGINT, SIGTERM
+import signal
 import time
 from typing import (
     Any,
     Iterable,
     List,
     TYPE_CHECKING,
+    Mapping,
+    Tuple,
 )
 
 import attr
 import pytest
 
+from ai.backend.common.etcd import AsyncEtcd, ConfigScopes
 from ai.backend.common.events import AbstractEvent, EventDispatcher, EventProducer
+from ai.backend.common.types import EtcdRedisConfig
 
 from ai.backend.manager.defs import REDIS_STREAM_DB, AdvisoryLock
 from ai.backend.manager.distributed import GlobalTimer
 from ai.backend.manager.models.utils import connect_database
 
 if TYPE_CHECKING:
+    # from ai.backend.common.types import AgentId, EtcdRedisConfig, HostPortPair
     from ai.backend.common.types import AgentId
-
-    from ai.backend.manager.config import LocalConfig, SharedConfig
 
 
 def drange(start: Decimal, stop: Decimal, step: Decimal) -> Iterable[Decimal]:
@@ -55,97 +60,108 @@ class NoopEvent(AbstractEvent):
         return cls(value[0])
 
 
-class TimerNode(threading.Thread):
+def timer_node_process(
+    test_id: str, node_id: str,
+    redis: EtcdRedisConfig,
+    etcd_args: Tuple[Any],
+    etcd_kwargs: Mapping[Any, Any],
+    interval: float,
+    event_records: Any,
+):
+    stop_event = asyncio.Event()
 
-    def __init__(
-        self,
-        interval: float,
-        thread_idx: int,
-        test_id: str,
-        local_config: LocalConfig,
-        shared_config: SharedConfig,
-        event_records: List[float],
-    ) -> None:
-        super().__init__()
-        self.interval = interval
-        self.thread_idx = thread_idx
-        self.test_id = test_id
-        self.local_config = local_config
-        self.shared_config = shared_config
-        self.event_records = event_records
-
-    async def timer_node_async(self) -> None:
-        self.loop = asyncio.get_running_loop()
-        self.stop_event = asyncio.Event()
+    async def _async_job():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
 
         async def _tick(context: Any, source: AgentId, event: NoopEvent) -> None:
             print("_tick")
-            self.event_records.append(time.monotonic())
+
+            event_records.put(time.monotonic())
 
         event_dispatcher = await EventDispatcher.new(
-            self.shared_config.data['redis'],
+            redis,
             db=REDIS_STREAM_DB,
-            node_id=self.local_config['manager']['id'],
+            node_id=node_id,
         )
         event_producer = await EventProducer.new(
-            self.shared_config.data['redis'],
+            redis,
             db=REDIS_STREAM_DB,
         )
         event_dispatcher.consume(NoopEvent, None, _tick)
 
         timer = GlobalTimer(
-            self.shared_config.etcd,
+            AsyncEtcd(*etcd_args, **etcd_kwargs),
             AdvisoryLock.LOCKID_TEST,
             event_producer,
-            lambda: NoopEvent(self.test_id),
-            self.interval,
+            lambda: NoopEvent(test_id),
+            interval,
         )
+
         try:
             await timer.join()
-            await self.stop_event.wait()
+            await stop_event.wait()
         finally:
             await timer.leave()
             await event_producer.close()
             await event_dispatcher.close()
 
-    def run(self) -> None:
-        asyncio.run(self.timer_node_async())
+    def _on_sigterm(signum, frame):
+        print('timer_node_process(): signal called')
+        stop_event.set()
+    signal.signal(SIGTERM, _on_sigterm)
+    signal.signal(SIGINT, _on_sigterm)
+    asyncio.run(_async_job())
+    return 0
 
 
-@pytest.mark.asyncio
-async def test_global_timer(test_id, local_config, shared_config, database_engine) -> None:
-    event_records: List[float] = []
+def test_global_timer(test_id, local_config, shared_config, database_engine) -> None:
+    event_records: Any = SimpleQueue()
+    processes: List[Process] = []
     num_threads = 7
     num_records = 0
     delay = 3.0
     interval = 0.5
     target_count = (delay / interval)
-    threads: List[TimerNode] = []
-    for thread_idx in range(num_threads):
-        timer_node = TimerNode(
-            interval,
-            thread_idx,
-            test_id,
-            local_config,
-            shared_config,
-            event_records,
+
+    etcd_args = (
+        local_config['etcd']['addr'],
+        local_config['etcd']['namespace'],
+        {ConfigScopes.GLOBAL: ''},
+    )
+    etcd_kwargs = {}
+    if local_config['etcd']['user']:
+        etcd_kwargs = {
+            'credentials': {
+                'user': local_config['etcd']['user'],
+                'password': local_config['etcd']['password'],
+            },
+        }
+
+    for i in range(num_threads):
+        args = (
+            test_id, local_config['manager']['id'],
+            local_config['redis'], etcd_args, etcd_kwargs, interval, event_records,
         )
-        threads.append(timer_node)
-        timer_node.start()
+        p = Process(target=timer_node_process, args=args)
+        p.start()
+        processes.append(p)
+
     print(f"spawned {num_threads} timers")
-    print(threads)
+    print(processes)
     print("waiting")
-    time.sleep(delay)
-    print("stopping timers")
-    for timer_node in threads:
-        timer_node.loop.call_soon_threadsafe(timer_node.stop_event.set)
+    time.sleep(delay + 1)
     print("joining timer threads")
-    for timer_node in threads:
-        timer_node.join()
+    for timer_node in processes:
+        timer_node.terminate()
     print("checking records")
     print(event_records)
-    num_records = len(event_records)
-    print(f"{num_records=}")
+    num_records = 0
+    while not event_records.empty():
+        num_records += 1
+        event_records.get()
+
+    print(f"num_records={num_records}")
     assert target_count - 2 <= num_records <= target_count + 2
 
 
