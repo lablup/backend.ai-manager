@@ -500,9 +500,8 @@ def init_lock_factory(root_ctx: RootContext) -> DistributedLockFactory:
         case 'redlock':
             raise NotImplementedError("Redlock on aioredis v2 is not supported yet.")
         case 'etcd':
-            # from ai.backend.common.lock import EtcdLock
-            # return lambda lock_id: EtcdLock(root_ctx.shared_config.etcd, lock_id)
-            raise NotImplementedError("TODO")
+            from ai.backend.common.lock import EtcdLock
+            return lambda lock_id: EtcdLock(str(lock_id), root_ctx.shared_config.etcd)
         case other:
             raise ValueError(f"Invalid lock backend: {other}")
 
