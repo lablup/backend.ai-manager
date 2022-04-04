@@ -821,7 +821,6 @@ class ClearImages(graphene.Mutation):
         info: graphene.ResolveInfo,
         registry: str,
     ) -> ClearImages:
-        log.info('clear all images by API request')
         ctx: GraphQueryContext = info.context
         try:
             async with ctx.db.begin_session() as session:
@@ -872,8 +871,6 @@ class ModifyImage(graphene.Mutation):
         architecture: str,
         props: ModifyImageInput,
     ) -> AliasImage:
-        log.info('modify image(ref: {0}) by API request', target)
-
         ctx: GraphQueryContext = info.context
         data: MutableMapping[str, Any] = {}
         set_if_set(props, data, 'name')
