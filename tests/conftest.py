@@ -475,12 +475,18 @@ def monitor_keypair():
 
 @pytest.fixture
 def get_headers(app, default_keypair):
-    def create_header(method, url, req_bytes, ctype='application/json',
-                      hash_type='sha256', api_version='v5.20191215',
-                      keypair=default_keypair):
+    def create_header(
+        method,
+        url,
+        req_bytes,
+        ctype='application/json',
+        hash_type='sha256',
+        api_version='v5.20191215',
+        keypair=default_keypair,
+    ) -> dict[str, str]:
         now = datetime.now(tzutc())
         root_ctx: RootContext = app['_root.context']
-        hostname = f"localhost:{root_ctx.local_config['manager']['service-addr'].port}"
+        hostname = f"127.0.0.1:{root_ctx.local_config['manager']['service-addr'].port}"
         headers = {
             'Date': now.isoformat(),
             'Content-Type': ctype,
