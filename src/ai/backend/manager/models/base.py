@@ -442,6 +442,17 @@ class KVPair(graphene.ObjectType):
     value = graphene.String()
 
 
+class ResourceLimitInput(graphene.InputObjectType):
+    key = graphene.String()
+    min = graphene.String()
+    max = graphene.String()
+
+
+class KVPairInput(graphene.InputObjectType):
+    key = graphene.String()
+    value = graphene.String()
+
+
 class BigInt(Scalar):
     """
     BigInt is an extension of the regular graphene.Int scalar type
@@ -798,14 +809,17 @@ async def simple_db_mutate_returning_item(
         return result_cls(False, f"unexpected error: {e}", None)
 
 
-def set_if_set(src: object, target: MutableMapping[str, Any], name: str, *, clean_func=None) -> None:
+def set_if_set(
+    src: object, target: MutableMapping[str, Any], name: str, *,
+    clean_func=None, target_key: Optional[str] = None,
+) -> None:
     v = getattr(src, name)
     # NOTE: unset optional fields are passed as null.
     if v is not None:
         if callable(clean_func):
-            target[name] = clean_func(v)
+            target[target_key or name] = clean_func(v)
         else:
-            target[name] = v
+            target[target_key or name] = v
 
 
 async def populate_fixture(
