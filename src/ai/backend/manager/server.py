@@ -110,6 +110,7 @@ VALID_VERSIONS: Final = frozenset([
     'v6.20210815',
 
     # added session dependencies and state callback URLs configs when creating sessions
+    # added session event webhook option to session creation API
     # added architecture option when making image aliases
     'v6.20220315',
 ])
