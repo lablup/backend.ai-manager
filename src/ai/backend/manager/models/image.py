@@ -1,8 +1,8 @@
 from __future__ import annotations
+
 from decimal import Decimal
 import enum
 import functools
-
 import logging
 from pathlib import Path
 from typing import (
@@ -26,6 +26,7 @@ from sqlalchemy.orm import (
     selectinload,
 )
 import trafaret as t
+import yaml
 
 from ai.backend.common import redis
 from ai.backend.common.docker import ImageRef
@@ -39,10 +40,7 @@ from ai.backend.common.types import (
 )
 
 from ai.backend.manager.container_registry import get_container_registry
-import yaml
-
 from ai.backend.manager.api.exceptions import ImageNotFound
-
 from ai.backend.manager.defs import DEFAULT_IMAGE_ARCH
 
 from .base import (
@@ -53,10 +51,10 @@ from .user import UserRole
 from .utils import ExtendedAsyncSAEngine
 
 if TYPE_CHECKING:
-    from .gql import GraphQueryContext
-
-    from ai.backend.manager.background import ProgressReporter
+    from ai.backend.common.bgtask import ProgressReporter
     from ai.backend.manager.config import SharedConfig
+
+    from .gql import GraphQueryContext
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 

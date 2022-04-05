@@ -1,12 +1,19 @@
+from __future__ import annotations
+
 import attr
 import enum
 import uuid
 from typing import (
     Protocol,
+    TYPE_CHECKING,
 )
 
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 from sqlalchemy.engine.row import Row
+
+if TYPE_CHECKING:
+    from ai.backend.common.distributed import AbstractDistributedLock
+    from .defs import LockID
 
 
 class SessionGetter(Protocol):
@@ -33,3 +40,9 @@ class UserScope:
     group_id: uuid.UUID
     user_uuid: uuid.UUID
     user_role: str
+
+
+class DistributedLockFactory(Protocol):
+
+    def __call__(self, lock_id: LockID) -> AbstractDistributedLock:
+        ...

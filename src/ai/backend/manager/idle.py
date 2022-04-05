@@ -31,6 +31,7 @@ from sqlalchemy.engine import Row
 
 import ai.backend.common.validators as tx
 from ai.backend.common import msgpack, redis
+from ai.backend.common.distributed import GlobalTimer
 from ai.backend.common.events import (
     AbstractEvent,
     DoIdleCheckEvent,
@@ -48,10 +49,10 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import AccessKey, aobject, SessionTypes
 from ai.backend.common.utils import nmget
 
-from .defs import DEFAULT_ROLE, REDIS_LIVE_DB, REDIS_STAT_DB, AdvisoryLock
-from .distributed import GlobalTimer
+from .defs import DEFAULT_ROLE, REDIS_LIVE_DB, REDIS_STAT_DB, LockID
 from .models import kernels, keypair_resource_policies, keypairs
 from .models.kernel import LIVE_STATUS
+from .types import DistributedLockFactory
 
 if TYPE_CHECKING:
     from .config import SharedConfig
@@ -90,11 +91,13 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
         shared_config: SharedConfig,
         event_dispatcher: EventDispatcher,
         event_producer: EventProducer,
+        lock_factory: DistributedLockFactory,
     ) -> None:
         self._db = db
         self._shared_config = shared_config
         self._event_dispatcher = event_dispatcher
         self._event_producer = event_producer
+        self._lock_factory = lock_factory
 
     async def __ainit__(self) -> None:
         self._redis = redis.get_redis_object(
@@ -106,8 +109,7 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
         )
         await self.populate_config(raw_config or {})
         self.timer = GlobalTimer(
-            self._db,
-            AdvisoryLock.LOCKID_IDLE_CHECK_TIMER,
+            self._lock_factory(LockID.LOCKID_IDLE_CHECK_TIMER),
             self._event_producer,
             lambda: DoIdleCheckEvent(),
             self.check_interval,
@@ -620,6 +622,7 @@ async def create_idle_checkers(
     shared_config: SharedConfig,
     event_dispatcher: EventDispatcher,
     event_producer: EventProducer,
+    lock_factory: DistributedLockFactory,
 ) -> Sequence[BaseIdleChecker]:
     """
     Create an instance of session idleness checker
@@ -638,7 +641,7 @@ async def create_idle_checkers(
             continue
         log.info(f"Initializing idle checker: {checker_name}")
         checker_instance = await checker_cls.new(
-            db, shared_config, event_dispatcher, event_producer,
+            db, shared_config, event_dispatcher, event_producer, lock_factory,
         )
         instances.append(checker_instance)
     return instances

@@ -40,7 +40,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 
 if TYPE_CHECKING:
     from ..config import LocalConfig
-from ..defs import AdvisoryLock
+from ..defs import LockID
 from ..types import Sentinel
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
@@ -112,7 +112,7 @@ class ExtendedAsyncSAEngine(SAEngine):
             yield SASession(bind=conn)
 
     @actxmgr
-    async def advisory_lock(self, lock_id: AdvisoryLock) -> AsyncIterator[None]:
+    async def advisory_lock(self, lock_id: LockID) -> AsyncIterator[None]:
         lock_acquired = False
         # Here we use the session-level advisory lock,
         # which follows the lifetime of underlying DB connection.

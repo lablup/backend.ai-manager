@@ -39,8 +39,9 @@ REDIS_IMAGE_DB: Final = 3
 REDIS_STREAM_DB: Final = 4
 
 
-# PostgreSQL session-level advisory lock indentifiers
-class AdvisoryLock(enum.IntEnum):
+# The unique identifiers for distributed locks.
+# To be used with PostgreSQL advisory locks, the values are defined as integers.
+class LockID(enum.IntEnum):
     LOCKID_TEST = 42
     LOCKID_SCHEDULE = 91
     LOCKID_PREPARE = 92

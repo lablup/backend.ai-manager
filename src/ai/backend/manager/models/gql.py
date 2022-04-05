@@ -11,6 +11,7 @@ from ai.backend.manager.defs import DEFAULT_IMAGE_ARCH
 if TYPE_CHECKING:
     from graphql.execution.executors.asyncio import AsyncioExecutor
 
+    from ai.backend.common.bgtask import BackgroundTaskManager
     from ai.backend.common.etcd import AsyncEtcd
     from ai.backend.common.types import (
         AccessKey,
@@ -24,7 +25,6 @@ if TYPE_CHECKING:
     from ..api.manager import ManagerStatus
     from ..config import LocalConfig, SharedConfig
     from ..registry import AgentRegistry
-    from ..background import BackgroundTaskManager
     from ..models.utils import ExtendedAsyncSAEngine
     from .storage import StorageSessionManager
 
