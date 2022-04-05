@@ -32,6 +32,7 @@ from setproctitle import setproctitle
 import aiomonitor
 
 from ai.backend.common import redis
+from ai.backend.common.bgtask import BackgroundTaskManager
 from ai.backend.common.cli import LazyGroup
 from ai.backend.common.events import EventDispatcher, EventProducer
 from ai.backend.common.utils import env_info
@@ -59,7 +60,6 @@ from .api.types import (
     WebRequestHandler, WebMiddleware,
     CleanupContext,
 )
-from .background import BackgroundTaskManager
 from .config import (
     LocalConfig,
     SharedConfig,
