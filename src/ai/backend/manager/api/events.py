@@ -23,7 +23,7 @@ import attr
 import sqlalchemy as sa
 import trafaret as t
 
-from ai.backend.common import redis, validators as tx
+from ai.backend.common import validators as tx
 from ai.backend.common.events import (
     BgtaskCancelledEvent,
     BgtaskDoneEvent,

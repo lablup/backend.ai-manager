@@ -101,7 +101,7 @@ def local_config(test_id, test_db) -> Iterator[LocalConfig]:
     ipc_base_path.mkdir(parents=True, exist_ok=True)
     cfg['manager']['ipc-base-path'] = ipc_base_path
     cfg['manager']['distributed-lock'] = 'filelock'
-    cfg['manager']['service-addr'] = HostPortPair('localhost', 29100)
+    cfg['manager']['service-addr'] = HostPortPair('127.0.0.1', 29100)
     # In normal setups, this is read from etcd.
     cfg['redis'] = redis_config_iv.check({
         'addr': {'host': '127.0.0.1', 'port': '6379'},
@@ -313,7 +313,7 @@ def file_lock_factory(local_config, request):
 
 
 class Client:
-    def __init__(self, session, url):
+    def __init__(self, session: aiohttp.ClientSession, url) -> None:
         self._session = session
         if not url.endswith('/'):
             url += '/'
@@ -377,9 +377,9 @@ async def app(local_config, event_loop):
 
 @pytest.fixture
 async def create_app_and_client(local_config, event_loop) -> AsyncIterator:
-    client: Client
-    client_session: aiohttp.ClientSession
-    runner: web.BaseRunner
+    client: Client | None = None
+    client_session: aiohttp.ClientSession | None = None
+    runner: web.BaseRunner | None = None
     _outer_ctxs: List[AsyncContextManager] = []
 
     async def app_builder(
@@ -427,13 +427,15 @@ async def create_app_and_client(local_config, event_loop) -> AsyncIterator:
         await site.start()
         port = root_ctx.local_config['manager']['service-addr'].port
         client_session = aiohttp.ClientSession()
-        client = Client(client_session, f'http://localhost:{port}')
+        client = Client(client_session, f'http://127.0.0.1:{port}')
         return app, client
 
     yield app_builder
 
-    await client_session.close()
-    await runner.cleanup()
+    if client_session is not None:
+        await client_session.close()
+    if runner is not None:
+        await runner.cleanup()
     for octx in reversed(_outer_ctxs):
         await octx.__aexit__(None, None, None)
 
