@@ -123,14 +123,14 @@ vfolders = sa.Table(
     sa.Column('created_at', sa.DateTime(timezone=True),
               server_default=sa.func.now()),
     sa.Column('last_used', sa.DateTime(timezone=True), nullable=True),
-    # To store creator information (email) for group vfolder.
+    # creator is always set to the user who created vfolder (regardless user/project types)
     sa.Column('creator', sa.String(length=128), nullable=True),
-    # For unmanaged vFolder only.
+    # unmanaged vfolder represents the host-side absolute path instead of storage-based path.
     sa.Column('unmanaged_path', sa.String(length=512), nullable=True),
     sa.Column('ownership_type', EnumValueType(VFolderOwnershipType),
               default=VFolderOwnershipType.USER, nullable=False),
-    sa.Column('user', GUID, sa.ForeignKey('users.uuid'), nullable=True),
-    sa.Column('group', GUID, sa.ForeignKey('groups.id'), nullable=True),
+    sa.Column('user', GUID, sa.ForeignKey('users.uuid'), nullable=True),  # owner if user vfolder
+    sa.Column('group', GUID, sa.ForeignKey('groups.id'), nullable=True),  # owner if project vfolder
     sa.Column('cloneable', sa.Boolean, default=False, nullable=False),
 
     sa.CheckConstraint(
@@ -598,11 +598,11 @@ class VirtualFolder(graphene.ObjectType):
 
     host = graphene.String()
     name = graphene.String()
-    user = graphene.UUID()       # User.id
-    user_email = graphene.String()
-    group = graphene.UUID()      # Group.id
-    group_name = graphene.String()
-    creator = graphene.String()  # User.email
+    user = graphene.UUID()          # User.id (current owner, null in project vfolders)
+    user_email = graphene.String()  # User.email (current owner, null in project vfolders)
+    group = graphene.UUID()         # Group.id (current owner, null in user vfolders)
+    group_name = graphene.String()  # Group.name (current owenr, null in user vfolders)
+    creator = graphene.String()     # User.email (always set)
     unmanaged_path = graphene.String()
     usage_mode = graphene.String()
     permission = graphene.String()
