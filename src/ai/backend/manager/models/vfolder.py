@@ -241,10 +241,10 @@ async def _set_vfolder_query(
             sa.select(
                 vfolders_selectors +
                 [
-                    users.c.email,
+                    users.c.email.label('users_email'),
                     vfolders.c.permission.label('permission'),
                     sa.case([(True, True)]).label('is_owner'),
-                    sa.case([(True, None)]).label('group_name'),
+                    sa.case([(True, None)]).label('groups_name'),
                 ],
             )
             .select_from(j)
@@ -268,11 +268,11 @@ async def _set_vfolder_query(
             sa.select(
                 vfolders_selectors +
                 [
-                    users.c.email,
+                    users.c.email.label('users_email'),
                     vfolder_permissions.c.permission.label('permission'),
                     sa.case([((vfolders.c.id == vfolder_permissions.c.vfolder) &
                              (vfolders.c.user != user_uuid), False)]).label('is_owner'),
-                    sa.case([(True, None)]).label('group_name'),
+                    sa.case([(True, None)]).label('groups_name'),
                 ],
             )
             .select_from(j)
@@ -304,7 +304,7 @@ async def _set_vfolder_query(
             sa.select(
                 vfolders_selectors +
                 [
-                    sa.case([(True, None)]).label('email'),
+                    sa.case([(True, None)]).label('users_email'),
                     vfolders.c.permission,
                     sa.case(
                         [
@@ -312,7 +312,7 @@ async def _set_vfolder_query(
                              (user_role == UserRole.SUPERADMIN or user_role == 'superadmin'), True),
                         ], else_=False,
                     ).label('is_owner'),
-                    groups.c.name.label('group_name'),
+                    groups.c.name.label('groups_name'),
                 ],
             )
             .select_from(j)
@@ -378,19 +378,20 @@ async def _set_vfolder_query(
         ).label('is_owner')
 
     _group_conds = ((vfolders.c.ownership_type == VFolderOwnershipType.GROUP) &
-                    (vfolders.c.group.in_(group_ids)))
+                    (vfolders.c.group.in_(group_ids)) &
+                    (vfolders.c.group == groups.c.id))
     _email = sa.case(
         [
             (vfolders.c.ownership_type == VFolderOwnershipType.USER, users.c.email),
             (vfolders.c.ownership_type == VFolderOwnershipType.GROUP, None),
         ],
-    ).label('email')
+    ).label('users_email')
     _group_name = sa.case(
         [
             (vfolders.c.ownership_type == VFolderOwnershipType.USER, None),
             (vfolders.c.ownership_type == VFolderOwnershipType.GROUP, groups.c.name),
         ],
-    ).label('group_name')
+    ).label('groups_name')
     result_query = (
         sa.select(
             vfolders_selectors +
