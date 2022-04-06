@@ -123,14 +123,14 @@ vfolders = sa.Table(
     sa.Column('created_at', sa.DateTime(timezone=True),
               server_default=sa.func.now()),
     sa.Column('last_used', sa.DateTime(timezone=True), nullable=True),
-    # To store creator information (email) for group vfolder.
+    # creator is always set to the user who created vfolder (regardless user/project types)
     sa.Column('creator', sa.String(length=128), nullable=True),
-    # For unmanaged vFolder only.
+    # unmanaged vfolder represents the host-side absolute path instead of storage-based path.
     sa.Column('unmanaged_path', sa.String(length=512), nullable=True),
     sa.Column('ownership_type', EnumValueType(VFolderOwnershipType),
               default=VFolderOwnershipType.USER, nullable=False),
-    sa.Column('user', GUID, sa.ForeignKey('users.uuid'), nullable=True),
-    sa.Column('group', GUID, sa.ForeignKey('groups.id'), nullable=True),
+    sa.Column('user', GUID, sa.ForeignKey('users.uuid'), nullable=True),  # owner if user vfolder
+    sa.Column('group', GUID, sa.ForeignKey('groups.id'), nullable=True),  # owner if project vfolder
     sa.Column('cloneable', sa.Boolean, default=False, nullable=False),
 
     sa.CheckConstraint(
@@ -598,9 +598,11 @@ class VirtualFolder(graphene.ObjectType):
 
     host = graphene.String()
     name = graphene.String()
-    user = graphene.UUID()       # User.id
-    group = graphene.UUID()      # Group.id
-    creator = graphene.String()  # User.email
+    user = graphene.UUID()          # User.id (current owner, null in project vfolders)
+    user_email = graphene.String()  # User.email (current owner, null in project vfolders)
+    group = graphene.UUID()         # Group.id (current owner, null in user vfolders)
+    group_name = graphene.String()  # Group.name (current owenr, null in user vfolders)
+    creator = graphene.String()     # User.email (always set)
     unmanaged_path = graphene.String()
     usage_mode = graphene.String()
     permission = graphene.String()
@@ -624,7 +626,9 @@ class VirtualFolder(graphene.ObjectType):
             host=row['host'],
             name=row['name'],
             user=row['user'],
+            user_email=row['users_email'],
             group=row['group'],
+            group_name=row['groups_name'],
             creator=row['creator'],
             unmanaged_path=row['unmanaged_path'],
             usage_mode=row['usage_mode'],
@@ -651,6 +655,7 @@ class VirtualFolder(graphene.ObjectType):
         "host": ("vfolders_host", None),
         "name": ("vfolders_name", None),
         "group": ("vfolders_group", uuid.UUID),
+        "group_name": ("groups_name", None),
         "user": ("vfolders_user", uuid.UUID),
         "user_email": ("users_email", None),
         "creator": ("vfolders_creator", None),
@@ -670,6 +675,7 @@ class VirtualFolder(graphene.ObjectType):
         "host": "vfolders_host",
         "name": "vfolders_name",
         "group": "vfolders_group",
+        "group_name": "groups_name",
         "user": "vfolders_user",
         "user_email": "users_email",
         "usage_mode": "vfolders_usage_mode",
@@ -693,7 +699,10 @@ class VirtualFolder(graphene.ObjectType):
         filter: str = None,
     ) -> int:
         from .user import users
-        j = sa.join(vfolders, users, vfolders.c.user == users.c.uuid)
+        j = (
+            vfolders
+            .join(users, vfolders.c.user == users.c.uuid, isouter=True)
+        )
         query = (
             sa.select([sa.func.count()])
             .select_from(j)
@@ -725,9 +734,14 @@ class VirtualFolder(graphene.ObjectType):
         order: str = None,
     ) -> Sequence[VirtualFolder]:
         from .user import users
-        j = sa.join(vfolders, users, vfolders.c.user == users.c.uuid)
+        from .group import groups
+        j = (
+            vfolders
+            .join(users, vfolders.c.user == users.c.uuid, isouter=True)
+            .join(groups, vfolders.c.group == groups.c.id, isouter=True)
+        )
         query = (
-            sa.select([vfolders])
+            sa.select([vfolders, users.c.email, groups.c.name.label('groups_name')])
             .select_from(j)
             .limit(limit)
             .offset(offset)
