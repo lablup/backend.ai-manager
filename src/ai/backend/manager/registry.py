@@ -776,6 +776,7 @@ class AgentRegistry:
         starts_at: datetime = None,
         agent_list: Sequence[str] = None,
         dependency_sessions: Sequence[SessionId] = None,
+        callback_url: URL = None,
     ) -> SessionId:
 
         session_id = SessionId(uuid.uuid4())
@@ -896,6 +897,7 @@ class AgentRegistry:
             'tag': session_tag,
             'starts_at': starts_at,
             'internal_data': internal_data,
+            'callback_url': callback_url,
             'startup_command': sa.bindparam('startup_command'),
             'occupied_slots': sa.bindparam('occupied_slots'),
             'occupied_shares': {},

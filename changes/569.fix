@@ -1,0 +1,1 @@
+Fix `inspect_image`, `forget_image` and `alias` commands under `backend.ai mgr etcd` command group failing to run.
