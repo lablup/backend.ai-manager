@@ -1,0 +1,1 @@
+Fix `occupied_slots` column on `agents` kernel does not match to actual resource occupied on corresponding agent.
