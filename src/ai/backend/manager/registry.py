@@ -1595,6 +1595,9 @@ class AgentRegistry:
         during kernel creation still being reported as used.
         """
 
+        def _str_to_decimal(orig_slots: ResourceSlot):
+            return ResourceSlot.from_json({k: Decimal(orig_slots[k]) for k in orig_slots.keys()})
+
         keyfunc = lambda item: item.agent_alloc_ctx.agent_id
         for agent_id, group_iterator in itertools.groupby(
             sorted(kernel_agent_bindings, key=keyfunc), key=keyfunc,
@@ -1608,13 +1611,14 @@ class AgentRegistry:
                     kernel_agent_binding.kernel.kernel_id)
                 requested_slots += kernel_agent_binding.kernel.requested_slots
                 if actual_allocated_slot is not None:
-                    actual_allocated_slots += actual_allocated_slot
+                    actual_allocated_slots += _str_to_decimal(actual_allocated_slot)
                     del self._kernel_actual_allocated_resources[kernel_agent_binding.kernel.kernel_id]
                 else:  # something's wrong; just fall back to requested slot value
                     actual_allocated_slots += kernel_agent_binding.kernel.requested_slots
 
             # perform DB update only if requested slots and actual allocated value differs
             if actual_allocated_slots != requested_slots:
+                log.debug('calibrating resource slot usage for agent {}', agent_id)
                 async with self.db.begin() as conn:
                     select_query = (
                         sa.select([agents.c.occupied_slots])
@@ -1622,9 +1626,10 @@ class AgentRegistry:
                     )
                     result = await conn.execute(select_query)
                     occupied_slots: ResourceSlot = result.scalar()
+                    diff = actual_allocated_slots - requested_slots
                     update_query = (
                         sa.update(agents).values({
-                            'occupied_slots': occupied_slots + requested_slots - actual_allocated_slots,
+                            'occupied_slots': _str_to_decimal(occupied_slots) + diff,
                         }).where(agents.c.id == agent_id)
                     )
                     await conn.execute(update_query)
