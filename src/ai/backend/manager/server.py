@@ -491,18 +491,22 @@ def init_lock_factory(root_ctx: RootContext) -> DistributedLockFactory:
     match lock_backend:
         case 'filelock':
             from ai.backend.common.lock import FileLock
-            return lambda lock_id: FileLock(
+            return lambda lock_id, lifetime_hint: FileLock(
                 ipc_base_path / f"{manager_id}.{lock_id}.lock",
                 timeout=0,
             )
         case 'pg_advisory':
             from .pglock import PgAdvisoryLock
-            return lambda lock_id: PgAdvisoryLock(root_ctx.db, lock_id)
+            return lambda lock_id, lifetime_hint: PgAdvisoryLock(root_ctx.db, lock_id)
         case 'redlock':
             raise NotImplementedError("Redlock on aioredis v2 is not supported yet.")
         case 'etcd':
             from ai.backend.common.lock import EtcdLock
-            return lambda lock_id: EtcdLock(str(lock_id), root_ctx.shared_config.etcd)
+            return lambda lock_id, lifetime_hint: EtcdLock(
+                str(lock_id),
+                root_ctx.shared_config.etcd,
+                lifetime=min(lifetime_hint * 2, lifetime_hint + 30),
+            )
         case other:
             raise ValueError(f"Invalid lock backend: {other}")
 

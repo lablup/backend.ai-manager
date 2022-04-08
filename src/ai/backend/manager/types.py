@@ -44,5 +44,5 @@ class UserScope:
 
 class DistributedLockFactory(Protocol):
 
-    def __call__(self, lock_id: LockID) -> AbstractDistributedLock:
+    def __call__(self, lock_id: LockID, lifetime_hint: float) -> AbstractDistributedLock:
         ...
