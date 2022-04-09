@@ -1272,7 +1272,7 @@ class AgentRegistry:
                     "agent(s) raise errors during kernel creation",
                     errors=agent_errors,
                 )
-            await self.calibrate_agent_alloc_differences(kernel_agent_bindings)
+            await self.settle_agent_alloc(kernel_agent_bindings)
         # If all is well, let's say the session is ready.
         await self.event_producer.produce_event(
             SessionStartedEvent(scheduled_session.session_id, session_creation_id),
@@ -1586,17 +1586,14 @@ class AgentRegistry:
         ) as rpc:
             await rpc.call.update_scaling_group(scaling_group)
 
-    async def calibrate_agent_alloc_differences(
+    async def settle_agent_alloc(
         self, kernel_agent_bindings: Sequence[KernelAgentBinding],
     ):
         """
-        Tries to calibrate agent row's occupied_slots with real value. This must be called
+        Tries to settle down agent row's occupied_slots with real value. This must be called
         after kernel creation is completed, to prevent fraction of resource dropped by agent scheduler
         during kernel creation still being reported as used.
         """
-
-        def _str_to_decimal(orig_slots: ResourceSlot):
-            return ResourceSlot.from_json({k: Decimal(orig_slots[k]) for k in orig_slots.keys()})
 
         keyfunc = lambda item: item.agent_alloc_ctx.agent_id
         for agent_id, group_iterator in itertools.groupby(
@@ -1611,7 +1608,7 @@ class AgentRegistry:
                     kernel_agent_binding.kernel.kernel_id)
                 requested_slots += kernel_agent_binding.kernel.requested_slots
                 if actual_allocated_slot is not None:
-                    actual_allocated_slots += _str_to_decimal(actual_allocated_slot)
+                    actual_allocated_slots += ResourceSlot.from_json(actual_allocated_slot)
                     del self._kernel_actual_allocated_resources[kernel_agent_binding.kernel.kernel_id]
                 else:  # something's wrong; just fall back to requested slot value
                     actual_allocated_slots += kernel_agent_binding.kernel.requested_slots
@@ -1629,7 +1626,7 @@ class AgentRegistry:
                     diff = actual_allocated_slots - requested_slots
                     update_query = (
                         sa.update(agents).values({
-                            'occupied_slots': _str_to_decimal(occupied_slots) + diff,
+                            'occupied_slots': ResourceSlot.from_json(occupied_slots) + diff,
                         }).where(agents.c.id == agent_id)
                     )
                     await conn.execute(update_query)
