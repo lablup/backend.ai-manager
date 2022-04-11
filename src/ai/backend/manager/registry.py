@@ -1588,7 +1588,7 @@ class AgentRegistry:
 
     async def settle_agent_alloc(
         self, kernel_agent_bindings: Sequence[KernelAgentBinding],
-    ):
+    ) -> None:
         """
         Tries to settle down agent row's occupied_slots with real value. This must be called
         after kernel creation is completed, to prevent fraction of resource dropped by agent scheduler
