@@ -243,6 +243,7 @@ class AgentRegistry:
     kernel_creation_tracker: Dict[KernelId, asyncio.Future]
     _post_kernel_creation_tasks: weakref.WeakValueDictionary[KernelId, asyncio.Task]
     _post_kernel_creation_infos: dict[KernelId, asyncio.Future]
+    _kernel_actual_allocated_resources: dict[KernelId, ResourceSlot]
 
     def __init__(
         self,
@@ -269,6 +270,7 @@ class AgentRegistry:
         self.kernel_creation_tracker = {}
         self._post_kernel_creation_tasks = weakref.WeakValueDictionary()
         self._post_kernel_creation_infos = {}
+        self._kernel_actual_allocated_resources = {}
         self.rpc_keepalive_timeout = \
             int(shared_config.get("config/network/rpc/keepalive-timeout", "60"))
 
@@ -1270,6 +1272,7 @@ class AgentRegistry:
                     "agent(s) raise errors during kernel creation",
                     errors=agent_errors,
                 )
+            await self.settle_agent_alloc(kernel_agent_bindings)
         # If all is well, let's say the session is ready.
         await self.event_producer.produce_event(
             SessionStartedEvent(scheduled_session.session_id, session_creation_id),
@@ -1342,6 +1345,7 @@ class AgentRegistry:
                         actual_allocs = self.convert_resource_spec_to_resource_slot(
                             created_info['resource_spec']['allocations'])
                         values['occupied_slots'] = actual_allocs
+                        self._kernel_actual_allocated_resources[kernel_id] = actual_allocs
                         update_query = (
                             kernels.update()
                             .values(values)
@@ -1581,6 +1585,51 @@ class AgentRegistry:
             keepalive_timeout=self.rpc_keepalive_timeout,
         ) as rpc:
             await rpc.call.update_scaling_group(scaling_group)
+
+    async def settle_agent_alloc(
+        self, kernel_agent_bindings: Sequence[KernelAgentBinding],
+    ) -> None:
+        """
+        Tries to settle down agent row's occupied_slots with real value. This must be called
+        after kernel creation is completed, to prevent fraction of resource dropped by agent scheduler
+        during kernel creation still being reported as used.
+        """
+
+        keyfunc = lambda item: item.agent_alloc_ctx.agent_id
+        for agent_id, group_iterator in itertools.groupby(
+            sorted(kernel_agent_bindings, key=keyfunc), key=keyfunc,
+        ):
+            actual_allocated_slots = ResourceSlot()
+            requested_slots = ResourceSlot()
+
+            for kernel_agent_binding in group_iterator:
+                # this value must be set while running _post_create_kernel
+                actual_allocated_slot = self._kernel_actual_allocated_resources.get(
+                    kernel_agent_binding.kernel.kernel_id)
+                requested_slots += kernel_agent_binding.kernel.requested_slots
+                if actual_allocated_slot is not None:
+                    actual_allocated_slots += ResourceSlot.from_json(actual_allocated_slot)
+                    del self._kernel_actual_allocated_resources[kernel_agent_binding.kernel.kernel_id]
+                else:  # something's wrong; just fall back to requested slot value
+                    actual_allocated_slots += kernel_agent_binding.kernel.requested_slots
+
+            # perform DB update only if requested slots and actual allocated value differs
+            if actual_allocated_slots != requested_slots:
+                log.debug('calibrating resource slot usage for agent {}', agent_id)
+                async with self.db.begin() as conn:
+                    select_query = (
+                        sa.select([agents.c.occupied_slots])
+                        .select_from(agents).where(agents.c.id == agent_id)
+                    )
+                    result = await conn.execute(select_query)
+                    occupied_slots: ResourceSlot = result.scalar()
+                    diff = actual_allocated_slots - requested_slots
+                    update_query = (
+                        sa.update(agents).values({
+                            'occupied_slots': ResourceSlot.from_json(occupied_slots) + diff,
+                        }).where(agents.c.id == agent_id)
+                    )
+                    await conn.execute(update_query)
 
     async def recalc_resource_usage(self, do_fullscan: bool = False) -> None:
         concurrency_used_per_key: MutableMapping[str, int] = defaultdict(lambda: 0)
