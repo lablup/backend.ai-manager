@@ -21,27 +21,16 @@ log = BraceStyleAdapter(logging.getLogger(__name__))
 VFolderRow = Mapping[str, Any]
 
 
-async def get_vfid(root_ctx: RootContext, name: str) -> str:
+async def get_vfid(root_ctx: RootContext, host: str, name: str) -> str:
     async with root_ctx.db.begin_readonly() as conn:
         query = (
             sa.select([vfolders.c.id])
             .select_from(vfolders)
-            .where(vfolders.c.name == name)
+            .where(vfolders.c.host == host and vfolders.c.name == name)
         )
         folder_id = await conn.scalar(query)
 
         return folder_id.hex
-
-
-async def get_volume(root_ctx: RootContext, vfid: str) -> str:
-    async with root_ctx.db.begin_readonly() as conn:
-        query = (
-            sa.select([vfolders.c.host])
-            .select_from(vfolders)
-            .where(vfolders.c.id == vfid)
-        )
-        host = await conn.scalar(query)
-        return host
 
 
 @auth_required
@@ -49,6 +38,7 @@ async def get_volume(root_ctx: RootContext, vfid: str) -> str:
 @check_api_params(
     t.Dict(
         {
+            t.Key("host"): t.String,
             t.Key("vfolders"): t.List(t.String),
         },
     ),
@@ -59,23 +49,20 @@ async def create_or_update_filebrowser(
 ) -> web.Response:
 
     root_ctx: RootContext = request.app["_root.context"]
-
     vfolders = []
-
-    # Search for vfid based on vfolder name. And then get relevant host address and volume.
+    host = params["host"]
     for vfolder_name in params["vfolders"]:
         vfolders.append(
-            {"name": vfolder_name, "vfid": await get_vfid(root_ctx, vfolder_name)},
+            {
+                "name": vfolder_name,
+                "vfid": await get_vfid(root_ctx, host, vfolder_name),
+            },
         )
-
-    host = await get_volume(root_ctx, await get_vfid(root_ctx, vfolder_name))
     proxy_name, _ = root_ctx.storage_manager.split_host(host)
-
     try:
         proxy_info = root_ctx.storage_manager._proxies[proxy_name]
     except KeyError:
         raise InvalidArgument("There is no such storage proxy", proxy_name)
-
     headers = {}
     headers["X-BackendAI-Storage-Auth-Token"] = proxy_info.secret
     try:
@@ -83,7 +70,7 @@ async def create_or_update_filebrowser(
             "POST",
             proxy_info.manager_api_url / "storage/filebrowser/create",
             headers=headers,
-            json={"vfolders": vfolders},
+            json={"host": host, "vfolders": vfolders},
         ) as client_resp:
             return web.json_response(await client_resp.json())
     except aiohttp.ClientResponseError:
