@@ -16,6 +16,31 @@ Changes
 
 <!-- towncrier release notes start -->
 
+## 22.03.0b1 (2022-04-12)
+
+### Features
+* Add an scheduler_option 'pending_timeout' to auto-cancel a pending session after specified timeout ([#527](https://github.com/lablup/backend.ai-manager/issues/527))
+* Issue BGSAVE or BGREWRITEAOF commands when clearning the session statistics history to ensure compaction and persistence of the Redis database ([#565](https://github.com/lablup/backend.ai-manager/issues/565))
+* Add the `callback_url` optional parameter to the session creation APIs and call the URL upon session lifecycle events ([#567](https://github.com/lablup/backend.ai-manager/issues/567))
+* Implement `clean_images` and `modify_image` GraphQL mutation. ([#568](https://github.com/lablup/backend.ai-manager/issues/568))
+* Make the distributed lock backend replacible, choosing one from "filelock" (for single-node deployments only), "pg_advisory" (current impl.), and "etcd" (future) ([#571](https://github.com/lablup/backend.ai-manager/issues/571))
+
+### Fixes
+* Outer join the user table so that the project vfolder is also counted, and add `user_email` and `group_name` fields to the vfolder's load parameter. ([#557](https://github.com/lablup/backend.ai-manager/issues/557))
+* Fetch image alias from resolve method, update query statement and raise explicit error message ([#560](https://github.com/lablup/backend.ai-manager/issues/560))
+* Fix a regression in the session usage statistics API due to recently changed structure of kernel's mount information in DB ([#561](https://github.com/lablup/backend.ai-manager/issues/561))
+* Do not call `MSET` to Redis with empty key-value lists when recalculating resource usage ([#563](https://github.com/lablup/backend.ai-manager/issues/563))
+* Make admins query other users' container logs or destroying them again by explicitly passes the `owner_access_key` parameter to the `get_access_key_scope` function. ([#564](https://github.com/lablup/backend.ai-manager/issues/564))
+* Fix `inspect_image`, `forget_image` and `alias` commands under `backend.ai mgr etcd` command group failing to run. ([#569](https://github.com/lablup/backend.ai-manager/issues/569))
+* Migrate `manager.distributed` module to the common pkg and make `PgAdvisoryLokc` a local implementation ([#570](https://github.com/lablup/backend.ai-manager/issues/570))
+* Migrate the bgtask framework to the common pkg ([#572](https://github.com/lablup/backend.ai-manager/issues/572))
+* Fix `occupied_slots` column on `agents` kernel does not match to actual resource occupied on corresponding agent. ([#574](https://github.com/lablup/backend.ai-manager/issues/574))
+* Add explicit lifetime hints for distributed locks used in global timers to guarantee liveness ([#575](https://github.com/lablup/backend.ai-manager/issues/575))
+
+### Miscellaneous
+* Add the migration guide as `MIGRATION.md` ([#566](https://github.com/lablup/backend.ai-manager/issues/566))
+
+
 ## 22.03.0a2 (2022-03-29)
 
 ### Features
