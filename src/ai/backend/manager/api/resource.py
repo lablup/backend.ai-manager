@@ -21,13 +21,16 @@ from typing import (
 import aiohttp
 from aiohttp import web
 import aiohttp_cors
+from aioredis import Redis
+from aioredis.client import Pipeline as RedisPipeline
 from async_timeout import timeout as _timeout
 from dateutil.tz import tzutc
+import msgpack
 import sqlalchemy as sa
 import trafaret as t
 import yarl
 
-from ai.backend.common import validators as tx
+from ai.backend.common import redis, validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.utils import nmget
 from ai.backend.common.types import DefaultForUnspecified, ResourceSlot
@@ -275,7 +278,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
 @superadmin_required
 async def recalculate_usage(request: web.Request) -> web.Response:
     """
-    Update `keypairs.c.concurrency_used` and `agents.c.occupied_slots`.
+    Update `keypair_resource_usages` in redis and `agents.c.occupied_slots`.
 
     Those two values are sometimes out of sync. In that case, calling this API
     re-calculates the values for running containers and updates them in DB.
@@ -295,7 +298,7 @@ async def get_container_stats_for_period(request: web.Request, start_date, end_d
             .join(users, users.c.uuid == kernels.c.user_uuid)
         )
         query = (
-            sa.select([kernels, groups.c.name, users.c.email])
+            sa.select([kernels.c.id, groups.c.name, users.c.email])
             .select_from(j)
             .where(
                 # Filter sessions which existence period overlaps with requested period
@@ -311,15 +314,30 @@ async def get_container_stats_for_period(request: web.Request, start_date, end_d
         result = await conn.execute(query)
         rows = result.fetchall()
 
+    def _pipe_builder(r: Redis) -> RedisPipeline:
+        pipe = r.pipeline()
+        for row in rows:
+            pipe.get(str(row['id']))
+        return pipe
+
+    raw_stats = await redis.execute(root_ctx.redis_stat, _pipe_builder)
+
     objs_per_group = {}
     local_tz = root_ctx.shared_config['system']['timezone']
 
-    for row in rows:
+    for row, raw_stat in zip(rows, raw_stats):
         group_id = str(row['group_id'])
-        last_stat = row['last_stat']
+        if raw_stat is None:
+            log.warn('stat object for {} not found on redis, skipping', str(row['id']))
+            continue
+        last_stat = msgpack.unpackb(raw_stat)
         nfs = None
-        if row['mounts'] is not None:
-            nfs = list(set([mount[1] for mount in row['mounts']]))
+        if row['vfolder_mounts']:
+            # For >=22.03, return used host directories instead of volume host, which is not so useful.
+            nfs = list(set([str(mount.host_path) for mount in row['vfolder_mounts']]))
+        elif row['mounts'] and isinstance(row['mounts'][0], list):
+            # For the kernel records that have legacy contents of `mounts`.
+            nfs = list(set([mount[2] for mount in row['mounts']]))
         if row['terminated_at'] is None:
             used_time = used_days = None
         else:
@@ -552,10 +570,12 @@ async def get_time_binned_monthly_stats(request: web.Request, user_uuid=None):
                 gpu_allocated += int(row.occupied_slots['cuda.devices'])
             if 'cuda.shares' in row.occupied_slots:
                 gpu_allocated += Decimal(row.occupied_slots['cuda.shares'])
-            if row.last_stat:
-                io_read_bytes += int(nmget(row.last_stat, 'io_read.current', 0))
-                io_write_bytes += int(nmget(row.last_stat, 'io_write.current', 0))
-                disk_used += int(nmget(row.last_stat, 'io_scratch_size/stats.max', 0, '/'))
+            raw_stat = await redis.execute(root_ctx.redis_stat, lambda r: r.get(str(row['id'])))
+            if raw_stat:
+                last_stat = msgpack.unpackb(raw_stat)
+                io_read_bytes += int(nmget(last_stat, 'io_read.current', 0))
+                io_write_bytes += int(nmget(last_stat, 'io_write.current', 0))
+                disk_used += int(nmget(last_stat, 'io_scratch_size/stats.max', 0, '/'))
             idx += 1
         stat = {
             "date": ts,

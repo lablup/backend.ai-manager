@@ -235,6 +235,8 @@ manager_local_config_iv = t.Dict({
         t.Key('password'): t.String,
     }),
     t.Key('manager'): t.Dict({
+        t.Key('ipc-base-path', default="/tmp/backend.ai/manager/ipc"):
+            tx.Path(type='dir', auto_create=True),
         t.Key('num-proc', default=_max_cpu_count): t.Int[1:_max_cpu_count],
         t.Key('id', default=f"i-{socket.gethostname()}"): t.String,
         t.Key('user', default=None): tx.UserID(default_uid=_file_perm.st_uid),
@@ -247,9 +249,13 @@ manager_local_config_iv = t.Dict({
         t.Key('ssl-cert', default=None): t.Null | tx.Path(type='file'),
         t.Key('ssl-privkey', default=None): t.Null | tx.Path(type='file'),
         t.Key('event-loop', default='asyncio'): t.Enum('asyncio', 'uvloop'),
-        t.Key('pid-file', default=os.devnull): tx.Path(type='file',
-                                                       allow_nonexisting=True,
-                                                       allow_devnull=True),
+        t.Key('distributed-lock', default='etcd'):
+            t.Enum('filelock', 'pg_advisory', 'redlock', 'etcd'),
+        t.Key('pid-file', default=os.devnull): tx.Path(
+            type='file',
+            allow_nonexisting=True,
+            allow_devnull=True,
+        ),
         t.Key('hide-agents', default=False): t.Bool,
         t.Key('importer-image', default='lablup/importer:manylinux2010'): t.String,
         t.Key('max-wsmsg-size', default=16 * (2**20)): t.ToInt,  # default: 16 MiB
@@ -263,6 +269,7 @@ manager_local_config_iv = t.Dict({
         t.Key('enabled', default=False): t.ToBool,
         t.Key('log-events', default=False): t.ToBool,
         t.Key('log-scheduler-ticks', default=False): t.ToBool,
+        t.Key('periodic-sync-stats', default=False): t.ToBool,
     }).allow_extra('*'),
 }).merge(config.etcd_config_iv).allow_extra('*')
 

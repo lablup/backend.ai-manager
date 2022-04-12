@@ -78,7 +78,7 @@ agents = sa.Table(
     sa.Column('lost_at', sa.DateTime(timezone=True), nullable=True),
 
     sa.Column('version', sa.String(length=64), nullable=False),
-    sa.Column('architecture', sa.CHAR(length=32), nullable=False),
+    sa.Column('architecture', sa.String(length=32), nullable=False),
     sa.Column('compute_plugins', pgsql.JSONB(), nullable=False, default={}),
 )
 
@@ -229,7 +229,7 @@ class Agent(graphene.ObjectType):
         filter: str = None,
     ) -> int:
         query = (
-            sa.select([sa.func.count(agents.c.id)])
+            sa.select([sa.func.count()])
             .select_from(agents)
         )
         if scaling_group is not None:

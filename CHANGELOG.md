@@ -16,6 +16,24 @@ Changes
 
 <!-- towncrier release notes start -->
 
+## 22.03.0a2 (2022-03-29)
+
+### Features
+* Support inter-session dependencies by introducing a new parameter `dependencies` to the session creation APIs and implementing a scheduler predicate check to ensure all dependency (batch-type) sessions to become successful ([#528](https://github.com/lablup/backend.ai-manager/issues/528))
+* Migrate keypair concurrency check from PostgreSQL to Redis ([#535](https://github.com/lablup/backend.ai-manager/issues/535))
+* Add `POST_AUTHORIZE` notify hook to support plugins that needs to do some operations just after the authorization step. ([#552](https://github.com/lablup/backend.ai-manager/issues/552))
+
+### Fixes
+* Use Redis to persistently store and update per-kernel statistics while keeping the `kernels.last_stat` db column as a backup, with a debug option to periodically sync them ([#532](https://github.com/lablup/backend.ai-manager/issues/532))
+* Give `load_aliases` argument when it is needed to query aliases relationship. ([#551](https://github.com/lablup/backend.ai-manager/issues/551))
+* Fix a regression introduced in #541 by correcting a missing replacement of `sqlalchemy.engine.Connection` with `sqlalchemy.orm.Session` as `ImageRow` is now an ORM object ([#553](https://github.com/lablup/backend.ai-manager/issues/553))
+* Recalculate `kernels.occupied_slots` column with actually allocated resource slots value. ([#554](https://github.com/lablup/backend.ai-manager/issues/554))
+* Reduce the occurrence of hang-up during manager shutdown greatly and force-kill hanging worker processes to eliminate it ([#555](https://github.com/lablup/backend.ai-manager/issues/555))
+* Fix a long-standing critical bug that leaked kernel creation coroutine tasks and made some sessions stuck at PREPARING ([#558](https://github.com/lablup/backend.ai-manager/issues/558))
+* Alter the `agents.architecture` column type from `CHAR` to `String` to prevent implicit addition of trailing whitespaces ([#559](https://github.com/lablup/backend.ai-manager/issues/559))
+* Fix up newly found type errors for updating `common.etcd` using `etcetra` ([#566](https://github.com/lablup/backend.ai-manager/issues/566))
+
+
 ## 22.03.0a1 (2022-03-14)
 
 ### Breaking Changes

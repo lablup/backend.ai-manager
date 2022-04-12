@@ -51,6 +51,7 @@ from sqlalchemy.types import (
     CHAR,
 )
 from sqlalchemy.dialects.postgresql import UUID, ENUM, JSONB
+import yarl
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
@@ -219,7 +220,14 @@ class StructuredJSONColumn(TypeDecorator):
     def process_bind_param(self, value, dialect):
         if value is None:
             return self._schema.check({})
-        return self._schema.check(value)
+        try:
+            self._schema.check(value)
+        except t.DataError as e:
+            raise ValueError(
+                "The given value does not conform with the structured json column format.",
+                e.as_dict(),
+            )
+        return value
 
     def process_result_value(self, raw_value, dialect):
         if raw_value is None:
@@ -238,18 +246,18 @@ class StructuredJSONObjectColumn(TypeDecorator):
     impl = JSONB
     cache_ok = True
 
-    def __init__(self, attr_cls: Type[JSONSerializableMixin]) -> None:
+    def __init__(self, schema: Type[JSONSerializableMixin]) -> None:
         super().__init__()
-        self._attr_cls = attr_cls
+        self._schema = schema
 
     def process_bind_param(self, value, dialect):
-        return self._attr_cls.to_json(value)
+        return self._schema.to_json(value)
 
     def process_result_value(self, raw_value, dialect):
-        return self._attr_cls.from_json(raw_value)
+        return self._schema.from_json(raw_value)
 
     def copy(self):
-        return StructuredJSONObjectColumn(self._attr_cls)
+        return StructuredJSONObjectColumn(self._schema)
 
 
 class StructuredJSONObjectListColumn(TypeDecorator):
@@ -261,20 +269,40 @@ class StructuredJSONObjectListColumn(TypeDecorator):
     impl = JSONB
     cache_ok = True
 
-    def __init__(self, attr_cls: Type[JSONSerializableMixin]) -> None:
+    def __init__(self, schema: Type[JSONSerializableMixin]) -> None:
         super().__init__()
-        self._attr_cls = attr_cls
+        self._schema = schema
 
     def process_bind_param(self, value, dialect):
-        return [self._attr_cls.to_json(item) for item in value]
+        return [self._schema.to_json(item) for item in value]
 
     def process_result_value(self, raw_value, dialect):
         if raw_value is None:
             return []
-        return [self._attr_cls.from_json(item) for item in raw_value]
+        return [self._schema.from_json(item) for item in raw_value]
 
     def copy(self):
-        return StructuredJSONObjectListColumn(self._attr_cls)
+        return StructuredJSONObjectListColumn(self._schema)
+
+
+class URLColumn(TypeDecorator):
+    """
+    A column type for URL strings
+    """
+
+    impl = sa.types.UnicodeText
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if isinstance(value, yarl.URL):
+            return str(value)
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        if value is not None:
+            return yarl.URL(value)
 
 
 class CurrencyTypes(enum.Enum):
@@ -410,6 +438,17 @@ class ResourceLimit(graphene.ObjectType):
 
 
 class KVPair(graphene.ObjectType):
+    key = graphene.String()
+    value = graphene.String()
+
+
+class ResourceLimitInput(graphene.InputObjectType):
+    key = graphene.String()
+    min = graphene.String()
+    max = graphene.String()
+
+
+class KVPairInput(graphene.InputObjectType):
     key = graphene.String()
     value = graphene.String()
 
@@ -770,14 +809,17 @@ async def simple_db_mutate_returning_item(
         return result_cls(False, f"unexpected error: {e}", None)
 
 
-def set_if_set(src: object, target: MutableMapping[str, Any], name: str, *, clean_func=None) -> None:
+def set_if_set(
+    src: object, target: MutableMapping[str, Any], name: str, *,
+    clean_func=None, target_key: Optional[str] = None,
+) -> None:
     v = getattr(src, name)
     # NOTE: unset optional fields are passed as null.
     if v is not None:
         if callable(clean_func):
-            target[name] = clean_func(v)
+            target[target_key or name] = clean_func(v)
         else:
-            target[name] = v
+            target[target_key or name] = v
 
 
 async def populate_fixture(
@@ -797,4 +839,7 @@ async def populate_fixture(
                 elif isinstance(col.type, EnumValueType):
                     for row in rows:
                         row[col.name] = col.type._enum_cls(row[col.name])
+                elif isinstance(col.type, (StructuredJSONObjectColumn, StructuredJSONObjectListColumn)):
+                    for row in rows:
+                        row[col.name] = col.type._schema.from_json(row[col.name])
             await conn.execute(sa.dialects.postgresql.insert(table, rows).on_conflict_do_nothing())

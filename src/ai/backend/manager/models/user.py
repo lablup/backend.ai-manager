@@ -27,7 +27,9 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.sql.expression import bindparam
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
+from ai.backend.common import redis
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.types import RedisConnectionInfo
 
 from ..api.exceptions import VFolderOperationFailed
 from .base import (
@@ -294,13 +296,13 @@ class User(graphene.ObjectType):
             from .group import association_groups_users as agus
             j = (users.join(agus, agus.c.user_id == users.c.uuid))
             query = (
-                sa.select([sa.func.count(users.c.uuid)])
+                sa.select([sa.func.count()])
                 .select_from(j)
                 .where(agus.c.group_id == group_id)
             )
         else:
             query = (
-                sa.select([sa.func.count(users.c.uuid)])
+                sa.select([sa.func.count()])
                 .select_from(users)
             )
         if domain_name is not None:
@@ -853,7 +855,7 @@ class PurgeUser(graphene.Mutation):
                 )
             await cls.delete_vfolders(conn, user_uuid, graph_ctx.storage_manager)
             await cls.delete_kernels(conn, user_uuid)
-            await cls.delete_keypairs(conn, user_uuid)
+            await cls.delete_keypairs(conn, graph_ctx.redis_stat, user_uuid)
 
         delete_query = (
             sa.delete(users)
@@ -1082,16 +1084,27 @@ class PurgeUser(graphene.Mutation):
     async def delete_keypairs(
         cls,
         conn: SAConnection,
+        redis_conn: RedisConnectionInfo,
         user_uuid: UUID,
     ) -> int:
         """
         Delete user's all keypairs.
 
         :param conn: DB connection
+        :param redis_conn: redis connection info
         :param user_uuid: user's UUID to delete keypairs
         :return: number of deleted rows
         """
         from . import keypairs
+        ak_rows = await conn.execute(
+            sa.select([keypairs.c.access_key])
+            .where(keypairs.c.user == user_uuid),
+        )
+        access_key = ak_rows.first().access_key
+        await redis.execute(
+            redis_conn,
+            lambda r: r.delete(f'keypair.concurrency_used.{access_key}'),
+        )
         result = await conn.execute(
             sa.delete(keypairs)
             .where(keypairs.c.user == user_uuid),

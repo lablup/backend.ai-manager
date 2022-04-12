@@ -1,14 +1,15 @@
 from __future__ import annotations
+
 from decimal import Decimal
 import enum
 import functools
-
 import logging
 from pathlib import Path
 from typing import (
     Any,
     List,
     Mapping,
+    MutableMapping,
     Optional,
     Sequence,
     TYPE_CHECKING,
@@ -20,12 +21,13 @@ import aiotools
 import graphene
 from graphql.execution.executors.asyncio import AsyncioExecutor
 import sqlalchemy as sa
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import (
     relationship,
     selectinload,
 )
 import trafaret as t
+import yaml
 
 from ai.backend.common import redis
 from ai.backend.common.docker import ImageRef
@@ -39,24 +41,22 @@ from ai.backend.common.types import (
 )
 
 from ai.backend.manager.container_registry import get_container_registry
-import yaml
-
 from ai.backend.manager.api.exceptions import ImageNotFound
-
 from ai.backend.manager.defs import DEFAULT_IMAGE_ARCH
 
 from .base import (
     BigInt, ForeignKeyIDColumn, IDColumn,
-    KVPair, ResourceLimit, Base, StructuredJSONColumn,
+    KVPair, ResourceLimit, KVPairInput, ResourceLimitInput,
+    Base, StructuredJSONColumn, set_if_set,
 )
 from .user import UserRole
 from .utils import ExtendedAsyncSAEngine
 
 if TYPE_CHECKING:
-    from .gql import GraphQueryContext
-
-    from ai.backend.manager.background import ProgressReporter
+    from ai.backend.common.bgtask import ProgressReporter
     from ai.backend.manager.config import SharedConfig
+
+    from .gql import GraphQueryContext
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 
@@ -70,8 +70,10 @@ __all__ = (
     'PreloadImage',
     'RescanImages',
     'ForgetImage',
+    'ModifyImage',
     'AliasImage',
     'DealiasImage',
+    'ClearImages',
 )
 
 
@@ -214,13 +216,10 @@ class ImageRow(Base):
         alias: str,
         load_aliases=False,
     ) -> ImageRow:
-        query = \
-            sa.select(ImageRow).select_from(
-                sa.join(ImageRow, ImageAliasRow, (
-                    (ImageAliasRow.image == ImageRow.id) &
-                    (ImageAliasRow.alias == alias)
-                )),
-            )
+        query = (
+            sa.select(ImageRow).select_from(ImageRow)
+            .join(ImageAliasRow, ImageRow.aliases.and_(ImageAliasRow.alias == alias))
+        )
         if load_aliases:
             query = query.options(selectinload(ImageRow.aliases))
         result = await session.scalar(query)
@@ -234,14 +233,16 @@ class ImageRow(Base):
         cls,
         session: AsyncSession,
         ref: ImageRef,
-        strict=False,
-        load_aliases=False,
+        *,
+        strict_arch: bool = False,
+        load_aliases: bool = False,
     ) -> ImageRow:
         """
-        loads image row with given ImageRef object.
-        if `strict` is False and image table has only one row
+        Loads a image row that corresponds to the given ImageRef object.
+
+        When *strict_arch* is False and the image table has only one row
         with respect to requested canonical, this function will
-        return that row regardless of actual architecture.
+        return that row regardless of the image architecture.
         """
         query = sa.select(ImageRow).where(ImageRow.name == ref.canonical)
         if load_aliases:
@@ -251,52 +252,67 @@ class ImageRow(Base):
         candidates: List[ImageRow] = result.scalars().all()
 
         if len(candidates) == 0:
-            raise UnknownImageReference
-        if len(candidates) == 1 and not strict:
+            raise UnknownImageReference(ref)
+        if len(candidates) == 1 and not strict_arch:
             return candidates[0]
         for row in candidates:
-            log.debug('row: {}', row)
             if row.architecture == ref.architecture:
                 return row
-        raise UnknownImageReference
+        raise UnknownImageReference(ref)
 
     @classmethod
     async def resolve(
         cls,
-        session: AsyncConnection,
+        session: AsyncSession,
         reference_candidates: List[Union[ImageAlias, ImageRef]],
-        load_aliases=True,
-        strict=False,
+        *,
+        strict_arch: bool = False,
+        load_aliases: bool = True,
     ) -> ImageRow:
-        """Tries to resolve matching row of image table by iterating through reference_candidates.
-        If type of candidate element is `str`, it'll be considered only as an alias to image.
-        Passing image canonical directly to resolve image data is no longer possible.
-        You need to declare ImageRef object explicitly if you're using string
-        as an image canonical. For example:
-        ```
-        await resolve_image_row(conn, [
-            ImageRef(params['image'], params['image'],
-            params['architecture']),
-        ])
-        ```
-        This kind of pattern is considered as 'good use case',
-        since accepting multiple reference candidates is intended to make
-        user explicitly declare that the code will first try to consider string
-        as an image canonical and try to load image, and changes to alias if it fails.
-        if `strict` is False and image table has only one row
-        with respect to requested canonical, this function will
-        return that row regardless of actual architecture.
         """
+        Resolves a matching row in the image table from image references and/or aliases.
+        If candidate element is `ImageRef`, this method will try to resolve image with matching
+        `ImageRef` description. Otherwise, if element is `str`, this will try to follow the alias.
+        If multiple elements are supplied, this method will return the first matched `ImageRow`
+        among those elements.
+        Passing the canonical image reference as string directly to resolve image data
+        is no longer possible. You need to declare ImageRef object explicitly if you're using string
+        as an canonical image references. For example:
+        .. code-block::
+           await ImageRow.resolve(
+               conn,
+               [
+                   ImageRef(
+                       image,
+                       registry,
+                       architecture,
+                   ),
+                   image_alias,
+               ],
+           )
 
+        When *strict_arch* is False and the image table has only one row
+        with respect to requested canonical, this function will
+        return that row regardless of the image architecture.
+
+        When *load_aliases* is True, it tries to resolve the alias chain.
+        Otherwise it finds only the direct image references.
+        """
+        searched_refs = []
         for reference in reference_candidates:
             resolver_func: Any = None
             if isinstance(reference, str):
                 resolver_func = cls.from_alias
+                searched_refs.append(f"alias:{reference!r}")
             elif isinstance(reference, ImageRef):
-                resolver_func = functools.partial(cls.from_image_ref, strict=strict)
-            if (row := await resolver_func(session, reference, load_aliases=load_aliases)):
-                return row
-        raise UnknownImageReference
+                resolver_func = functools.partial(cls.from_image_ref, strict_arch=strict_arch)
+                searched_refs.append(f"ref:{reference.canonical!r}")
+            try:
+                if (row := await resolver_func(session, reference, load_aliases=load_aliases)):
+                    return row
+            except UnknownImageReference:
+                continue
+        raise ImageNotFound("Unkown image references: " + ", ".join(searched_refs))
 
     @classmethod
     async def list(cls, session: AsyncSession, load_aliases=False) -> List[ImageRow]:
@@ -444,6 +460,7 @@ ImageAliasRow.image = relationship('ImageRow', back_populates='aliases')
 
 
 class Image(graphene.ObjectType):
+    id = graphene.UUID()
     name = graphene.String()
     humanized_name = graphene.String()
     tag = graphene.String()
@@ -470,15 +487,21 @@ class Image(graphene.ObjectType):
         installed = (
             await redis.execute(ctx.redis_image, lambda r: r.scard(row.name))
         ) > 0
-        installed_agents = await redis.execute(
+        _installed_agents = await redis.execute(
             ctx.redis_image,
             lambda r: r.smembers(row.name),
         )
-        if installed_agents is None:
-            installed_agents = []
+        installed_agents: List[str] = []
+        if installed_agents is not None:
+            for agent_id in _installed_agents:
+                if isinstance(agent_id, bytes):
+                    installed_agents.append(agent_id.decode())
+                else:
+                    installed_agents.append(agent_id)
         is_superadmin = (ctx.user['role'] == UserRole.SUPERADMIN)
         hide_agents = False if is_superadmin else ctx.local_config['manager']['hide-agents']
         return cls(
+            id=row.id,
             name=row.image,
             humanized_name=row.image,
             tag=row.tag,
@@ -778,3 +801,110 @@ class DealiasImage(graphene.Mutation):
         except ValueError as e:
             return DealiasImage(ok=False, msg=str(e))
         return DealiasImage(ok=True, msg='')
+
+
+class ClearImages(graphene.Mutation):
+
+    allowed_roles = (UserRole.SUPERADMIN,)
+
+    class Arguments:
+        registry = graphene.String()
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @staticmethod
+    async def mutate(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        registry: str,
+    ) -> ClearImages:
+        ctx: GraphQueryContext = info.context
+        try:
+            async with ctx.db.begin_session() as session:
+                result = await session.execute(
+                    sa.select(ImageRow).where(ImageRow.registry == registry))
+                image_ids = [x.id for x in result.scalars().all()]
+
+                await session.execute(
+                    sa.delete(ImageAliasRow).where(ImageAliasRow.image_id.in_(image_ids)))
+                await session.execute(sa.delete(ImageRow).where(ImageRow.registry == registry))
+        except ValueError as e:
+            return ClearImages(ok=False, msg=str(e))
+        return ClearImages(ok=True, msg='')
+
+
+class ModifyImageInput(graphene.InputObjectType):
+    name = graphene.String(required=False)
+    registry = graphene.String(required=False)
+    image = graphene.String(required=False)
+    tag = graphene.String(required=False)
+    architecture = graphene.String(required=False)
+    size_bytes = graphene.Int(required=False)
+    type = graphene.String(required=False)
+
+    digest = graphene.String(required=False)
+    labels = graphene.List(lambda: KVPairInput, required=False)
+    supported_accelerators = graphene.List(graphene.String, required=False)
+    resource_limits = graphene.List(lambda: ResourceLimitInput, required=False)
+
+
+class ModifyImage(graphene.Mutation):
+
+    allowed_roles = (UserRole.SUPERADMIN,)
+
+    class Arguments:
+        target = graphene.String(required=True, default_value=None)
+        architecture = graphene.String(required=False, default_value=DEFAULT_IMAGE_ARCH)
+        props = ModifyImageInput(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @staticmethod
+    async def mutate(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        target: str,
+        architecture: str,
+        props: ModifyImageInput,
+    ) -> AliasImage:
+        ctx: GraphQueryContext = info.context
+        data: MutableMapping[str, Any] = {}
+        set_if_set(props, data, 'name')
+        set_if_set(props, data, 'registry')
+        set_if_set(props, data, 'image')
+        set_if_set(props, data, 'tag')
+        set_if_set(props, data, 'architecture')
+        set_if_set(props, data, 'size_bytes')
+        set_if_set(props, data, 'type')
+        set_if_set(props, data, 'digest', target_key='config_digest')
+        set_if_set(
+            props, data, 'supported_accelerators',
+            clean_func=lambda v: ','.join(v), target_key='accelerators',
+        )
+        set_if_set(props, data, 'labels', clean_func=lambda v: {pair.key: pair.value for pair in v})
+
+        if props.resource_limits is not None:
+            resources_data = {}
+            for limit_option in props.resource_limits:
+                limit_data = {}
+                if limit_option.min is not None and len(limit_option.min) > 0:
+                    limit_data['min'] = limit_option.min
+                if limit_option.max is not None and len(limit_option.max) > 0:
+                    limit_data['max'] = limit_option.max
+                resources_data[limit_option.key] = limit_data
+            data['resources'] = resources_data
+
+        try:
+            async with ctx.db.begin_session() as session:
+                image_ref = ImageRef(target, ['*'], architecture)
+                try:
+                    row = await ImageRow.from_image_ref(session, image_ref)
+                except UnknownImageReference:
+                    return ModifyImage(ok=False, msg='Image not found')
+                for k, v in data.items():
+                    setattr(row, k, v)
+        except ValueError as e:
+            return ModifyImage(ok=False, msg=str(e))
+        return ModifyImage(ok=True, msg='')

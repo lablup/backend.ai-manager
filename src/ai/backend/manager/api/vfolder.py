@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
 import functools
 import json
 import logging
 import math
-from pathlib import Path
 import stat
+import uuid
+from datetime import datetime
+from pathlib import Path
 from typing import (
     Any,
     Awaitable,
@@ -21,7 +22,6 @@ from typing import (
     TYPE_CHECKING,
     Tuple,
 )
-import uuid
 
 import aiohttp
 from aiohttp import web
@@ -30,9 +30,9 @@ import sqlalchemy as sa
 import trafaret as t
 
 from ai.backend.common import validators as tx
+from ai.backend.common.bgtask import ProgressReporter
 from ai.backend.common.logging import BraceStyleAdapter
 
-from ..background import ProgressReporter
 from ..models import (
     agents,
     kernels,
@@ -1202,7 +1202,7 @@ async def invite(request: web.Request, params: Any) -> web.Response:
         j = sa.join(vfolders, vfolder_permissions,
                     vfolders.c.id == vfolder_permissions.c.vfolder)
         query = (
-            sa.select([sa.func.count(vfolders.c.id)])
+            sa.select([sa.func.count()])
             .select_from(j)
             .where(
                 (
@@ -1223,7 +1223,7 @@ async def invite(request: web.Request, params: Any) -> web.Response:
             inviter = request['user']['id']
             # Do not create invitation if already exists.
             query = (
-                sa.select([sa.func.count('*')])
+                sa.select([sa.func.count()])
                 .select_from(vfolder_invitations)
                 .where(
                     (vfolder_invitations.c.inviter == inviter) &
@@ -1347,7 +1347,7 @@ async def accept_invitation(request: web.Request, params: Any) -> web.Response:
             isouter=True,
         )
         query = (
-            sa.select([sa.func.count(vfolders.c.id)])
+            sa.select([sa.func.count()])
             .select_from(j)
             .where(
                 ((vfolders.c.user == user_uuid) |
