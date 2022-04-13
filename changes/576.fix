@@ -1,0 +1,1 @@
+Remove duplicated logic to obtain redis local time in streaming proxy requests, which caused the depletion of the Redis connection pool.

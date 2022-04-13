@@ -467,8 +467,6 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
     ''')
 
     async def refresh_cb(kernel_id: str, data: bytes) -> None:
-        now = await redis.execute(redis_live, lambda r: r.time())
-        now = now[0] + (now[1] / (10**6))
         await asyncio.shield(rpc_ptask_group.create_task(
             call_non_bursty(
                 conn_tracker_key,
