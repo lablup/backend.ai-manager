@@ -416,7 +416,7 @@ class CreateScalingGroup(graphene.Mutation):
             'driver': props.driver,
             'driver_opts': props.driver_opts,
             'scheduler': props.scheduler,
-            'scheduler_opts': props.scheduler_opts,
+            'scheduler_opts': ScalingGroupOpts.from_json(props.scheduler_opts),
         }
         insert_query = (
             sa.insert(scaling_groups).values(data)
@@ -452,7 +452,7 @@ class ModifyScalingGroup(graphene.Mutation):
         set_if_set(props, data, 'wsproxy_addr')
         set_if_set(props, data, 'driver_opts')
         set_if_set(props, data, 'scheduler')
-        set_if_set(props, data, 'scheduler_opts')
+        set_if_set(props, data, 'scheduler_opts', clean_func=lambda v: ScalingGroupOpts.from_json(v))
         update_query = (
             sa.update(scaling_groups)
             .values(data)
