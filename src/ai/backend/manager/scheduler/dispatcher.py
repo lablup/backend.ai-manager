@@ -219,7 +219,7 @@ class SchedulerDispatcher(aobject):
         try:
             # The schedule() method should be executed with a global lock
             # as its individual steps are composed of many short-lived transactions.
-            async with self.db.advisory_lock(LockID.LOCKID_SCHEDULE):
+            async with self.lock_factory(LockID.LOCKID_SCHEDULE):
                 async with self.db.begin_readonly() as conn:
                     query = (
                         sa.select([agents.c.scaling_group])
@@ -759,7 +759,7 @@ class SchedulerDispatcher(aobject):
             known_slot_types,
         )
         try:
-            async with self.db.advisory_lock(LockID.LOCKID_PREPARE):
+            async with self.lock_factory(LockID.LOCKID_PREPARE):
                 now = datetime.now(tzutc())
 
                 async def _mark_session_preparing() -> Sequence[PendingSession]:
