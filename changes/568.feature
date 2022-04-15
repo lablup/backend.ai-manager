@@ -1,1 +1,0 @@
-Implement `clean_images` and `modify_image` GraphQL mutation.

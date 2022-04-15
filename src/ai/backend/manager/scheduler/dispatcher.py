@@ -171,13 +171,13 @@ class SchedulerDispatcher(aobject):
         evd.consume(DoScheduleEvent, None, self.schedule, coalescing_opts)
         evd.consume(DoPrepareEvent, None, self.prepare)
         self.schedule_timer = GlobalTimer(
-            self.lock_factory(LockID.LOCKID_SCHEDULE_TIMER),
+            self.lock_factory(LockID.LOCKID_SCHEDULE_TIMER, 10.0),
             self.event_producer,
             lambda: DoScheduleEvent(),
             interval=10.0,
         )
         self.prepare_timer = GlobalTimer(
-            self.lock_factory(LockID.LOCKID_PREPARE_TIMER),
+            self.lock_factory(LockID.LOCKID_PREPARE_TIMER, 10.0),
             self.event_producer,
             lambda: DoPrepareEvent(),
             interval=10.0,

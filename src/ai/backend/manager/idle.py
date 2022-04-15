@@ -109,7 +109,7 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
         )
         await self.populate_config(raw_config or {})
         self.timer = GlobalTimer(
-            self._lock_factory(LockID.LOCKID_IDLE_CHECK_TIMER),
+            self._lock_factory(LockID.LOCKID_IDLE_CHECK_TIMER, self.check_interval),
             self._event_producer,
             lambda: DoIdleCheckEvent(),
             self.check_interval,
