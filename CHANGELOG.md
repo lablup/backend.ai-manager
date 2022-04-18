@@ -16,6 +16,15 @@ Changes
 
 <!-- towncrier release notes start -->
 
+## 22.03.0b2 (2022-04-18)
+
+### Fixes
+* Remove duplicated logic to obtain redis local time in streaming proxy requests, which caused the depletion of the Redis connection pool. ([#576](https://github.com/lablup/backend.ai-manager/issues/576))
+* Fix regression of the logic in getting the container stats per period. ([#577](https://github.com/lablup/backend.ai-manager/issues/577))
+* Make updating scaling group works again by converting the primitive values of the `scheduler_opts` to a `ScalingGroupsOpts` type to pass the trafaret validation step. ([#578](https://github.com/lablup/backend.ai-manager/issues/578))
+* Remove explicit usage of `pg_advisory_lock` on scheduler. ([#579](https://github.com/lablup/backend.ai-manager/issues/579))
+
+
 ## 22.03.0b1 (2022-04-12)
 
 ### Features

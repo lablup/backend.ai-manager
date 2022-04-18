@@ -1,1 +1,0 @@
-Make updating scaling group works again by converting the primitive values of the `scheduler_opts` to a `ScalingGroupsOpts` type to pass the trafaret validation step.

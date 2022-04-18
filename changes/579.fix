@@ -1,1 +1,0 @@
-Remove explicit usage of `pg_advisory_lock` on scheduler.
