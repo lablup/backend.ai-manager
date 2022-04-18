@@ -298,7 +298,28 @@ async def get_container_stats_for_period(request: web.Request, start_date, end_d
             .join(users, users.c.uuid == kernels.c.user_uuid)
         )
         query = (
-            sa.select([kernels.c.id, groups.c.name, users.c.email])
+            sa.select([
+                kernels.c.id,
+                kernels.c.container_id,
+                kernels.c.session_name,
+                kernels.c.access_key,
+                kernels.c.agent,
+                kernels.c.domain_name,
+                kernels.c.group_id,
+                kernels.c.attached_devices,
+                kernels.c.occupied_slots,
+                kernels.c.resource_opts,
+                kernels.c.vfolder_mounts,
+                kernels.c.mounts,
+                kernels.c.image,
+                kernels.c.status,
+                kernels.c.status_changed,
+                kernels.c.last_stat,
+                kernels.c.created_at,
+                kernels.c.terminated_at,
+                groups.c.name,
+                users.c.email,
+            ])
             .select_from(j)
             .where(
                 # Filter sessions which existence period overlaps with requested period
@@ -327,10 +348,12 @@ async def get_container_stats_for_period(request: web.Request, start_date, end_d
 
     for row, raw_stat in zip(rows, raw_stats):
         group_id = str(row['group_id'])
-        if raw_stat is None:
-            log.warn('stat object for {} not found on redis, skipping', str(row['id']))
-            continue
-        last_stat = msgpack.unpackb(raw_stat)
+        last_stat = row['last_stat']
+        if not last_stat:
+            if raw_stat is None:
+                log.warn('stat object for {} not found on redis, skipping', str(row['id']))
+                continue
+            last_stat = msgpack.unpackb(raw_stat)
         nfs = None
         if row['vfolder_mounts']:
             # For >=22.03, return used host directories instead of volume host, which is not so useful.
@@ -351,8 +374,8 @@ async def get_container_stats_for_period(request: web.Request, start_date, end_d
             for dev_info in row.attached_devices['cuda']:
                 if dev_info.get('model_name'):
                     device_type.add(dev_info['model_name'])
-                smp += dev_info.get('smp', 0)
-                gpu_mem_allocated += dev_info.get('mem', 0)
+                smp += int(nmget(dev_info, 'data.smp', 0))
+                gpu_mem_allocated += int(nmget(dev_info, 'data.mem', 0))
         gpu_allocated = 0
         if 'cuda.devices' in row.occupied_slots:
             gpu_allocated = row.occupied_slots['cuda.devices']
@@ -670,7 +693,7 @@ async def get_watcher_info(request: web.Request, agent_id: str) -> dict:
         tx.AliasedKey(['agent_id', 'agent']): t.String,
     }))
 async def get_watcher_status(request: web.Request, params: Any) -> web.Response:
-    log.info('GET_WATCHER_STATUS ()')
+    log.info('GET_WATCHER_STATUS (ag:{})', params['agent_id'])
     watcher_info = await get_watcher_info(request, params['agent_id'])
     connector = aiohttp.TCPConnector()
     async with aiohttp.ClientSession(connector=connector) as sess:
@@ -692,7 +715,7 @@ async def get_watcher_status(request: web.Request, params: Any) -> web.Response:
         tx.AliasedKey(['agent_id', 'agent']): t.String,
     }))
 async def watcher_agent_start(request: web.Request, params: Any) -> web.Response:
-    log.info('WATCHER_AGENT_START ()')
+    log.info('WATCHER_AGENT_START (ag:{})', params['agent_id'])
     watcher_info = await get_watcher_info(request, params['agent_id'])
     connector = aiohttp.TCPConnector()
     async with aiohttp.ClientSession(connector=connector) as sess:
@@ -715,7 +738,7 @@ async def watcher_agent_start(request: web.Request, params: Any) -> web.Response
         tx.AliasedKey(['agent_id', 'agent']): t.String,
     }))
 async def watcher_agent_stop(request: web.Request, params: Any) -> web.Response:
-    log.info('WATCHER_AGENT_STOP ()')
+    log.info('WATCHER_AGENT_STOP (ag:{})', params['agent_id'])
     watcher_info = await get_watcher_info(request, params['agent_id'])
     connector = aiohttp.TCPConnector()
     async with aiohttp.ClientSession(connector=connector) as sess:
@@ -738,7 +761,7 @@ async def watcher_agent_stop(request: web.Request, params: Any) -> web.Response:
         tx.AliasedKey(['agent_id', 'agent']): t.String,
     }))
 async def watcher_agent_restart(request: web.Request, params: Any) -> web.Response:
-    log.info('WATCHER_AGENT_RESTART ()')
+    log.info('WATCHER_AGENT_RESTART (ag:{})', params['agent_id'])
     watcher_info = await get_watcher_info(request, params['agent_id'])
     connector = aiohttp.TCPConnector()
     async with aiohttp.ClientSession(connector=connector) as sess:
