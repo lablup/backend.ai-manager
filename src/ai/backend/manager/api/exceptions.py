@@ -102,7 +102,7 @@ class ObjectNotFound(BackendError, web.HTTPNotFound):
         extra_msg: str = None,
         extra_data: Any = None,
         *,
-        object_name: str = 'object',
+        object_name: str = None,
         **kwargs,
     ) -> None:
         if object_name:
