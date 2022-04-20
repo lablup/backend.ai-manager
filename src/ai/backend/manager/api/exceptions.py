@@ -191,7 +191,7 @@ class GraphQLError(BackendError, web.HTTPBadRequest):
 
 
 class InstanceNotFound(ObjectNotFound):
-    object_name = 'instance'
+    object_name = 'agent instance'
 
 
 class ImageNotFound(ObjectNotFound):
