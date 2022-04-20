@@ -55,7 +55,7 @@ from ..models import (
 from .auth import admin_required, auth_required, superadmin_required
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
-    GenericForbidden, GenericNotFound, InvalidAPIParameters, ServerMisconfiguredError,
+    GenericForbidden, ObjectNotFound, InvalidAPIParameters, ServerMisconfiguredError,
     BackendAgentError, InternalServerError, GroupNotFound,
 )
 from .manager import (
@@ -1195,7 +1195,7 @@ async def invite(request: web.Request, params: Any) -> web.Response:
             raise InvalidAPIParameters
         kps = result.fetchall()
         if len(kps) < 1:
-            raise GenericNotFound('No such vfolder invitation')
+            raise ObjectNotFound(object_name='vfolder invitation')
 
         # Prevent inviting user who already share the target folder.
         invitee_uuids = [kp.user for kp in kps]
@@ -1327,7 +1327,7 @@ async def accept_invitation(request: web.Request, params: Any) -> web.Response:
         result = await conn.execute(query)
         invitation = result.first()
         if invitation is None:
-            raise GenericNotFound('No such vfolder invitation')
+            raise ObjectNotFound(object_name='vfolder invitation')
 
         # Get target virtual folder.
         query = (
@@ -1405,7 +1405,7 @@ async def delete_invitation(request: web.Request, params: Any) -> web.Response:
             result = await conn.execute(query)
             row = result.first()
             if row is None:
-                raise GenericNotFound('No such vfolder invitation')
+                raise ObjectNotFound(object_name='vfolder invitation')
             if request_email == row.inviter:
                 state = VFolderInvitationState.CANCELED
             elif request_email == row.invitee:
@@ -1484,11 +1484,14 @@ async def share(request: web.Request, params: Any) -> web.Response:
         users_to_share = [u['uuid'] for u in user_info]
         emails_to_share = [u['email'] for u in user_info]
         if len(user_info) < 1:
-            raise GenericNotFound('No users to share.')
+            raise ObjectNotFound(object_name='user')
         if len(user_info) < len(params['emails']):
             users_not_in_vfolder_group = list(set(params['emails']) - set(emails_to_share))
-            raise GenericNotFound('Some user does not belong to folder\'s group: '
-                                  ','.join(users_not_in_vfolder_group))
+            raise ObjectNotFound(
+                'Some user does not belong to folder\'s group: '
+                ','.join(users_not_in_vfolder_group),
+                object_name='user',
+            )
 
         # Do not share to users who have already been shared the folder.
         query = (
@@ -1567,7 +1570,7 @@ async def unshare(request: web.Request, params: Any) -> web.Response:
         result = await conn.execute(query)
         users_to_unshare = [u['uuid'] for u in result.fetchall()]
         if len(users_to_unshare) < 1:
-            raise GenericNotFound('No users to unshare.')
+            raise ObjectNotFound(object_name='user(s).')
 
         # Delete vfolder_permission(s).
         query = (

@@ -88,9 +88,25 @@ class BackendError(web.HTTPError):
         )
 
 
-class GenericNotFound(BackendError, web.HTTPNotFound):
-    error_type  = 'https://api.backend.ai/probs/generic-not-found'
+class URLNotFound(BackendError, web.HTTPNotFound):
+    error_type  = 'https://api.backend.ai/probs/url-not-found'
     error_title = 'Unknown URL path.'
+
+
+class ObjectNotFound(BackendError, web.HTTPNotFound):
+    error_type  = 'https://api.backend.ai/probs/object-not-found'
+    error_title = 'No such object.'
+
+    def __init__(
+        self,
+        extra_msg: str = None,
+        extra_data: Any = None,
+        *,
+        object_name: str = 'object',
+        **kwargs,
+    ) -> None:
+        self.error_title = f'No such {object_name}.'
+        super().__init__(extra_msg, extra_data, **kwargs)
 
 
 class GenericBadRequest(BackendError, web.HTTPBadRequest):

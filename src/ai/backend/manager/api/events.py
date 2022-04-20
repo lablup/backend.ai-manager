@@ -52,7 +52,7 @@ from ..models import kernels, groups, UserRole
 from ..models.utils import execute_with_retry
 from ..types import Sentinel
 from .auth import auth_required
-from .exceptions import GenericNotFound, GenericForbidden, GroupNotFound
+from .exceptions import ObjectNotFound, GenericForbidden, GroupNotFound
 from .manager import READ_ALLOWED, server_status_required
 from .utils import check_api_params
 
@@ -180,7 +180,7 @@ async def push_background_task_events(
     try:
         return await root_ctx.background_task_manager.push_bgtask_events(request, task_id)
     except ValueError as e:
-        raise GenericNotFound(str(e))
+        raise ObjectNotFound(extra_data=str(e), object_name='background task')
 
 
 async def enqueue_kernel_creation_status_update(

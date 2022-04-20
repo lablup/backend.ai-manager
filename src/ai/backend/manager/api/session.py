@@ -117,7 +117,7 @@ from ..models.utils import execute_with_retry
 from .exceptions import (
     AppNotFound,
     InvalidAPIParameters,
-    GenericNotFound,
+    ObjectNotFound,
     ImageNotFound,
     InsufficientPrivilege,
     ServiceUnavailable,
@@ -2118,7 +2118,10 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
             allowed_vfolder_types=['user'],
             extra_vf_conds=(vfolders.c.name == '.logs'))
         if not matched_vfolders:
-            raise GenericNotFound('You do not have ".logs" vfolder for persistent task logs.')
+            raise ObjectNotFound(
+                extra_data={'vfolder_name': '.logs'},
+                object_name='vfolder',
+            )
         log_vfolder = matched_vfolders[0]
 
     proxy_name, volume_name = root_ctx.storage_manager.split_host(log_vfolder['host'])

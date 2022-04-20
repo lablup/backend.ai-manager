@@ -16,7 +16,7 @@ import trafaret as t
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
 
-from ai.backend.manager.api.exceptions import GenericNotFound
+from ai.backend.manager.api.exceptions import ObjectNotFound
 
 from ai.backend.manager.models.utils import ExtendedAsyncSAEngine
 
@@ -101,7 +101,7 @@ async def get_wsproxy_version(request: web.Request, params: Any) -> web.Response
                     'wsproxy_version': wsproxy_version,
                 })
         else:
-            raise GenericNotFound
+            raise ObjectNotFound(object_name='scaling group')
 
 
 async def init(app: web.Application) -> None:

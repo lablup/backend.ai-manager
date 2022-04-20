@@ -119,7 +119,7 @@ from .vfolder import (
     VirtualFolderList,
 )
 from ..api.exceptions import (
-    GenericNotFound,
+    ObjectNotFound,
     ImageNotFound,
     InsufficientPrivilege,
     InvalidAPIParameters,
@@ -554,7 +554,7 @@ class Queries(graphene.ObjectType):
         if ctx.user['role'] != UserRole.SUPERADMIN:
             if name != ctx.user['domain_name']:
                 # prevent querying other domains if not superadmin
-                raise GenericNotFound('no such domain')
+                raise ObjectNotFound(object_name='domain')
         loader = ctx.dataloader_manager.get_loader(ctx, 'Domain.by_name')
         return await loader.load(name)
 
