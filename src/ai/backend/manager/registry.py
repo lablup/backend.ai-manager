@@ -2652,7 +2652,8 @@ class AgentRegistry:
                     })
                 await conn.execute(update_query, params)
 
-        await execute_with_retry(_update)
+        if per_kernel_updates:
+            await execute_with_retry(_update)
 
     async def mark_kernel_terminated(
         self,
