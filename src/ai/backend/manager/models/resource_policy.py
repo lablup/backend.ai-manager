@@ -51,6 +51,7 @@ keypair_resource_policies = sa.Table(
               default=DefaultForUnspecified.LIMITED,
               nullable=False),
     sa.Column('total_resource_slots', ResourceSlotColumn(), nullable=False),
+    sa.Column('max_session_lifetime', sa.Integer(), nullable=False, server_default=sa.text('0')),
     sa.Column('max_concurrent_sessions', sa.Integer(), nullable=False),
     sa.Column('max_containers_per_session', sa.Integer(), nullable=False),
     sa.Column('max_vfolder_count', sa.Integer(), nullable=False),
@@ -67,6 +68,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
     created_at = GQLDateTime()
     default_for_unspecified = graphene.String()
     total_resource_slots = graphene.JSONString()
+    max_session_lifetime = graphene.Int()
     max_concurrent_sessions = graphene.Int()
     max_containers_per_session = graphene.Int()
     idle_timeout = BigInt()
@@ -87,6 +89,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
             created_at=row['created_at'],
             default_for_unspecified=row['default_for_unspecified'].name,
             total_resource_slots=row['total_resource_slots'].to_json(),
+            max_session_lifetime=row['max_session_lifetime'],
             max_concurrent_sessions=row['max_concurrent_sessions'],
             max_containers_per_session=row['max_containers_per_session'],
             idle_timeout=row['idle_timeout'],
@@ -205,6 +208,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
 class CreateKeyPairResourcePolicyInput(graphene.InputObjectType):
     default_for_unspecified = graphene.String(required=True)
     total_resource_slots = graphene.JSONString(required=True)
+    max_session_lifetime = graphene.Int(required=True, default_for_unspecified=0)
     max_concurrent_sessions = graphene.Int(required=True)
     max_containers_per_session = graphene.Int(required=True)
     idle_timeout = BigInt(required=True)
@@ -216,6 +220,7 @@ class CreateKeyPairResourcePolicyInput(graphene.InputObjectType):
 class ModifyKeyPairResourcePolicyInput(graphene.InputObjectType):
     default_for_unspecified = graphene.String(required=False)
     total_resource_slots = graphene.JSONString(required=False)
+    max_session_lifetime = graphene.Int(required=False)
     max_concurrent_sessions = graphene.Int(required=False)
     max_containers_per_session = graphene.Int(required=False)
     idle_timeout = BigInt(required=False)
@@ -250,6 +255,7 @@ class CreateKeyPairResourcePolicy(graphene.Mutation):
                 DefaultForUnspecified[props.default_for_unspecified],
             'total_resource_slots': ResourceSlot.from_user_input(
                 props.total_resource_slots, None),
+            'max_session_lifetime': props.max_session_lifetime,
             'max_concurrent_sessions': props.max_concurrent_sessions,
             'max_containers_per_session': props.max_containers_per_session,
             'idle_timeout': props.idle_timeout,
@@ -289,6 +295,7 @@ class ModifyKeyPairResourcePolicy(graphene.Mutation):
                    clean_func=lambda v: DefaultForUnspecified[v])
         set_if_set(props, data, 'total_resource_slots',
                    clean_func=lambda v: ResourceSlot.from_user_input(v, None))
+        set_if_set(props, data, 'max_session_lifetime')
         set_if_set(props, data, 'max_concurrent_sessions')
         set_if_set(props, data, 'max_containers_per_session')
         set_if_set(props, data, 'idle_timeout')
