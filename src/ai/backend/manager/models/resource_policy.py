@@ -208,7 +208,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
 class CreateKeyPairResourcePolicyInput(graphene.InputObjectType):
     default_for_unspecified = graphene.String(required=True)
     total_resource_slots = graphene.JSONString(required=True)
-    max_session_lifetime = graphene.Int(required=True, default_for_unspecified=0)
+    max_session_lifetime = graphene.Int(required=True, default_value=0)
     max_concurrent_sessions = graphene.Int(required=True)
     max_containers_per_session = graphene.Int(required=True)
     idle_timeout = BigInt(required=True)
