@@ -889,6 +889,9 @@ async def _list_pending_sessions(
     scheduler: AbstractScheduler,
     sgroup_name: str,
 ) -> tuple[list[Row], list[Row]]:
+    """
+    Return two lists of pending sessions and to-be-cancelled sessions due to pending timeout.
+    """
     pending_timeout: timedelta = scheduler.sgroup_opts.pending_timeout
     query = (
         PendingSession.base_query()
