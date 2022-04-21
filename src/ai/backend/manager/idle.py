@@ -205,7 +205,7 @@ class BaseIdleChecker(metaclass=ABCMeta):
         self._event_dispatcher = event_dispatcher
         self._redis_live = redis_live
         self._redis_stat = redis_stat
-    
+
     async def aclose(self) -> None:
         pass
 
