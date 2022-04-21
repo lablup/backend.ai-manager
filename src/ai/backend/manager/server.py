@@ -68,7 +68,7 @@ from .config import (
 )
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB, REDIS_STREAM_DB
 from .exceptions import InvalidArgument
-from .idle import create_idle_checkers
+from .idle import init_idle_checkers
 from .models.storage import StorageSessionManager
 from .models.utils import connect_database
 from .plugin.webapp import WebappPluginContext
@@ -342,16 +342,16 @@ async def event_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 
 @actxmgr
 async def idle_checker_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
-    root_ctx.idle_checkers = await create_idle_checkers(
+    root_ctx.idle_checker_host = await init_idle_checkers(
         root_ctx.db,
         root_ctx.shared_config,
         root_ctx.event_dispatcher,
         root_ctx.event_producer,
         root_ctx.distributed_lock_factory,
     )
+    await root_ctx.idle_checker_host.start()
     yield
-    for instance in root_ctx.idle_checkers:
-        await instance.aclose()
+    await root_ctx.idle_checker_host.shutdown()
 
 
 @actxmgr

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Sequence, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 import attr
 
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
     from ..models.storage import StorageSessionManager
     from ..models.utils import ExtendedAsyncSAEngine
-    from ..idle import BaseIdleChecker
+    from ..idle import IdleCheckerHost
     from ..plugin.webapp import WebappPluginContext
     from ..registry import AgentRegistry
     from ..config import LocalConfig, SharedConfig
@@ -41,7 +41,7 @@ class RootContext(BaseContext):
     cors_options: CORSOptions
 
     webapp_plugin_ctx: WebappPluginContext
-    idle_checkers: Sequence[BaseIdleChecker]
+    idle_checker_host: IdleCheckerHost
     storage_manager: StorageSessionManager
     hook_plugin_ctx: HookPluginContext
 
