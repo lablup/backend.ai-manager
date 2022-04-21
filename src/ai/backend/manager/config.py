@@ -64,7 +64,7 @@ Alias keys are also URL-quoted in the same way.
        - addr: "{redis-host}:{redis-port}"
        - password: {password}
      + idle
-       - enabled: "timeout,utilization"      # comma-separated list of checker names
+       - enabled: "timeout,utilization,session_lifetime"  # comma-separated list of checker names
        - app-streaming-packet-timeout: "5m"  # in seconds; idleness of app-streaming TCP connections
          # NOTE: idle checkers get activated AFTER the app-streaming packet timeout has passed.
        - checkers
@@ -94,6 +94,8 @@ Alias keys are also URL-quoted in the same way.
            - time-window: "12h"  # time window to average utilization
                                  # a session will not be terminated until this time
            - initial-grace-period: "5m" # time to allow to be idle for first
+         # "session_lifetime" does not have etcd config but it is configured via
+         # the keypair_resource_polices table.
      + resource_slots
        - {"cuda.device"}: {"count"}
        - {"cuda.mem"}: {"bytes"}

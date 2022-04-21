@@ -114,6 +114,7 @@
             "name": "default",
             "default_for_unspecified": "UNLIMITED",
             "total_resource_slots": {},
+            "max_session_lifetime": 0,
             "max_concurrent_sessions": 5,
             "max_containers_per_session": 1,
             "max_vfolder_count": 10,

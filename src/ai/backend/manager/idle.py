@@ -343,6 +343,67 @@ class TimeoutIdleChecker(BaseIdleChecker):
         return False
 
 
+class SessionLifetimeIdleChecker(BaseIdleChecker):
+
+    name: ClassVar[str] = "session_lifetime"
+    check_interval: float = 10.0
+
+    _policy_cache: ContextVar[Dict[AccessKey, Optional[Mapping[str, Any]]]]
+
+    async def __ainit__(self) -> None:
+        await super().__ainit__()
+        self._policy_cache = ContextVar("_policy_cache")
+
+    async def populate_config(self, config: Mapping[str, Any]) -> None:
+        pass
+
+    async def update_app_streaming_status(
+        self,
+        session_id: SessionId,
+        status: AppStreamingStatus,
+    ) -> None:
+        pass
+
+    async def _do_idle_check(
+        self,
+        context: None,
+        source: AgentId,
+        event: DoIdleCheckEvent,
+    ) -> None:
+        cache_token = self._policy_cache.set(dict())
+        try:
+            return await super()._do_idle_check(context, source, event)
+        finally:
+            self._policy_cache.reset(cache_token)
+
+    async def check_session(self, session: Row, dbconn: SAConnection) -> bool:
+        policy_cache = self._policy_cache.get()
+        policy = policy_cache.get(session["access_key"], None)
+        if policy is None:
+            query = (
+                sa.select([keypair_resource_policies])
+                .select_from(
+                    sa.join(
+                        keypairs,
+                        keypair_resource_policies,
+                        keypair_resource_policies.c.name == keypairs.c.resource_policy,
+                    ),
+                )
+                .where(keypairs.c.access_key == session["access_key"])
+            )
+            result = await dbconn.execute(query)
+            policy = result.first()
+            assert policy is not None
+            policy_cache[session["access_key"]] = policy
+        now = await dbconn.execute(sa.select(sa.func.now()))
+        if policy["max_session_lifetime"] >= 0:
+            # TODO: once per-status time tracking is implemented, let's change created_at
+            #       to the timestamp when the session entered PREPARING status.
+            if now - session["created_at"] >= policy["max_session_lifetime"]:
+                return False
+        return True
+
+
 class UtilizationIdleChecker(BaseIdleChecker):
     """
     Checks the idleness of a session by the average utilization of compute devices.
@@ -478,10 +539,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
                     sa.join(
                         keypairs,
                         keypair_resource_policies,
-                        (
-                            keypair_resource_policies.c.name
-                            == keypairs.c.resource_policy
-                        ),
+                        keypair_resource_policies.c.name == keypairs.c.resource_policy,
                     ),
                 )
                 .where(keypairs.c.access_key == session["access_key"])
