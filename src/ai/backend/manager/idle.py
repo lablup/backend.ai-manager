@@ -85,6 +85,7 @@ class IdleCheckerHost:
         lock_factory: DistributedLockFactory,
     ) -> None:
         self._checkers: list[BaseIdleChecker] = []
+        self._frozen = False
         self._db = db
         self._shared_config = shared_config
         self._event_dispatcher = event_dispatcher
@@ -100,9 +101,12 @@ class IdleCheckerHost:
         )
 
     def add_checker(self, checker: BaseIdleChecker):
+        if self._frozen:
+            raise RuntimeError("Cannot add a new idle checker after the idle checker host is frozen.")
         self._checkers.append(checker)
 
     async def start(self) -> None:
+        self._frozen = True
         for checker in self._checkers:
             raw_config = await self._shared_config.etcd.get_prefix_dict(
                 f"config/idle/checkers/{checker.name}",
