@@ -74,7 +74,7 @@ class ThresholdOperator(enum.Enum):
 
 class IdleCheckerHost:
 
-    check_interval: ClassVar[float] = 10.0
+    check_interval: ClassVar[float] = 15.0
 
     def __init__(
         self,
