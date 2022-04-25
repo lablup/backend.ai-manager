@@ -378,11 +378,11 @@ class SessionLifetimeChecker(BaseIdleChecker):
         pass
 
     async def check_session(self, session: Row, dbconn: SAConnection, policy: Row) -> bool:
-        now = await dbconn.execute(sa.select(sa.func.now()))
-        if policy["max_session_lifetime"] >= 0:
+        now = await dbconn.scalar(sa.select(sa.func.now()))
+        if policy["max_session_lifetime"] > 0:
             # TODO: once per-status time tracking is implemented, let's change created_at
             #       to the timestamp when the session entered PREPARING status.
-            if now - session["created_at"] >= policy["max_session_lifetime"]:
+            if now - session["created_at"] >= timedelta(seconds=policy["max_session_lifetime"]):
                 return False
         return True
 
