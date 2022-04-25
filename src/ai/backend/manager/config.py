@@ -94,6 +94,8 @@ Alias keys are also URL-quoted in the same way.
            - time-window: "12h"  # time window to average utilization
                                  # a session will not be terminated until this time
            - initial-grace-period: "5m" # time to allow to be idle for first
+         # "session_lifetime" does not have etcd config but it is configured via
+         # the keypair_resource_polices table.
      + resource_slots
        - {"cuda.device"}: {"count"}
        - {"cuda.mem"}: {"bytes"}

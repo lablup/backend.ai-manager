@@ -496,11 +496,10 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
                 # aioredis' ZADD implementation flattens mapping in value-key order
                 lambda r: r.zadd(conn_tracker_key, {conn_tracker_val: now}),
             )
-            for idle_checker in root_ctx.idle_checkers:
-                await idle_checker.update_app_streaming_status(
-                    kernel_id,
-                    AppStreamingStatus.HAS_ACTIVE_CONNECTIONS,
-                )
+            await root_ctx.idle_checker_host.update_app_streaming_status(
+                kernel_id,
+                AppStreamingStatus.HAS_ACTIVE_CONNECTIONS,
+            )
 
     async def clear_conn_track() -> None:
         async with app_ctx.conn_tracker_lock:
@@ -516,11 +515,10 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
                 ),
             )
             if remaining_count == 0:
-                for idle_checker in root_ctx.idle_checkers:
-                    await idle_checker.update_app_streaming_status(
-                        kernel_id,
-                        AppStreamingStatus.NO_ACTIVE_CONNECTIONS,
-                    )
+                await root_ctx.idle_checker_host.update_app_streaming_status(
+                    kernel_id,
+                    AppStreamingStatus.NO_ACTIVE_CONNECTIONS,
+                )
 
     try:
         await asyncio.shield(database_ptask_group.create_task(
@@ -655,11 +653,10 @@ async def stream_conn_tracker_gc(root_ctx: RootContext, app_ctx: PrivateContext)
                     log.debug(f"conn_tracker: gc {session_id} "
                               f"removed/remaining = {removed_count}/{remaining_count}")
                     if prev_remaining_count > 0 and remaining_count == 0:
-                        for idle_checker in root_ctx.idle_checkers:
-                            await idle_checker.update_app_streaming_status(
-                                session_id,
-                                AppStreamingStatus.NO_ACTIVE_CONNECTIONS,
-                            )
+                        await root_ctx.idle_checker_host.update_app_streaming_status(
+                            session_id,
+                            AppStreamingStatus.NO_ACTIVE_CONNECTIONS,
+                        )
             await asyncio.sleep(10)
     except asyncio.CancelledError:
         pass
