@@ -16,6 +16,17 @@ Changes
 
 <!-- towncrier release notes start -->
 
+## 22.03.0 (2022-04-25)
+
+### Features
+* Add `KeyPairResourcePolicy.max_session_lifetime` to force-terminate sessions after a specified timeout ([#583](https://github.com/lablup/backend.ai-manager/issues/583))
+
+### Fixes
+* Fix a bogus error by skipping database queries with empty data when syncing kernel statistics ([#580](https://github.com/lablup/backend.ai-manager/issues/580))
+* Remove `GenericNotFound` and split use cases for `URLNotFound` and `ObjectNotFound` for easier debugging and clear error messages ([#581](https://github.com/lablup/backend.ai-manager/issues/581))
+* All concrete not-found errors (such as `SessionNotFound`, `VFolderNotFound`, etc.) to inherit the `ObjectNotFound` exception ([#582](https://github.com/lablup/backend.ai-manager/issues/582))
+
+
 ## 22.03.0b2 (2022-04-18)
 
 ### Fixes
