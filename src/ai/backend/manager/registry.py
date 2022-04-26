@@ -1035,7 +1035,7 @@ class AgentRegistry:
             if shmem >= requested_slots['mem']:
                 raise InvalidAPIParameters(
                     'Shared memory should be less than the main memory. (s:{}, m:{})'
-                    .format(str(shmem), str(BinarySize(requested_slots['mem'])))
+                    .format(str(shmem), str(BinarySize(requested_slots['mem']))),
                 )
 
             environ = kernel_enqueue_configs[0]['creation_config'].get('environ') or {}
