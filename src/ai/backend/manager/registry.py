@@ -1031,6 +1031,13 @@ class AgentRegistry:
                         image_max_slots.to_humanized(known_slot_types).items()
                     )))
 
+            # Check if: shmem < memory
+            if shmem >= requested_slots['mem']:
+                raise InvalidAPIParameters(
+                    'Shared memory should be less than the main memory. (s:{}, m:{})'
+                    .format(str(shmem), str(BinarySize(requested_slots['mem']))),
+                )
+
             environ = kernel_enqueue_configs[0]['creation_config'].get('environ') or {}
 
             # Create kernel object in PENDING state.
