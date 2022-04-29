@@ -506,7 +506,7 @@ async def delete_by_id(request: web.Request, params: Any) -> web.Response:
 @check_api_params(
     t.Dict({
         tx.AliasedKey(['group_id', 'groupId'], default=None): tx.UUID | t.String | t.Null,
-    })
+    }),
 )
 async def list_hosts(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']

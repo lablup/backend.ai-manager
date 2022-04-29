@@ -440,7 +440,7 @@ async def get_allowed_vfolder_hosts_by_user(
                 (groups.c.id == association_groups_users.c.group_id) &
                 (groups.c.id == group_id) &
                 (association_groups_users.c.user_id == user_uuid)
-            )
+            ),
         )
     else:
         j = groups.join(

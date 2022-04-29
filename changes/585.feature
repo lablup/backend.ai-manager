@@ -1,0 +1,1 @@
+Give `group_id` argument when it is needed to query vfolders that allowed by resource policy.
