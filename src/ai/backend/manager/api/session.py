@@ -1069,7 +1069,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
     except UnknownImageReference:
         raise InvalidAPIParameters(f"Unknown image reference: {params['image']}")
     except Exception:
-        root_ctx.error_monitor.capture_exception()
+        await root_ctx.error_monitor.capture_exception()
         log.exception('GET_OR_CREATE: unexpected error!')
         raise InternalServerError
     finally:
