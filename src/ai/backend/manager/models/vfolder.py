@@ -414,6 +414,7 @@ async def get_allowed_vfolder_hosts_by_user(
     resource_policy,
     domain_name: str,
     user_uuid: uuid.UUID,
+    group_id: uuid.UUID = None,
 ) -> Set[str]:
     '''
     Union `allowed_vfolder_hosts` from domain, groups, and keypair_resource_policy.
@@ -432,13 +433,23 @@ async def get_allowed_vfolder_hosts_by_user(
     )
     allowed_hosts.update(await conn.scalar(query))
     # User's Groups' allowed_vfolder_hosts.
-    j = groups.join(
-        association_groups_users,
-        (
-            (groups.c.id == association_groups_users.c.group_id) &
-            (association_groups_users.c.user_id == user_uuid)
-        ),
-    )
+    if group_id is not None:
+        j = groups.join(
+            association_groups_users,
+            (
+                (groups.c.id == association_groups_users.c.group_id) &
+                (groups.c.id == group_id) &
+                (association_groups_users.c.user_id == user_uuid)
+            ),
+        )
+    else:
+        j = groups.join(
+            association_groups_users,
+            (
+                (groups.c.id == association_groups_users.c.group_id) &
+                (association_groups_users.c.user_id == user_uuid)
+            ),
+        )
     query = (
         sa.select([groups.c.allowed_vfolder_hosts])
         .select_from(j)
