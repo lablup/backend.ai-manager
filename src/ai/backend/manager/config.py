@@ -559,7 +559,8 @@ class SharedConfig(AbstractConfig):
         aliases = await self.etcd.get_prefix('images/_aliases')
         result: DefaultDict[str, List[str]] = defaultdict(list)
         for key, value in aliases.items():
-            result[value].append(etcd_unquote(key))
+            if value:
+                result[value].append(etcd_unquote(key))
         return dict(result)
 
     async def _parse_image(self, image_ref: ImageRef, item, reverse_aliases):
@@ -627,9 +628,11 @@ class SharedConfig(AbstractConfig):
         known_registries = await get_known_registries(self.etcd)
         reverse_aliases = await self._scan_reverse_aliases()
         data = await self.etcd.get_prefix('images')
-        coros = []
+        coros: List[asyncio.Task] = []
         for registry, images in data.items():
             if registry == '_aliases':
+                continue
+            if not isinstance(images, dict):
                 continue
             for image, tags in images.items():
                 if image == '':
@@ -779,31 +782,27 @@ class SharedConfig(AbstractConfig):
         All slot values are converted and normalized to Decimal.
         """
         data = await self.etcd.get_prefix_dict(image_ref.tag_path)
-        slot_units = await self.get_resource_slots()
+        slot_units: Mapping[str, str] = await self.get_resource_slots()  # type: ignore
         min_slot = ResourceSlot()
         max_slot = ResourceSlot()
 
-        for slot_key, slot_range in data['resource'].items():
+        resource: Mapping[str, Mapping[str, str]] = data['resource']  # type: ignore
+        for slot_key, slot_range in resource.items():
             slot_unit = slot_units.get(slot_key)
             if slot_unit is None:
                 # ignore unknown slots
                 continue
-            min_value = slot_range.get('min')
-            if min_value is None:
+            raw_min_value = slot_range.get('min')
+            if raw_min_value is None:
                 min_value = Decimal(0)
-            max_value = slot_range.get('max')
-            if max_value is None:
+            raw_max_value = slot_range.get('max')
+            if raw_max_value is None:
                 max_value = Decimal('Infinity')
-            if slot_unit == 'bytes':
-                if not isinstance(min_value, Decimal):
-                    min_value = BinarySize.from_str(min_value)
-                if not isinstance(max_value, Decimal):
-                    max_value = BinarySize.from_str(max_value)
-            else:
-                if not isinstance(min_value, Decimal):
-                    min_value = Decimal(min_value)
-                if not isinstance(max_value, Decimal):
-                    max_value = Decimal(max_value)
+            str2num_func = BinarySize.from_str if slot_unit == 'bytes' else Decimal
+            if not isinstance(min_value, Decimal):
+                min_value = str2num_func(raw_min_value)
+            if not isinstance(max_value, Decimal):
+                max_value = str2num_func(raw_max_value)
             min_slot[slot_key] = min_value
             max_slot[slot_key] = max_value
 

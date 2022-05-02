@@ -635,7 +635,7 @@ async def get_watcher_info(request: web.Request, agent_id: str) -> dict:
         f'nodes/agents/{agent_id}/watcher_port',
     )
     if watcher_port is None:
-        watcher_port = 6009
+        watcher_port = '6009'
     # TODO: watcher scheme is assumed to be http
     addr = yarl.URL(f'http://{agent_ip}:{watcher_port}')
     return {

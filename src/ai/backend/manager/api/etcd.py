@@ -67,6 +67,7 @@ async def get_config(request: web.Request, params: Any) -> web.Response:
         'ETCD.GET_CONFIG (ak:{}, key:{}, prefix:{})',
         request['keypair']['access_key'], params['key'], params['prefix'],
     )
+    value: None | str | Mapping[str, str | None]
     if params['prefix']:
         # Flatten the returned ChainMap object for JSON serialization
         value = dict(await root_ctx.shared_config.etcd.get_prefix_dict(params['key']))
