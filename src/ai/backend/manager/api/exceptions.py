@@ -414,6 +414,6 @@ class KernelExecutionFailed(BackendAgentError, web.HTTPInternalServerError):
     error_title = 'Executing user code in the kernel has failed.'
 
 
-class UnknownImageReference(BackendError, web.HTTPError):
-    error_type = ''
+class UnknownImageReference(BackendError, web.HTTPInternalServerError):
+    error_type = 'https://api.backend.ai/probs/unknown-image-reference'
     error_title = 'Unknown Image Reference'
