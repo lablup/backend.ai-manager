@@ -1,1 +1,0 @@
-Do not create a compute session when the requested memory is not larger than the shared memory.
