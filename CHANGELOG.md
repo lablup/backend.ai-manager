@@ -16,6 +16,16 @@ Changes
 
 <!-- towncrier release notes start -->
 
+## 22.03.1 (2022-05-03)
+
+### Features
+* Give `group_id` argument when it is needed to query vfolders that allowed by resource policy. ([#585](https://github.com/lablup/backend.ai-manager/issues/585))
+
+### Fixes
+* Do not create a compute session when the requested memory is not larger than the shared memory. ([#584](https://github.com/lablup/backend.ai-manager/issues/584))
+* Update mypy version to 0.950 and fix newly found type check problems. ([#586](https://github.com/lablup/backend.ai-manager/issues/586))
+
+
 ## 22.03.0 (2022-04-25)
 
 ### Features
