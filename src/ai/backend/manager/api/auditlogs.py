@@ -5,10 +5,9 @@ import logging
 
 
 from aiohttp import web
-import aiohttp_cors
 import sqlalchemy as sa
 import trafaret as t
-from typing import Any, TYPE_CHECKING, Tuple, MutableMapping
+from typing import Any, TYPE_CHECKING, MutableMapping
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
@@ -20,7 +19,6 @@ from ..models import (
 )
 from .auth import auth_required
 from .manager import READ_ALLOWED, server_status_required
-from .types import CORSOptions, Iterable, WebMiddleware
 from .utils import check_api_params, get_access_key_scopes
 
 if TYPE_CHECKING:

@@ -37,7 +37,7 @@ from .agent import (
 from .audit_logs import (
     AuditLog,
     AuditLogList,
-    CreateAuditLog
+    CreateAuditLog,
 )
 from .domain import (
     Domain,
@@ -320,7 +320,7 @@ class Queries(graphene.ObjectType):
 
     user_from_email = graphene.Field(
         User,
-        email=graphene.String()
+        email=graphene.String(),
     )
     users = graphene.List(  # legacy non-paginated list
         User,

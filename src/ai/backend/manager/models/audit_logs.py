@@ -11,8 +11,6 @@ from .base import (
 from typing import (
     Sequence,
     Optional,
-    Any,
-    Dict,
     TYPE_CHECKING)
 import logging
 import uuid
@@ -65,7 +63,7 @@ class AuditLog(graphene.ObjectType):
     @classmethod
     def from_row(cls,
                  ctx: GraphQueryContext,
-                 row: Row
+                 row: Row,
                  ) -> Optional[AuditLog]:
         if row is None:
             return None
@@ -121,7 +119,7 @@ class AuditLog(graphene.ObjectType):
             sa.select([sa.func.count()])
             .select_from(audit_logs)
             .where(
-                audit_logs.c.user_id == user_id
+                audit_logs.c.user_id == user_id,
             )
 
         )
@@ -188,8 +186,8 @@ class CreateAuditLog(graphene.Mutation):
                 'before':
                     data_before,
                 'after':
-                    data_after
-            }
+                    data_after,
+            },
         }
         insert_query = (
             sa.insert(audit_logs)
