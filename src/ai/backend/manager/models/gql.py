@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Optional, Mapping, Sequence, TYPE_CHECKING
 import uuid
-
+from pprint import pprint
 import attr
 import graphene
 
@@ -33,6 +33,11 @@ from .agent import (
     Agent,
     AgentList,
     ModifyAgent,
+)
+from .audit_logs import (
+    AuditLog,
+    AuditLogList,
+    CreateAuditLog
 )
 from .domain import (
     Domain,
@@ -123,6 +128,9 @@ from ..api.exceptions import (
     InvalidAPIParameters,
     TooManyKernelsFound,
 )
+import logging
+from ai.backend.common.logging import BraceStyleAdapter
+log = BraceStyleAdapter(logging.getLogger('ai.backend.agent.server'))
 
 
 @attr.s(auto_attribs=True, slots=True)
@@ -206,6 +214,8 @@ class Mutations(graphene.ObjectType):
     disassociate_all_scaling_groups_with_domain = DisassociateAllScalingGroupsWithDomain.Field()
     disassociate_all_scaling_groups_with_group = DisassociateAllScalingGroupsWithGroup.Field()
 
+    create_audit_logs = CreateAuditLog.Field()
+
 
 class Queries(graphene.ObjectType):
     """
@@ -235,6 +245,21 @@ class Queries(graphene.ObjectType):
         Agent,
         scaling_group=graphene.String(),
         status=graphene.String(),
+    )
+
+    auditlog_list = graphene.Field(
+        AuditLogList,
+        limit=graphene.Int(required=True),
+        offset=graphene.Int(required=True),
+        filter=graphene.String(),
+        order=graphene.String(),
+        user_id=graphene.String(),
+    )
+
+    auditlog = graphene.List(
+        AuditLog,
+        user_id=graphene.ID(),
+
     )
 
     domain = graphene.Field(
@@ -293,6 +318,10 @@ class Queries(graphene.ObjectType):
         user_id=graphene.ID(),
     )
 
+    user_from_email = graphene.Field(
+        User,
+        email=graphene.String()
+    )
     users = graphene.List(  # legacy non-paginated list
         User,
         domain_name=graphene.String(),
@@ -540,6 +569,33 @@ class Queries(graphene.ObjectType):
         return AgentList(agent_list, total_count)
 
     @staticmethod
+    async def resolve_auditlog_list(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        limit: int,
+        offset: int,
+        *,
+        filter: str = None,
+        user_id: uuid.UUID | str | None = None,
+        # order: str = None,
+    ) -> AuditLogList:
+
+        total_count = await AuditLog.load_count(
+            info.context,
+            user_id=user_id,
+            filter=filter,
+        )
+
+        auditlog_list = await AuditLog.load_slice(
+            info.context,
+            limit,
+            offset,
+            user_id=user_id,
+        )
+
+        return AuditLogList(auditlog_list, total_count)
+
+    @staticmethod
     async def resolve_domain(
         executor: AsyncioExecutor,
         info: graphene.ResolveInfo, *,
@@ -738,6 +794,7 @@ class Queries(graphene.ObjectType):
         loader = ctx.dataloader_manager.get_loader(
             ctx, 'User.by_email', domain_name=domain_name,
         )
+        pprint(vars(await loader.load(email)))
         return await loader.load(email)
 
     @staticmethod
@@ -756,6 +813,25 @@ class Queries(graphene.ObjectType):
         # user_id is retrieved as string since it's a GraphQL's generic ID field
         user_uuid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
         return await loader.load(user_uuid)
+
+    @staticmethod
+    @scoped_query(autofill_user=True, user_key='email')
+    async def resolve_user_from_email(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        *,
+        domain_name: str = None,
+        email: str = None,
+    ) -> User:
+        print("into resolve")
+        ctx: GraphQueryContext = info.context
+        loader = ctx.dataloader_manager.get_loader(
+            ctx, 'User.by_email',
+        )
+
+        # user_id is retrieved as string since it's a GraphQL's generic ID field
+        # user_uuid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
+        return await loader.load(email)
 
     @staticmethod
     async def resolve_users(

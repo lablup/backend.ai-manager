@@ -15,6 +15,7 @@ from . import scaling_group as _sgroup
 from . import session_template as _sessiontemplate
 from . import storage as _storage
 from . import error_logs as _errorlogs
+from . import audit_logs as _audit_logs
 
 __all__ = (
     'metadata',
@@ -33,6 +34,7 @@ __all__ = (
     *_sessiontemplate.__all__,
     *_storage.__all__,
     *_errorlogs.__all__,
+    *_audit_logs.__all__,
 )
 
 from .agent import *  # noqa
@@ -50,3 +52,4 @@ from .scaling_group import *  # noqa
 from .session_template import *  # noqa
 from .storage import *  # noqa
 from .error_logs import *  # noqa
+from .audit_logs import * # noqa
