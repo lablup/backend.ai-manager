@@ -8,7 +8,6 @@ from typing import (
     Iterable,
     Optional,
     Sequence,
-    Union,
     TYPE_CHECKING,
 )
 from uuid import UUID, uuid4
@@ -566,29 +565,6 @@ class CreateUser(graphene.Mutation):
             )
             await conn.execute(kp_insert_query)
 
-            # Call Audit Log Api
-            # from .audit_logs import  audit_logs
-            # data_set = {
-            # 'access_key': access_key,
-            # 'email': user_email,
-            # 'target':'user', 
-            # 'action':'CREATE',
-            # 'data':{
-            #     'before':
-            #         '',
-            #     'after':
-            #         {'user_id':created_user.uuid}
-            #     }
-            # }
-            # insert_query = (
-            #     sa.insert(audit_logs)
-            #     .values(
-            #         **data_set,
-            #         user_id = user_id,
-                    
-            #     )
-            # )
-            # await conn.execute(insert_query)
             # Add user to groups if group_ids parameter is provided.
             from .group import association_groups_users, groups
             if props.group_ids:
