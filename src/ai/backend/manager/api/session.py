@@ -5,15 +5,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from decimal import Decimal
-from datetime import datetime, timedelta
 import functools
-from io import BytesIO
 import json
 import logging
 import re
-from pathlib import PurePosixPath
 import secrets
+import time
+import uuid
+import yarl
 from typing import (
     Any,
     Dict,
@@ -28,22 +27,25 @@ from typing import (
     TYPE_CHECKING,
     cast,
 )
+from decimal import Decimal
+from datetime import datetime, timedelta
+from io import BytesIO
+from pathlib import PurePosixPath
 from urllib.parse import urlparse
-import uuid
 
 import aiohttp
-from aiohttp import web, hdrs
 import aiohttp_cors
 import aioredis
 import aiotools
-from async_timeout import timeout
 import attr
-from dateutil.parser import isoparse
-from dateutil.tz import tzutc
 import multidict
 import sqlalchemy as sa
-from sqlalchemy.sql.expression import true, null
 import trafaret as t
+from aiohttp import web, hdrs
+from async_timeout import timeout
+from dateutil.parser import isoparse
+from dateutil.tz import tzutc
+from sqlalchemy.sql.expression import true, null
 
 from ai.backend.manager.models.image import ImageRow
 
@@ -70,6 +72,9 @@ from ai.backend.common.events import (
     KernelStartedEvent,
     KernelTerminatedEvent,
     KernelTerminatingEvent,
+    SessionEnqueuedEvent,
+    SessionScheduledEvent,
+    SessionPreparingEvent,
     SessionCancelledEvent,
     SessionFailureEvent,
     SessionStartedEvent,
@@ -112,7 +117,7 @@ from ..models.utils import execute_with_retry
 from .exceptions import (
     AppNotFound,
     InvalidAPIParameters,
-    GenericNotFound,
+    ObjectNotFound,
     ImageNotFound,
     InsufficientPrivilege,
     ServiceUnavailable,
@@ -534,6 +539,7 @@ async def _create(request: web.Request, params: dict[str, Any]) -> web.Response:
                 starts_at=starts_at,
                 agent_list=params['config']['agent_list'],
                 dependency_sessions=params['dependencies'],
+                callback_url=params['callback_url'],
             )),
         )
         resp['sessionId'] = str(kernel_id)  # changed since API v5
@@ -631,6 +637,8 @@ async def _create(request: web.Request, params: dict[str, Any]) -> web.Response:
             UndefChecker | t.Null | t.String,
         t.Key('dependencies', default=undefined):
             UndefChecker | t.Null | t.List(tx.UUID) | t.List(t.String),
+        tx.AliasedKey(['callback_url', 'callbackUrl', 'callbackURL'], default=undefined):
+            UndefChecker | t.Null | tx.URL,
         t.Key('owner_access_key', default=undefined): UndefChecker | t.Null | t.String,
     },
 ), loads=_json_loads)
@@ -803,6 +811,7 @@ async def create_from_template(request: web.Request, params: dict[str, Any]) -> 
         t.Key('startupCommand', default=None) >> 'startup_command': t.Null | t.String,
         tx.AliasedKey(['bootstrap_script', 'bootstrapScript'], default=None): t.Null | t.String,
         t.Key('dependencies', default=None): t.Null | t.List(tx.UUID) | t.List(t.String),
+        tx.AliasedKey(['callback_url', 'callbackUrl', 'callbackURL'], default=None): t.Null | tx.URL,
         t.Key('owner_access_key', default=None): t.Null | t.String,
     }),
     loads=_json_loads)
@@ -1094,7 +1103,7 @@ async def create_cluster(request: web.Request, params: dict[str, Any]) -> web.Re
     except UnknownImageReference:
         raise InvalidAPIParameters(f"Unknown image reference: {params['image']}")
     except Exception:
-        root_ctx.error_monitor.capture_exception()
+        await root_ctx.error_monitor.capture_exception()
         log.exception('GET_OR_CREATE: unexpected error!')
         raise InternalServerError
     finally:
@@ -1312,7 +1321,78 @@ async def handle_kernel_stat_sync(
     event: DoSyncKernelStatsEvent,
 ) -> None:
     root_ctx: RootContext = app['_root.context']
-    await root_ctx.registry.sync_kernel_stats(event.kernel_ids)
+    if root_ctx.local_config['debug']['periodic-sync-stats']:
+        await root_ctx.registry.sync_kernel_stats(event.kernel_ids)
+
+
+async def _make_session_callback(data: dict[str, Any], url: yarl.URL) -> None:
+    log_func = log.info
+    log_msg: str = ""
+    log_fmt: str = ""
+    log_arg: Any = None
+    begin = time.monotonic()
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=30.0),
+        ) as session:
+            try:
+                async with session.post(url, json=data) as response:
+                    if response.content_length is not None and response.content_length > 0:
+                        log_func = log.warning
+                        log_msg = "warning"
+                        log_fmt = "{3[0]} {3[1]} - the callback response body was not empty! " \
+                                  "(len: {3[2]:,} bytes)"
+                        log_arg = (response.status, response.reason, response.content_length)
+                    else:
+                        log_msg = "result"
+                        log_fmt = "{3[0]} {3[1]}"
+                        log_arg = (response.status, response.reason)
+            except aiohttp.ClientError as e:
+                log_func = log.warning
+                log_msg, log_fmt, log_arg = "failed", "{3}", repr(e)
+    except asyncio.CancelledError:
+        log_func = log.warning
+        log_msg, log_fmt, log_arg = "cancelled", "elapsed_time = {3:.6f}", time.monotonic() - begin
+    except asyncio.TimeoutError:
+        log_func = log.warning
+        log_msg, log_fmt, log_arg = "timeout", "elapsed_time = {3:.6f}", time.monotonic() - begin
+    finally:
+        log_func(
+            "Session lifecycle callback " + log_msg + " (e:{0}, s:{1}, url:{2}): " + log_fmt,
+            data['event'], data['session_id'], url,
+            log_arg,
+        )
+
+
+async def invoke_session_callback(
+    app: web.Application,
+    source: AgentId,
+    event: SessionEnqueuedEvent | SessionScheduledEvent | SessionPreparingEvent
+        | SessionStartedEvent | SessionCancelledEvent | SessionTerminatedEvent
+        | SessionSuccessEvent | SessionFailureEvent,
+) -> None:
+    app_ctx: PrivateContext = app['session.context']
+    root_ctx: RootContext = app['_root.context']
+    data = {
+        "type": "session_lifecycle",
+        "event": event.name.removeprefix("session_"),
+        "session_id": str(event.session_id),
+        "when": datetime.now(tzutc()).isoformat(),
+    }
+    try:
+        async with root_ctx.db.begin_readonly() as db:
+            session = await root_ctx.registry.get_session_by_session_id(
+                event.session_id,
+                db_connection=db,
+            )
+    except SessionNotFound:
+        return
+    url = session['callback_url']
+    if url is None:
+        return
+    app_ctx.webhook_ptask_group.create_task(
+        _make_session_callback(data, url),
+    )
 
 
 async def handle_batch_result(
@@ -1538,7 +1618,7 @@ async def destroy(request: web.Request, params: Any) -> web.Response:
     session_name = request.match_info['session_name']
     if params['forced'] and request['user']['role'] not in (UserRole.ADMIN, UserRole.SUPERADMIN):
         raise InsufficientPrivilege('You are not allowed to force-terminate')
-    requester_access_key, owner_access_key = await get_access_key_scopes(request)
+    requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
     # domain_name = None
     # if requester_access_key != owner_access_key and \
     #         not request['is_superadmin'] and request['is_admin']:
@@ -1988,7 +2068,7 @@ async def list_files(request: web.Request) -> web.Response:
 async def get_container_logs(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     session_name: str = request.match_info['session_name']
-    requester_access_key, owner_access_key = await get_access_key_scopes(request)
+    requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
     log.info('GET_CONTAINER_LOG (ak:{}/{}, s:{})',
              requester_access_key, owner_access_key, session_name)
     resp = {'result': {'logs': ''}}
@@ -2038,7 +2118,10 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
             allowed_vfolder_types=['user'],
             extra_vf_conds=(vfolders.c.name == '.logs'))
         if not matched_vfolders:
-            raise GenericNotFound('You do not have ".logs" vfolder for persistent task logs.')
+            raise ObjectNotFound(
+                extra_data={'vfolder_name': '.logs'},
+                object_name='vfolder',
+            )
         log_vfolder = matched_vfolders[0]
 
     proxy_name, volume_name = root_ctx.storage_manager.split_host(log_vfolder['host'])
@@ -2083,6 +2166,7 @@ class PrivateContext:
     stats_task: asyncio.Task[None]
     database_ptask_group: aiotools.PersistentTaskGroup
     rpc_ptask_group: aiotools.PersistentTaskGroup
+    webhook_ptask_group: aiotools.PersistentTaskGroup
 
 
 async def init(app: web.Application) -> None:
@@ -2091,6 +2175,7 @@ async def init(app: web.Application) -> None:
     app_ctx.session_creation_tracker = {}
     app_ctx.database_ptask_group = aiotools.PersistentTaskGroup()
     app_ctx.rpc_ptask_group = aiotools.PersistentTaskGroup()
+    app_ctx.webhook_ptask_group = aiotools.PersistentTaskGroup()
 
     # passive events
     evd = root_ctx.event_dispatcher
@@ -2114,6 +2199,14 @@ async def init(app: web.Application) -> None:
     evd.consume(
         SessionTerminatedEvent, app, handle_session_termination_lifecycle, name="api.session.sterm",
     )
+    evd.consume(SessionEnqueuedEvent, app, invoke_session_callback)
+    evd.consume(SessionScheduledEvent, app, invoke_session_callback)
+    evd.consume(SessionPreparingEvent, app, invoke_session_callback)
+    evd.consume(SessionStartedEvent, app, invoke_session_callback)
+    evd.consume(SessionCancelledEvent, app, invoke_session_callback)
+    evd.consume(SessionTerminatedEvent, app, invoke_session_callback)
+    evd.consume(SessionSuccessEvent, app, invoke_session_callback)
+    evd.consume(SessionFailureEvent, app, invoke_session_callback)
     evd.consume(SessionSuccessEvent, app, handle_batch_result)
     evd.consume(SessionFailureEvent, app, handle_batch_result)
     evd.consume(AgentStartedEvent, app, handle_agent_lifecycle)
@@ -2142,6 +2235,7 @@ async def shutdown(app: web.Application) -> None:
     app_ctx.stats_task.cancel()
     await app_ctx.stats_task
 
+    await app_ctx.webhook_ptask_group.shutdown()
     await app_ctx.database_ptask_group.shutdown()
     await app_ctx.rpc_ptask_group.shutdown()
 

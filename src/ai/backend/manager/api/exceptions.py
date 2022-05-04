@@ -88,9 +88,27 @@ class BackendError(web.HTTPError):
         )
 
 
-class GenericNotFound(BackendError, web.HTTPNotFound):
-    error_type  = 'https://api.backend.ai/probs/generic-not-found'
+class URLNotFound(BackendError, web.HTTPNotFound):
+    error_type  = 'https://api.backend.ai/probs/url-not-found'
     error_title = 'Unknown URL path.'
+
+
+class ObjectNotFound(BackendError, web.HTTPNotFound):
+    error_type  = 'https://api.backend.ai/probs/object-not-found'
+    object_name = 'object'
+
+    def __init__(
+        self,
+        extra_msg: str = None,
+        extra_data: Any = None,
+        *,
+        object_name: str = None,
+        **kwargs,
+    ) -> None:
+        if object_name:
+            self.object_name = object_name
+        self.error_title = f'No such {self.object_name}.'
+        super().__init__(extra_msg, extra_data, **kwargs)
 
 
 class GenericBadRequest(BackendError, web.HTTPBadRequest):
@@ -172,34 +190,28 @@ class GraphQLError(BackendError, web.HTTPBadRequest):
     error_title = 'GraphQL-generated error.'
 
 
-class InstanceNotFound(BackendError, web.HTTPNotFound):
-    error_type  = 'https://api.backend.ai/probs/instance-not-found'
-    error_title = 'No such instance.'
+class InstanceNotFound(ObjectNotFound):
+    object_name = 'agent instance'
 
 
-class ImageNotFound(BackendError, web.HTTPNotFound):
-    error_type  = 'https://api.backend.ai/probs/image-not-found'
-    error_title = 'No such environment image.'
+class ImageNotFound(ObjectNotFound):
+    object_name = 'environment image'
 
 
-class DomainNotFound(web.HTTPNotFound, BackendError):
-    error_type = 'https://api.backend.ai/probs/domain-not-found'
-    error_title = 'No such domain.'
+class DomainNotFound(ObjectNotFound):
+    object_name = 'domain'
 
 
-class GroupNotFound(web.HTTPNotFound, BackendError):
-    error_type  = 'https://api.backend.ai/probs/group-not-found'
-    error_title = 'No such user group.'
+class GroupNotFound(ObjectNotFound):
+    object_name = 'user group (or project)'
 
 
-class ScalingGroupNotFound(BackendError, web.HTTPNotFound):
-    error_type  = 'https://api.backend.ai/probs/scaling-group-not-found'
-    error_title = 'No such scaling group.'
+class ScalingGroupNotFound(ObjectNotFound):
+    object_name = 'scaling group'
 
 
-class SessionNotFound(BackendError, web.HTTPNotFound):
-    error_type  = 'https://api.backend.ai/probs/session-not-found'
-    error_title = 'No such session.'
+class SessionNotFound(ObjectNotFound):
+    object_name = 'session'
 
 
 class TooManySessionsMatched(BackendError, web.HTTPNotFound):
@@ -221,19 +233,17 @@ class TooManySessionsMatched(BackendError, web.HTTPNotFound):
         super().__init__(extra_msg, extra_data, **kwargs)
 
 
-class TaskTemplateNotFound(BackendError, web.HTTPNotFound):
-    error_type  = 'https://api.backend.ai/probs/task-template-not-found'
-    error_title = 'No such task template.'
-
-
 class TooManyKernelsFound(BackendError, web.HTTPNotFound):
     error_type  = 'https://api.backend.ai/probs/too-many-kernels'
     error_title = 'There are two or more matching kernels.'
 
 
-class AppNotFound(BackendError, web.HTTPNotFound):
-    error_type  = 'https://api.backend.ai/probs/app-not-found'
-    error_title = 'No such app service provided by the session.'
+class TaskTemplateNotFound(ObjectNotFound):
+    object_name = 'task template'
+
+
+class AppNotFound(ObjectNotFound):
+    object_name = 'app service'
 
 
 class SessionAlreadyExists(BackendError, web.HTTPBadRequest):
@@ -246,9 +256,8 @@ class VFolderCreationFailed(BackendError, web.HTTPBadRequest):
     error_title = 'Virtual folder creation has failed.'
 
 
-class VFolderNotFound(BackendError, web.HTTPNotFound):
-    error_type  = 'https://api.backend.ai/probs/vfolder-not-found'
-    error_title = 'No such virtual folder.'
+class VFolderNotFound(ObjectNotFound):
+    object_name = 'virtual folder'
 
 
 class VFolderAlreadyExists(BackendError, web.HTTPBadRequest):
@@ -271,9 +280,8 @@ class DotfileAlreadyExists(BackendError, web.HTTPBadRequest):
     error_title = 'Dotfile already exists.'
 
 
-class DotfileNotFound(BackendError, web.HTTPNotFound):
-    error_type  = 'https://api.backend.ai/probs/generic-not-found'
-    error_title = 'Requested Dotfile not found.'
+class DotfileNotFound(ObjectNotFound):
+    object_name = 'dotfile'
 
 
 class QuotaExceeded(BackendError, web.HTTPPreconditionFailed):

@@ -16,6 +16,79 @@ Changes
 
 <!-- towncrier release notes start -->
 
+## 22.03.1 (2022-05-03)
+
+### Features
+* Give `group_id` argument when it is needed to query vfolders that allowed by resource policy. ([#585](https://github.com/lablup/backend.ai-manager/issues/585))
+
+### Fixes
+* Do not create a compute session when the requested memory is not larger than the shared memory. ([#584](https://github.com/lablup/backend.ai-manager/issues/584))
+* Update mypy version to 0.950 and fix newly found type check problems. ([#586](https://github.com/lablup/backend.ai-manager/issues/586))
+
+
+## 22.03.0 (2022-04-25)
+
+### Features
+* Add `KeyPairResourcePolicy.max_session_lifetime` to force-terminate sessions after a specified timeout ([#583](https://github.com/lablup/backend.ai-manager/issues/583))
+
+### Fixes
+* Fix a bogus error by skipping database queries with empty data when syncing kernel statistics ([#580](https://github.com/lablup/backend.ai-manager/issues/580))
+* Remove `GenericNotFound` and split use cases for `URLNotFound` and `ObjectNotFound` for easier debugging and clear error messages ([#581](https://github.com/lablup/backend.ai-manager/issues/581))
+* All concrete not-found errors (such as `SessionNotFound`, `VFolderNotFound`, etc.) to inherit the `ObjectNotFound` exception ([#582](https://github.com/lablup/backend.ai-manager/issues/582))
+
+
+## 22.03.0b2 (2022-04-18)
+
+### Fixes
+* Remove duplicated logic to obtain redis local time in streaming proxy requests, which caused the depletion of the Redis connection pool. ([#576](https://github.com/lablup/backend.ai-manager/issues/576))
+* Fix regression of the logic in getting the container stats per period. ([#577](https://github.com/lablup/backend.ai-manager/issues/577))
+* Make updating scaling group works again by converting the primitive values of the `scheduler_opts` to a `ScalingGroupsOpts` type to pass the trafaret validation step. ([#578](https://github.com/lablup/backend.ai-manager/issues/578))
+* Remove explicit usage of `pg_advisory_lock` on scheduler. ([#579](https://github.com/lablup/backend.ai-manager/issues/579))
+
+
+## 22.03.0b1 (2022-04-12)
+
+### Features
+* Add an scheduler_option 'pending_timeout' to auto-cancel a pending session after specified timeout ([#527](https://github.com/lablup/backend.ai-manager/issues/527))
+* Issue BGSAVE or BGREWRITEAOF commands when clearning the session statistics history to ensure compaction and persistence of the Redis database ([#565](https://github.com/lablup/backend.ai-manager/issues/565))
+* Add the `callback_url` optional parameter to the session creation APIs and call the URL upon session lifecycle events ([#567](https://github.com/lablup/backend.ai-manager/issues/567))
+* Implement `clean_images` and `modify_image` GraphQL mutation. ([#568](https://github.com/lablup/backend.ai-manager/issues/568))
+* Make the distributed lock backend replacible, choosing one from "filelock" (for single-node deployments only), "pg_advisory" (current impl.), and "etcd" (future) ([#571](https://github.com/lablup/backend.ai-manager/issues/571))
+
+### Fixes
+* Outer join the user table so that the project vfolder is also counted, and add `user_email` and `group_name` fields to the vfolder's load parameter. ([#557](https://github.com/lablup/backend.ai-manager/issues/557))
+* Fetch image alias from resolve method, update query statement and raise explicit error message ([#560](https://github.com/lablup/backend.ai-manager/issues/560))
+* Fix a regression in the session usage statistics API due to recently changed structure of kernel's mount information in DB ([#561](https://github.com/lablup/backend.ai-manager/issues/561))
+* Do not call `MSET` to Redis with empty key-value lists when recalculating resource usage ([#563](https://github.com/lablup/backend.ai-manager/issues/563))
+* Make admins query other users' container logs or destroying them again by explicitly passes the `owner_access_key` parameter to the `get_access_key_scope` function. ([#564](https://github.com/lablup/backend.ai-manager/issues/564))
+* Fix `inspect_image`, `forget_image` and `alias` commands under `backend.ai mgr etcd` command group failing to run. ([#569](https://github.com/lablup/backend.ai-manager/issues/569))
+* Migrate `manager.distributed` module to the common pkg and make `PgAdvisoryLokc` a local implementation ([#570](https://github.com/lablup/backend.ai-manager/issues/570))
+* Migrate the bgtask framework to the common pkg ([#572](https://github.com/lablup/backend.ai-manager/issues/572))
+* Fix `occupied_slots` column on `agents` kernel does not match to actual resource occupied on corresponding agent. ([#574](https://github.com/lablup/backend.ai-manager/issues/574))
+* Add explicit lifetime hints for distributed locks used in global timers to guarantee liveness ([#575](https://github.com/lablup/backend.ai-manager/issues/575))
+
+### Miscellaneous
+* Add the migration guide as `MIGRATION.md` ([#566](https://github.com/lablup/backend.ai-manager/issues/566))
+
+
+## 22.03.0a2 (2022-03-29)
+
+### Features
+* Support inter-session dependencies by introducing a new parameter `dependencies` to the session creation APIs and implementing a scheduler predicate check to ensure all dependency (batch-type) sessions to become successful ([#528](https://github.com/lablup/backend.ai-manager/issues/528))
+* Migrate keypair concurrency check from PostgreSQL to Redis ([#535](https://github.com/lablup/backend.ai-manager/issues/535))
+* Add `POST_AUTHORIZE` notify hook to support plugins that needs to do some operations just after the authorization step. ([#552](https://github.com/lablup/backend.ai-manager/issues/552))
+
+### Fixes
+* Use Redis to persistently store and update per-kernel statistics while keeping the `kernels.last_stat` db column as a backup, with a debug option to periodically sync them ([#532](https://github.com/lablup/backend.ai-manager/issues/532))
+* Give `load_aliases` argument when it is needed to query aliases relationship. ([#551](https://github.com/lablup/backend.ai-manager/issues/551))
+* Fix a regression introduced in #541 by correcting a missing replacement of `sqlalchemy.engine.Connection` with `sqlalchemy.orm.Session` as `ImageRow` is now an ORM object ([#553](https://github.com/lablup/backend.ai-manager/issues/553))
+* Recalculate `kernels.occupied_slots` column with actually allocated resource slots value. ([#554](https://github.com/lablup/backend.ai-manager/issues/554))
+* Reduce the occurrence of hang-up during manager shutdown greatly and force-kill hanging worker processes to eliminate it ([#555](https://github.com/lablup/backend.ai-manager/issues/555))
+* Fix a long-standing critical bug that leaked kernel creation coroutine tasks and made some sessions stuck at PREPARING ([#558](https://github.com/lablup/backend.ai-manager/issues/558))
+* Alter the `agents.architecture` column type from `CHAR` to `String` to prevent implicit addition of trailing whitespaces ([#559](https://github.com/lablup/backend.ai-manager/issues/559))
+* Fix up newly found type errors for updating `common.etcd` using `etcetra` ([#566](https://github.com/lablup/backend.ai-manager/issues/566))
+
+
 ## 22.03.0a1 (2022-03-14)
 
 ### Breaking Changes

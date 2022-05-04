@@ -11,6 +11,7 @@ from ai.backend.manager.defs import DEFAULT_IMAGE_ARCH
 if TYPE_CHECKING:
     from graphql.execution.executors.asyncio import AsyncioExecutor
 
+    from ai.backend.common.bgtask import BackgroundTaskManager
     from ai.backend.common.etcd import AsyncEtcd
     from ai.backend.common.types import (
         AccessKey,
@@ -24,7 +25,6 @@ if TYPE_CHECKING:
     from ..api.manager import ManagerStatus
     from ..config import LocalConfig, SharedConfig
     from ..registry import AgentRegistry
-    from ..background import BackgroundTaskManager
     from ..models.utils import ExtendedAsyncSAEngine
     from .storage import StorageSessionManager
 
@@ -54,7 +54,9 @@ from .group import (
     PurgeGroup,
 )
 from .image import (
+    ClearImages,
     Image,
+    ModifyImage,
     RescanImages,
     PreloadImage,
     UnloadImage,
@@ -122,7 +124,7 @@ from .vfolder import (
     VirtualFolderList,
 )
 from ..api.exceptions import (
-    GenericNotFound,
+    ObjectNotFound,
     ImageNotFound,
     InsufficientPrivilege,
     InvalidAPIParameters,
@@ -187,9 +189,11 @@ class Mutations(graphene.ObjectType):
     rescan_images = RescanImages.Field()
     preload_image = PreloadImage.Field()
     unload_image = UnloadImage.Field()
+    modify_image = ModifyImage.Field()
     forget_image = ForgetImage.Field()
     alias_image = AliasImage.Field()
     dealias_image = DealiasImage.Field()
+    clear_images = ClearImages.Field()
 
     # super-admin only
     create_keypair_resource_policy = CreateKeyPairResourcePolicy.Field()
@@ -606,7 +610,7 @@ class Queries(graphene.ObjectType):
         if ctx.user['role'] != UserRole.SUPERADMIN:
             if name != ctx.user['domain_name']:
                 # prevent querying other domains if not superadmin
-                raise GenericNotFound('no such domain')
+                raise ObjectNotFound(object_name='domain')
         loader = ctx.dataloader_manager.get_loader(ctx, 'Domain.by_name')
         return await loader.load(name)
 

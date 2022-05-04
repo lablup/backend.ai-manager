@@ -42,7 +42,7 @@ from .exceptions import (
     AuthorizationFailed,
     GenericBadRequest,
     GenericForbidden,
-    GenericNotFound,
+    ObjectNotFound,
     InternalServerError,
     InvalidAuthParameters,
     InvalidAPIParameters,
@@ -601,8 +601,10 @@ async def get_role(request: web.Request, params: Any) -> web.Response:
             result = await conn.execute(query)
             row = result.first()
             if row is None:
-                raise GenericNotFound('No such user group or '
-                                      'you are not the member of the group.')
+                raise ObjectNotFound(
+                    extra_msg='No such project or you are not the member of it.',
+                    object_name='project (user group)',
+                )
         group_role = 'user'
     resp_data = {
         'global_role': 'superadmin' if request['is_superadmin'] else 'user',

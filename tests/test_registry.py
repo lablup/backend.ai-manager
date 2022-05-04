@@ -1,11 +1,6 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import (
-    Any,
-    Mapping,
-    Tuple,
-)
 from unittest.mock import MagicMock, AsyncMock
 
 import pytest
@@ -17,62 +12,12 @@ from ai.backend.manager.registry import AgentRegistry
 from ai.backend.manager.models import AgentStatus
 from ai.backend.common import msgpack
 from ai.backend.common.types import BinarySize, DeviceId, ResourceSlot, SlotName
-from ai.backend.common.plugin.hook import HookPluginContext
-
-
-class DummyEtcd:
-    async def get_prefix(self, key: str) -> Mapping[str, Any]:
-        return {}
-
-
-@pytest.fixture
-async def registry_ctx(mocker):
-    mock_shared_config = MagicMock()
-    mock_shared_config.update_resource_slots = AsyncMock()
-    mock_shared_config.etcd = None
-    mock_db = MagicMock()
-    mock_dbconn = MagicMock()
-    mock_dbconn_ctx = MagicMock()
-    mock_dbresult = MagicMock()
-    mock_dbresult.rowcount = 1
-    mock_db.connect = MagicMock(return_value=mock_dbconn_ctx)
-    mock_db.begin = MagicMock(return_value=mock_dbconn_ctx)
-    mock_dbconn_ctx.__aenter__ = AsyncMock(return_value=mock_dbconn)
-    mock_dbconn_ctx.__aexit__ = AsyncMock()
-    mock_dbconn.execute = AsyncMock(return_value=mock_dbresult)
-    mock_dbconn.begin = MagicMock(return_value=mock_dbconn_ctx)
-    mock_redis_stat = MagicMock()
-    mock_redis_live = MagicMock()
-    mock_redis_live.hset = AsyncMock()
-    mock_redis_image = MagicMock()
-    mock_event_dispatcher = MagicMock()
-    mock_event_producer = MagicMock()
-    mock_event_producer.produce_event = AsyncMock()
-    mocked_etcd = DummyEtcd()
-    # mocker.object.patch(mocked_etcd, 'get_prefix', AsyncMock(return_value={}))
-    hook_plugin_ctx = HookPluginContext(mocked_etcd, {})  # type: ignore
-
-    registry = AgentRegistry(
-        shared_config=mock_shared_config,
-        db=mock_db,
-        redis_stat=mock_redis_stat,
-        redis_live=mock_redis_live,
-        redis_image=mock_redis_image,
-        event_dispatcher=mock_event_dispatcher,
-        event_producer=mock_event_producer,
-        storage_manager=None,  # type: ignore
-        hook_plugin_ctx=hook_plugin_ctx,
-    )
-    await registry.init()
-    try:
-        yield (registry, mock_dbconn, mock_dbresult, mock_shared_config)
-    finally:
-        await registry.shutdown()
 
 
 @pytest.mark.asyncio
 async def test_handle_heartbeat(
-    registry_ctx: Tuple[AgentRegistry, MagicMock, MagicMock, MagicMock], mocker,
+    registry_ctx: tuple[AgentRegistry, MagicMock, MagicMock, MagicMock, MagicMock, MagicMock],
+    mocker,
 ) -> None:
     mock_get_known_registries = AsyncMock(return_value=[
         {'index.docker.io': 'https://registry-1.docker.io'},
@@ -87,7 +32,7 @@ async def test_handle_heartbeat(
 
     mocker.patch('ai.backend.common.plugin.pkg_resources.iter_entry_points', mocked_entrypoints)
 
-    registry, mock_dbconn, mock_dbresult, mock_shared_config = registry_ctx
+    registry, mock_dbconn, mock_dbresult, mock_shared_config, _, _ = registry_ctx
     image_data = snappy.compress(msgpack.packb([
         ('index.docker.io/lablup/python:3.6-ubuntu18.04', ),
     ]))
@@ -180,9 +125,9 @@ async def test_handle_heartbeat(
 
 @pytest.mark.asyncio
 async def test_convert_resource_spec_to_resource_slot(
-    registry_ctx: Tuple[AgentRegistry, MagicMock, MagicMock, MagicMock],
+    registry_ctx: tuple[AgentRegistry, MagicMock, MagicMock, MagicMock, MagicMock, MagicMock],
 ):
-    registry, _, _, _ = registry_ctx
+    registry, _, _, _, _, _ = registry_ctx
     allocations = {
         'cuda': {
             SlotName('cuda.shares'): {

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
 import functools
 import json
 import logging
 import math
-from pathlib import Path
 import stat
+import uuid
+from datetime import datetime
+from pathlib import Path
 from typing import (
     Any,
     Awaitable,
@@ -21,7 +22,6 @@ from typing import (
     TYPE_CHECKING,
     Tuple,
 )
-import uuid
 
 import aiohttp
 from aiohttp import web
@@ -30,9 +30,9 @@ import sqlalchemy as sa
 import trafaret as t
 
 from ai.backend.common import validators as tx
+from ai.backend.common.bgtask import ProgressReporter
 from ai.backend.common.logging import BraceStyleAdapter
 
-from ..background import ProgressReporter
 from ..models import (
     agents,
     kernels,
@@ -55,7 +55,7 @@ from ..models import (
 from .auth import admin_required, auth_required, superadmin_required
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
-    GenericForbidden, GenericNotFound, InvalidAPIParameters, ServerMisconfiguredError,
+    GenericForbidden, ObjectNotFound, InvalidAPIParameters, ServerMisconfiguredError,
     BackendAgentError, InternalServerError, GroupNotFound,
 )
 from .manager import (
@@ -503,11 +503,17 @@ async def delete_by_id(request: web.Request, params: Any) -> web.Response:
 
 @auth_required
 @server_status_required(READ_ALLOWED)
-async def list_hosts(request: web.Request) -> web.Response:
+@check_api_params(
+    t.Dict({
+        tx.AliasedKey(['group_id', 'groupId'], default=None): tx.UUID | t.String | t.Null,
+    }),
+)
+async def list_hosts(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.LIST_HOSTS (ak:{})', access_key)
     domain_name = request['user']['domain_name']
+    group_id = params['group_id']
     domain_admin = request['user']['role'] == UserRole.ADMIN
     resource_policy = request['keypair']['resource_policy']
     allowed_vfolder_types = await root_ctx.shared_config.get_vfolder_types()
@@ -515,11 +521,11 @@ async def list_hosts(request: web.Request) -> web.Response:
         allowed_hosts: Set[str] = set()
         if 'user' in allowed_vfolder_types:
             allowed_hosts_by_user = await get_allowed_vfolder_hosts_by_user(
-                conn, resource_policy, domain_name, request['user']['uuid'])
+                conn, resource_policy, domain_name, request['user']['uuid'], group_id)
             allowed_hosts = allowed_hosts | allowed_hosts_by_user
         if 'group' in allowed_vfolder_types:
             allowed_hosts_by_group = await get_allowed_vfolder_hosts_by_group(
-                conn, resource_policy, domain_name, group_id=None, domain_admin=domain_admin)
+                conn, resource_policy, domain_name, group_id, domain_admin=domain_admin)
             allowed_hosts = allowed_hosts | allowed_hosts_by_group
     all_volumes = await root_ctx.storage_manager.get_all_volumes()
     all_hosts = {f"{proxy_name}:{volume_data['name']}" for proxy_name, volume_data in all_volumes}
@@ -1195,7 +1201,7 @@ async def invite(request: web.Request, params: Any) -> web.Response:
             raise InvalidAPIParameters
         kps = result.fetchall()
         if len(kps) < 1:
-            raise GenericNotFound('No such vfolder invitation')
+            raise ObjectNotFound(object_name='vfolder invitation')
 
         # Prevent inviting user who already share the target folder.
         invitee_uuids = [kp.user for kp in kps]
@@ -1327,7 +1333,7 @@ async def accept_invitation(request: web.Request, params: Any) -> web.Response:
         result = await conn.execute(query)
         invitation = result.first()
         if invitation is None:
-            raise GenericNotFound('No such vfolder invitation')
+            raise ObjectNotFound(object_name='vfolder invitation')
 
         # Get target virtual folder.
         query = (
@@ -1405,7 +1411,7 @@ async def delete_invitation(request: web.Request, params: Any) -> web.Response:
             result = await conn.execute(query)
             row = result.first()
             if row is None:
-                raise GenericNotFound('No such vfolder invitation')
+                raise ObjectNotFound(object_name='vfolder invitation')
             if request_email == row.inviter:
                 state = VFolderInvitationState.CANCELED
             elif request_email == row.invitee:
@@ -1484,11 +1490,14 @@ async def share(request: web.Request, params: Any) -> web.Response:
         users_to_share = [u['uuid'] for u in user_info]
         emails_to_share = [u['email'] for u in user_info]
         if len(user_info) < 1:
-            raise GenericNotFound('No users to share.')
+            raise ObjectNotFound(object_name='user')
         if len(user_info) < len(params['emails']):
             users_not_in_vfolder_group = list(set(params['emails']) - set(emails_to_share))
-            raise GenericNotFound('Some user does not belong to folder\'s group: '
-                                  ','.join(users_not_in_vfolder_group))
+            raise ObjectNotFound(
+                'Some user does not belong to folder\'s group: '
+                ','.join(users_not_in_vfolder_group),
+                object_name='user',
+            )
 
         # Do not share to users who have already been shared the folder.
         query = (
@@ -1567,7 +1576,7 @@ async def unshare(request: web.Request, params: Any) -> web.Response:
         result = await conn.execute(query)
         users_to_unshare = [u['uuid'] for u in result.fetchall()]
         if len(users_to_unshare) < 1:
-            raise GenericNotFound('No users to unshare.')
+            raise ObjectNotFound(object_name='user(s).')
 
         # Delete vfolder_permission(s).
         query = (

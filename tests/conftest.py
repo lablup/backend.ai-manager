@@ -1,15 +1,16 @@
 import asyncio
-from datetime import datetime
 import hashlib, hmac
 import json
 import os
-from pathlib import Path
 import re
 import secrets
 import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
+from functools import partial
+from pathlib import Path
 from typing import (
     Any,
     AsyncContextManager,
@@ -21,6 +22,7 @@ from typing import (
     Tuple,
     Type,
 )
+from unittest.mock import MagicMock, AsyncMock
 from urllib.parse import quote_plus as urlquote
 
 import aiohttp
@@ -31,6 +33,7 @@ import pytest
 from sqlalchemy.ext.asyncio.engine import AsyncEngine as SAEngine
 
 from ai.backend.common.config import redis_config_iv
+from ai.backend.common.plugin.hook import HookPluginContext
 from ai.backend.common.types import HostPortPair
 from ai.backend.manager.api.context import RootContext
 from ai.backend.manager.config import LocalConfig, SharedConfig, load as load_config
@@ -47,6 +50,7 @@ from ai.backend.manager.models import (
     kernels, keypairs, vfolders,
 )
 from ai.backend.manager.models.utils import connect_database
+from ai.backend.manager.registry import AgentRegistry
 
 here = Path(__file__).parent
 
@@ -88,17 +92,22 @@ def vfolder_host():
 
 
 @pytest.fixture(scope='session')
-def local_config(test_id, test_db) -> LocalConfig:
+def local_config(test_id, test_db) -> Iterator[LocalConfig]:
     cfg = load_config()
     assert isinstance(cfg, LocalConfig)
     cfg['db']['name'] = test_db
     cfg['manager']['num-proc'] = 1
-    cfg['manager']['service-addr'] = HostPortPair('localhost', 29100)
+    ipc_base_path = Path(f'/tmp/backend.ai/manager-testing/ipc-{test_id}')
+    ipc_base_path.mkdir(parents=True, exist_ok=True)
+    cfg['manager']['ipc-base-path'] = ipc_base_path
+    cfg['manager']['distributed-lock'] = 'filelock'
+    cfg['manager']['service-addr'] = HostPortPair('127.0.0.1', 29100)
     # In normal setups, this is read from etcd.
     cfg['redis'] = redis_config_iv.check({
         'addr': {'host': '127.0.0.1', 'port': '6379'},
     })
-    return cfg
+    yield cfg
+    shutil.rmtree(ipc_base_path)
 
 
 @pytest.fixture(scope='session')
@@ -290,8 +299,21 @@ def database_fixture(local_config, test_db, database):
     asyncio.run(clean_fixture())
 
 
+@pytest.fixture
+def file_lock_factory(local_config, request):
+    from ai.backend.common.lock import FileLock
+
+    def _make_lock(lock_id):
+        lock_path = local_config['manager']['ipc-base-path'] / f'testing.{lock_id}.lock'
+        lock = FileLock(lock_path, timeout=0)
+        request.addfinalizer(partial(lock_path.unlink, missing_ok=True))
+        return lock
+
+    return _make_lock
+
+
 class Client:
-    def __init__(self, session, url):
+    def __init__(self, session: aiohttp.ClientSession, url) -> None:
         self._session = session
         if not url.endswith('/'):
             url += '/'
@@ -355,9 +377,9 @@ async def app(local_config, event_loop):
 
 @pytest.fixture
 async def create_app_and_client(local_config, event_loop) -> AsyncIterator:
-    client: Client
-    client_session: aiohttp.ClientSession
-    runner: web.BaseRunner
+    client: Client | None = None
+    client_session: aiohttp.ClientSession | None = None
+    runner: web.BaseRunner | None = None
     _outer_ctxs: List[AsyncContextManager] = []
 
     async def app_builder(
@@ -405,13 +427,15 @@ async def create_app_and_client(local_config, event_loop) -> AsyncIterator:
         await site.start()
         port = root_ctx.local_config['manager']['service-addr'].port
         client_session = aiohttp.ClientSession()
-        client = Client(client_session, f'http://localhost:{port}')
+        client = Client(client_session, f'http://127.0.0.1:{port}')
         return app, client
 
     yield app_builder
 
-    await client_session.close()
-    await runner.cleanup()
+    if client_session is not None:
+        await client_session.close()
+    if runner is not None:
+        await runner.cleanup()
     for octx in reversed(_outer_ctxs):
         await octx.__aexit__(None, None, None)
 
@@ -451,12 +475,18 @@ def monitor_keypair():
 
 @pytest.fixture
 def get_headers(app, default_keypair):
-    def create_header(method, url, req_bytes, ctype='application/json',
-                      hash_type='sha256', api_version='v5.20191215',
-                      keypair=default_keypair):
+    def create_header(
+        method,
+        url,
+        req_bytes,
+        ctype='application/json',
+        hash_type='sha256',
+        api_version='v5.20191215',
+        keypair=default_keypair,
+    ) -> dict[str, str]:
         now = datetime.now(tzutc())
         root_ctx: RootContext = app['_root.context']
-        hostname = f"localhost:{root_ctx.local_config['manager']['service-addr'].port}"
+        hostname = f"127.0.0.1:{root_ctx.local_config['manager']['service-addr'].port}"
         headers = {
             'Date': now.isoformat(),
             'Content-Type': ctype,
@@ -520,3 +550,60 @@ async def prepare_kernel(request, create_app_and_client,
         await root_ctx.registry.destroy_session(sess_id, access_key)
     except Exception:
         pass
+
+
+class DummyEtcd:
+    async def get_prefix(self, key: str) -> Mapping[str, Any]:
+        return {}
+
+
+@pytest.fixture
+async def registry_ctx(mocker):
+    mock_shared_config = MagicMock()
+    mock_shared_config.update_resource_slots = AsyncMock()
+    mock_shared_config.etcd = None
+    mock_db = MagicMock()
+    mock_dbconn = MagicMock()
+    mock_dbconn_ctx = MagicMock()
+    mock_dbresult = MagicMock()
+    mock_dbresult.rowcount = 1
+    mock_db.connect = MagicMock(return_value=mock_dbconn_ctx)
+    mock_db.begin = MagicMock(return_value=mock_dbconn_ctx)
+    mock_dbconn_ctx.__aenter__ = AsyncMock(return_value=mock_dbconn)
+    mock_dbconn_ctx.__aexit__ = AsyncMock()
+    mock_dbconn.execute = AsyncMock(return_value=mock_dbresult)
+    mock_dbconn.begin = MagicMock(return_value=mock_dbconn_ctx)
+    mock_redis_stat = MagicMock()
+    mock_redis_live = MagicMock()
+    mock_redis_live.hset = AsyncMock()
+    mock_redis_image = MagicMock()
+    mock_event_dispatcher = MagicMock()
+    mock_event_producer = MagicMock()
+    mock_event_producer.produce_event = AsyncMock()
+    mocked_etcd = DummyEtcd()
+    # mocker.object.patch(mocked_etcd, 'get_prefix', AsyncMock(return_value={}))
+    hook_plugin_ctx = HookPluginContext(mocked_etcd, {})  # type: ignore
+
+    registry = AgentRegistry(
+        shared_config=mock_shared_config,
+        db=mock_db,
+        redis_stat=mock_redis_stat,
+        redis_live=mock_redis_live,
+        redis_image=mock_redis_image,
+        event_dispatcher=mock_event_dispatcher,
+        event_producer=mock_event_producer,
+        storage_manager=None,  # type: ignore
+        hook_plugin_ctx=hook_plugin_ctx,
+    )
+    await registry.init()
+    try:
+        yield (
+            registry,
+            mock_dbconn,
+            mock_dbresult,
+            mock_shared_config,
+            mock_event_dispatcher,
+            mock_event_producer,
+        )
+    finally:
+        await registry.shutdown()

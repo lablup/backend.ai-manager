@@ -270,7 +270,7 @@ async def check_scaling_group(
                 f"You do not have access to the scaling group '{preferred_sgroup_name}'.",
                 permanent=True,
             )
-        allowed_session_types = sgroup['scheduler_opts']['allowed_session_types']
+        allowed_session_types = sgroup['scheduler_opts'].allowed_session_types
         if sess_ctx.session_type.value.lower() not in allowed_session_types:
             return PredicateResult(
                 False,
@@ -283,7 +283,7 @@ async def check_scaling_group(
         # Consider all allowed scaling groups.
         usable_sgroups = []
         for sgroup in sgroups:
-            allowed_session_types = sgroup['scheduler_opts']['allowed_session_types']
+            allowed_session_types = sgroup['scheduler_opts'].allowed_session_types
             if sess_ctx.session_type.value.lower() in allowed_session_types:
                 usable_sgroups.append(sgroup)
         if not usable_sgroups:
