@@ -580,7 +580,7 @@ class Queries(graphene.ObjectType):
         offset: int,
         *,
         filter: str = None,
-        user_id: uuid.UUID | str | None = None,
+        user_id: Optional[str],
         # order: str = None,
     ) -> AuditLogList:
 
