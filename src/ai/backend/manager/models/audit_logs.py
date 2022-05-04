@@ -85,7 +85,7 @@ class AuditLog(graphene.ObjectType):
         limit: int,
         offset: int,
         *,
-        user_id: str | uuid.UUID = None,
+        user_id: str = None,
     ) -> Sequence[AuditLog]:
         """
         Load Audit Logs
@@ -112,7 +112,7 @@ class AuditLog(graphene.ObjectType):
         cls,
         graph_ctx: GraphQueryContext,
         *,
-        user_id: str | uuid.UUID = None,
+        user_id: str = None,
         filter: str = None,
     ) -> int:
         query = (

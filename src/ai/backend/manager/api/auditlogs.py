@@ -11,7 +11,6 @@ from typing import Any, TYPE_CHECKING, MutableMapping
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.types import AuditLogAction
 
 
 from ..models import (
