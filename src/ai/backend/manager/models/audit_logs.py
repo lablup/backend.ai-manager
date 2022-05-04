@@ -13,7 +13,6 @@ from typing import (
     Optional,
     TYPE_CHECKING)
 import logging
-import uuid
 from .user import UserRole
 
 from graphene.types.datetime import DateTime as GQLDateTime

@@ -30,7 +30,6 @@ log = BraceStyleAdapter(logging.getLogger(__name__))
 @auth_required
 @check_api_params(t.Dict(
     {
-        t.Key('type'): tx.Enum(AuditLogAction),
         t.Key('data'): tx.JSONString,
     },
 ))
