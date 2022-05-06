@@ -24,7 +24,7 @@ import trafaret as t
 
 from ai.backend.common.types import VFolderMount
 
-from ..api.exceptions import InvalidAPIParameters, VFolderNotFound, VFolderOperationFailed
+from ..api.exceptions import InvalidAPIParameters, VFolderOperationFailed
 from ..defs import RESERVED_VFOLDER_PATTERNS, RESERVED_VFOLDERS
 from ..types import UserScope
 from .base import (
@@ -480,10 +480,6 @@ async def prepare_vfolder_mounts(
     vfolder configurations, and the given user scope.
     """
 
-    # Fast-path for empty requested mounts
-    if not requested_mounts:
-        return []
-
     requested_vfolder_names: dict[str, str] = {}
     requested_vfolder_subpaths: dict[str, str] = {}
     requested_vfolder_dstpaths: dict[str, str] = {}
@@ -530,13 +526,22 @@ async def prepare_vfolder_mounts(
         extra_vf_conds=extra_vf_conds,
     )
 
+    # Fast-path for empty requested mounts
+    if not accessible_vfolders:
+        return []
+
+    # add automount folder list into requested_vfolder_names
+    # and requested_vfolder_subpath
+    for vfolder in accessible_vfolders:
+        if vfolder['name'].startswith('.'):
+            requested_vfolder_names.setdefault(vfolder['name'], vfolder['name'])
+            requested_vfolder_subpaths.setdefault(vfolder['name'], '.')
+
     # for vfolder in accessible_vfolders:
     for key, vfolder_name in requested_vfolder_names.items():
         for vfolder in accessible_vfolders:
             if vfolder['name'] == requested_vfolder_names[key]:
                 break
-        else:
-            raise VFolderNotFound(f"VFolder {vfolder_name} is not found or accessible.")
         if vfolder['group'] is not None and vfolder['group'] != str(user_scope.group_id):
             # User's accessible group vfolders should not be mounted
             # if not belong to the execution kernel.
