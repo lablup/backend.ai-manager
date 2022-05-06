@@ -1,0 +1,1 @@
+Fix to mount dotfolder when creating a session, which was omitted when there was no vfolder to explicitly mount.
