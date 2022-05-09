@@ -489,7 +489,7 @@ async def _create(request: web.Request, params: dict[str, Any]) -> web.Response:
             _td = str_to_timedelta(params['starts_at'])
             starts_at = datetime.now(tzutc()) + _td
 
-    if params.get('cluster_size') > 1:
+    if params['cluster_size'] > 1:
         log.debug(" -> cluster_mode:{} (replicate)", params['cluster_mode'])
 
     if params.get('dependencies') is None:
@@ -634,7 +634,7 @@ async def _create(request: web.Request, params: dict[str, Any]) -> web.Response:
         t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
         tx.AliasedKey(['starts_at', 'startsAt'], default=None): t.Null | t.String,
         t.Key('reuseIfExists', default=True) >> 'reuse': t.ToBool,
-        t.Key('startupCommand', default=undefined) >> 'startup_command':
+        t.Key('startupCommand', default=None) >> 'startup_command':
             UndefChecker | t.Null | t.String,
         tx.AliasedKey(['bootstrap_script', 'bootstrapScript'], default=undefined):
             UndefChecker | t.Null | t.String,
