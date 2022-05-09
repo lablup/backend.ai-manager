@@ -48,6 +48,7 @@ from .minilang.queryfilter import QueryFilterParser
 from .minilang.ordering import QueryOrderParser
 from .storage import StorageSessionManager
 
+
 if TYPE_CHECKING:
     from .gql import GraphQueryContext
 
@@ -512,11 +513,7 @@ class CreateUser(graphene.Mutation):
         info: graphene.ResolveInfo,
         email: str,
         props: UserInput,
-        # user_id: Union[str, str] = None,
-        # access_key: str = None,
-        # user_email = str,
     ) -> CreateUser:
-        print("createuser ok")
         graph_ctx: GraphQueryContext = info.context
         username = props.username if props.username else email
         if props.status is None and props.is_active is not None:
@@ -565,6 +562,43 @@ class CreateUser(graphene.Mutation):
             )
             await conn.execute(kp_insert_query)
 
+            # Create Audit Log
+            from .audit_logs import CreateAuditLog
+
+            data_before = {}
+            data_after = user_data
+            try:
+                # audit log on target: user
+                auditlog_data_user = {
+                            'user_email': graph_ctx.user['email'],
+                            'user_id': graph_ctx.user['uuid'],
+                            'access_key': graph_ctx.access_key,
+                            'data_before': data_before,
+                            'data_after': data_after,
+                            'action': 'CREATE',
+                            'target': created_user.uuid,
+                            }
+                await CreateAuditLog.mutate(info, auditlog_data_user)
+                # audit log on target: keypair
+                data_after_keypair = {'user_id': kp_data['user_id'],
+                                      'access_key': kp_data['access_key'],
+                                      'is_active': kp_data['is_active'],
+                                      'is_admin': kp_data['is_admin'],
+                                      'resource_policy': kp_data['resource_policy'],
+                                      'rate_limit': kp_data['rate_limit'],
+                                      'user': created_user.uuid}
+                auditlog_data_keypair = {
+                            'user_email': graph_ctx.user['email'],
+                            'user_id': graph_ctx.user['uuid'],
+                            'access_key': graph_ctx.access_key,
+                            'data_before': data_before,
+                            'data_after': data_after_keypair,
+                            'action': 'CREATE',
+                            'target': kp_data['access_key'],
+                            }
+                await CreateAuditLog.mutate(info, auditlog_data_keypair)
+            except Exception as e:
+                log.error(str(e))
             # Add user to groups if group_ids parameter is provided.
             from .group import association_groups_users, groups
             if props.group_ids:
@@ -631,11 +665,21 @@ class ModifyUser(graphene.Mutation):
         user_update_data: Dict[str, Any]
         prev_domain_name: str
         prev_role: UserRole
+        prev_user_data: Dict[str, Any]
+        # prev_user_data: Dict[str, Any]
 
         async def _pre_func(conn: SAConnection) -> None:
-            nonlocal user_update_data, prev_domain_name, prev_role
+            nonlocal user_update_data, prev_domain_name, prev_role, prev_user_data
+            # , prev_user_data
             result = await conn.execute(
                 sa.select([
+                    users.c.uuid,
+                    users.c.username,
+                    users.c.email,
+                    users.c.need_password_change,
+                    users.c.full_name,
+                    users.c.description,
+                    users.c.status,
                     users.c.domain_name,
                     users.c.role,
                     users.c.status,
@@ -647,6 +691,16 @@ class ModifyUser(graphene.Mutation):
             prev_domain_name = row.domain_name
             prev_role = row.role
             user_update_data = data.copy()
+            prev_user_data = {'user_id': row.uuid,
+                              'username': row.username,
+                              'email': row.email,
+                              'need_password_change': row.need_password_change,
+                              'password': '*****',
+                              'full_name': row.full_name,
+                              'description': row.description,
+                              'status': row.status,
+                              'domain_name': prev_domain_name,
+                              'role': prev_role}
             if 'status' in data and row.status != data['status']:
                 user_update_data['status_info'] = 'admin-requested'  # user mutation is only for admin
 
@@ -659,7 +713,6 @@ class ModifyUser(graphene.Mutation):
         async def _post_func(conn: SAConnection, result: Result) -> Row:
             nonlocal prev_domain_name, prev_role
             updated_user = result.first()
-
             if 'role' in data and data['role'] != prev_role:
                 from ai.backend.manager.models import keypairs
                 result = await conn.execute(
@@ -751,6 +804,29 @@ class ModifyUser(graphene.Mutation):
                     await conn.execute(
                         sa.insert(association_groups_users).values(values),
                     )
+
+                    prev_user_data.update({'group_ids': grps.id})
+                else:
+                    prev_user_data.update({'group_ids': None})
+            else:
+                prev_user_data.update({'group_ids': None})
+            # Create Audit Log
+            from .audit_logs import CreateAuditLog
+
+            data_after = props
+            try:
+                auditlog_data = {
+                            'user_email': graph_ctx.user['email'],
+                            'user_id': graph_ctx.user['uuid'],
+                            'access_key': graph_ctx.access_key,
+                            'data_before': prev_user_data,
+                            'data_after': data_after,
+                            'action': 'CHANGE',
+                            'target': updated_user.uuid,
+                            }
+                await CreateAuditLog.mutate(info, auditlog_data)
+            except Exception as e:
+                log.error(str(e))
             return updated_user
 
         return await simple_db_mutate_returning_item(
@@ -782,8 +858,17 @@ class DeleteUser(graphene.Mutation):
         email: str,
     ) -> DeleteUser:
         graph_ctx: GraphQueryContext = info.context
+        prev_user_data: Dict[str, Any]
 
         async def _pre_func(conn: SAConnection) -> None:
+            nonlocal prev_user_data
+            result = await conn.execute(
+                sa.select([users.c.uuid,
+                           users.c.status])
+                .select_from(users)
+                .where(users.c.email == email),
+            )
+            prev_user_data = dict(result.first())
             # Make all user keypairs inactive.
             from ai.backend.manager.models import keypairs
             await conn.execute(
@@ -791,13 +876,46 @@ class DeleteUser(graphene.Mutation):
                 .values(is_active=False)
                 .where(keypairs.c.user_id == email),
             )
-
+            get_ak_info = await conn.execute(
+                sa.select([keypairs.c.access_key,
+                           keypairs.c.is_active])
+                .where(keypairs.c.user_id == email),
+            )
+            ak_info = get_ak_info.first()
+            from .audit_logs import CreateAuditLog
+            try:
+                # audit log on target: user
+                auditlog_data_user = {
+                            'user_email': graph_ctx.user['email'],
+                            'user_id': graph_ctx.user['uuid'],
+                            'access_key': graph_ctx.access_key,
+                            'data_before': {'is_active': ak_info.is_active},
+                            'data_after': {'is_active': False},
+                            'action': 'DELETE',
+                            'target': ak_info.access_key,
+                            }
+                await CreateAuditLog.mutate(info, auditlog_data_user)
+                # audit log on target: keypair
+                auditlog_data_keypair = {
+                            'user_email': graph_ctx.user['email'],
+                            'user_id': graph_ctx.user['uuid'],
+                            'access_key': graph_ctx.access_key,
+                            'data_before': {'status': prev_user_data['status']},
+                            'data_after': {'status': UserStatus.DELETED,
+                                           'status_info': 'admin-requested'},
+                            'action': 'DELETE',
+                            'target': prev_user_data['uuid'],
+                            }
+                await CreateAuditLog.mutate(info, auditlog_data_keypair)
+            except Exception as e:
+                log.error(str(e))
         update_query = (
             sa.update(users)
             .values(status=UserStatus.DELETED,
                     status_info='admin-requested')
             .where(users.c.email == email)
         )
+
         return await simple_db_mutate(cls, graph_ctx, update_query, pre_func=_pre_func)
 
 

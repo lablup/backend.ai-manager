@@ -30,26 +30,26 @@ log = BraceStyleAdapter(logging.getLogger(__name__))
 @auth_required
 @check_api_params(t.Dict(
     {
+        t.Key('action'): tx.String(),
+        t.Key('target'): tx.String(),
         t.Key('data'): tx.JSONString,
     },
 ))
-async def append(request: web.Request, params: Any) -> web.Response:
+async def create(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
-    requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
-    user_uuid = request['user']['uuid']
+    requester_access_key = await get_access_key_scopes(request, params)
+    user_id = request['user']['uuid']
     user_email = request['user']['email']
-    log.info('AUDITLOGS.CREATE (ak:{0}/{1})',
-             requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*')
-
+    
     async with root_ctx.db.begin() as conn:
         resp = {
             'success': True,
         }
         query = audit_logs.insert().values({
-            'type': params['type'],
-            'email': user_email,
-            'uuid': user_uuid,
+            'user_id': user_id,
             'access_key': requester_access_key,
+            'email': user_email,
+            'action': params['action'],
             'data': params['data'],
             'target': params['target'],
 

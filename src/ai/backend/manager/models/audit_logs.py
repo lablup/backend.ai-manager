@@ -9,15 +9,19 @@ from .base import (
     PaginatedList,
     simple_db_mutate)
 from typing import (
+    Any,
     Sequence,
     Optional,
     TYPE_CHECKING)
 import logging
 from .user import UserRole
-
+import json
 from graphene.types.datetime import DateTime as GQLDateTime
 import graphene
-
+from typing import (
+    Union,
+    Dict,
+)
 from ai.backend.common.logging import BraceStyleAdapter
 
 
@@ -144,8 +148,8 @@ class AuditLogInput(graphene.InputObjectType):
     target = graphene.String(required=True)
 
 
+# class CreateAuditLog(graphene.Mutation):
 class CreateAuditLog(graphene.Mutation):
-
     allowed_roles = (UserRole.SUPERADMIN,)
 
     class Arguments:
@@ -158,40 +162,50 @@ class CreateAuditLog(graphene.Mutation):
     @classmethod
     async def mutate(
         cls,
-        root,
+        # root,
         info: graphene.ResolveInfo,
         props: AuditLogInput,
+
+
     ) -> CreateAuditLog:
         graph_ctx: GraphQueryContext = info.context
-        if props.action == 'CHANGE':
-            data_before = {}
-            data_after = {}
-            for key in props.data_after.keys():  # check update command options to only show changes
-                value = props.data_after[key]
-                if props.data_before[key] != value and value is not None:
-                    data_after.update({key: value})
-            for key in data_after.keys():
-                data_before.update({key: props.data_before[key]})
+        print(f"data {props}")
+
+        if props['action'] == 'CHANGE':
+            prepare_data_before = {}
+            prepare_data_after = {}
+            for key in props['data_after'].keys():  # check update command options to only show changes
+                value = props['data_after'][key]
+                if props['data_before'][key] != value and value is not None:
+                    print("into if")
+                    if key == 'password':
+                        prepare_data_after.update({key: 'new_password_set'})  # don't show new password
+                    else:
+                        prepare_data_after.update({key: value})
+            for key in prepare_data_after.keys():
+                # for key in props['data_after'].keys():
+                prepare_data_before.update({key: props['data_before'][key]})
         else:
-            data_before = props.data_before
-            data_after = props.data_after
+            prepare_data_before = props['data_before']
+            prepare_data_after = props['data_after']
         data_set = {
-            'user_id': props.user_id,
-            'access_key': props.access_key,
-            'email': props.user_email,
-            'target': props.target,
-            'action': props.action,
+            'user_id': str(props['user_id']),
+            'access_key': props['access_key'],
+            'email': props['user_email'],
+            'action': props['action'],
+            'target': str(props['target']),
             'data': {
                 'before':
-                    data_before,
+                    prepare_data_before,
                 'after':
-                    data_after,
+                    prepare_data_after,
             },
         }
-        insert_query = (
-            sa.insert(audit_logs)
-            .values(
-                **data_set,
+        if prepare_data_after or prepare_data_before:
+            insert_query = (
+                sa.insert(audit_logs)
+                .values(data_set)
             )
-        )
-        return await simple_db_mutate(cls, graph_ctx, insert_query)
+            return await simple_db_mutate(cls, graph_ctx, insert_query)
+        else:
+            log.warning("No data to write in Audit log")

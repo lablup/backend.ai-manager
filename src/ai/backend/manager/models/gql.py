@@ -218,8 +218,6 @@ class Mutations(graphene.ObjectType):
     disassociate_all_scaling_groups_with_domain = DisassociateAllScalingGroupsWithDomain.Field()
     disassociate_all_scaling_groups_with_group = DisassociateAllScalingGroupsWithGroup.Field()
 
-    create_audit_logs = CreateAuditLog.Field()
-
 
 class Queries(graphene.ObjectType):
     """
