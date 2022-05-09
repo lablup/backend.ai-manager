@@ -1,0 +1,1 @@
+When creating a session, use `get()` to prevent a KeyError from occurring, and change the default values of `callback_url` and `startup_command` to None.
