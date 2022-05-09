@@ -529,7 +529,7 @@ async def prepare_vfolder_mounts(
     # Fast-path for empty requested mounts
     if not accessible_vfolders:
         return []
-    from icecream import ic
+
     # add automount folder list into requested_vfolder_names
     # and requested_vfolder_subpath
     for vfolder in accessible_vfolders:
@@ -596,7 +596,6 @@ async def prepare_vfolder_mounts(
                 kernel_path=kernel_path,
                 mount_perm=vfolder['permission'],
             ))
-        ic(matched_vfolder_mounts)
 
     # Check if there are overlapping mount targets
     for vf1 in matched_vfolder_mounts:
