@@ -477,23 +477,26 @@ async def _create(request: web.Request, params: dict[str, Any]) -> web.Response:
         # It's time to create a new session.
         pass
 
-    if params['session_type'] == SessionTypes.BATCH and not params['startup_command']:
+    if params.get('session_type') == SessionTypes.BATCH and not params.get('startup_command'):
         raise InvalidAPIParameters('Batch sessions must have a non-empty startup command.')
-    if params['session_type'] != SessionTypes.BATCH and params['starts_at']:
+    if params.get('session_type') != SessionTypes.BATCH and params.get('starts_at'):
         raise InvalidAPIParameters('Parameter starts_at should be used only for batch sessions')
     starts_at: Union[datetime, None] = None
-    if params['starts_at']:
+    if params.get('starts_at'):
         try:
             starts_at = isoparse(params['starts_at'])
         except ValueError:
             _td = str_to_timedelta(params['starts_at'])
             starts_at = datetime.now(tzutc()) + _td
 
-    if params['cluster_size'] > 1:
+    if params.get('cluster_size') > 1:
         log.debug(" -> cluster_mode:{} (replicate)", params['cluster_mode'])
 
-    if params['dependencies'] is None:
+    if params.get('dependencies') is None:
         params['dependencies'] = []
+
+    if params.get('callback_url') is None:
+        params['callback_url'] = None
 
     session_creation_id = secrets.token_urlsafe(16)
     start_event = asyncio.Event()
@@ -637,7 +640,7 @@ async def _create(request: web.Request, params: dict[str, Any]) -> web.Response:
             UndefChecker | t.Null | t.String,
         t.Key('dependencies', default=undefined):
             UndefChecker | t.Null | t.List(tx.UUID) | t.List(t.String),
-        tx.AliasedKey(['callback_url', 'callbackUrl', 'callbackURL'], default=undefined):
+        tx.AliasedKey(['callback_url', 'callbackUrl', 'callbackURL'], default=None):
             UndefChecker | t.Null | tx.URL,
         t.Key('owner_access_key', default=undefined): UndefChecker | t.Null | t.String,
     },
