@@ -1,1 +1,1 @@
-When creating a session, use `get()` to prevent a KeyError from occurring, and change the default values of `callback_url` and `startup_command` to None.
+When creating a session, use `dict.get()` to prevent bogus `KeyError` and change the default values of `callback_url` and `startup_command` to `None` instead of `undefined` (which is for template arguments).
