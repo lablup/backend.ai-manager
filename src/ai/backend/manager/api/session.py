@@ -128,6 +128,7 @@ from .exceptions import (
     InternalServerError,
     TaskTemplateNotFound,
     StorageProxyError,
+    UnknownImageReferenceError,
 )
 from .auth import auth_required
 from .types import CORSOptions, WebMiddleware
@@ -595,7 +596,7 @@ async def _create(request: web.Request, params: dict[str, Any]) -> web.Response:
         log.exception('GET_OR_CREATE: exception')
         raise
     except UnknownImageReference:
-        raise InvalidAPIParameters(f"Unknown image reference: {params['image']}")
+        raise UnknownImageReferenceError(f"Unknown image reference: {params['image']}")
     except Exception:
         await root_ctx.error_monitor.capture_exception(context={'user': owner_uuid})
         log.exception('GET_OR_CREATE: unexpected error!')
@@ -1101,7 +1102,7 @@ async def create_cluster(request: web.Request, params: dict[str, Any]) -> web.Re
         log.exception('GET_OR_CREATE: exception')
         raise
     except UnknownImageReference:
-        raise InvalidAPIParameters(f"Unknown image reference: {params['image']}")
+        raise UnknownImageReferenceError(f"Unknown image reference: {params['image']}")
     except Exception:
         await root_ctx.error_monitor.capture_exception()
         log.exception('GET_OR_CREATE: unexpected error!')
