@@ -199,3 +199,4 @@ class CreateAuditLog(graphene.Mutation):
             return await simple_db_mutate(cls, graph_ctx, insert_query)
         else:
             log.warning("No data to write in Audit log")
+            return None

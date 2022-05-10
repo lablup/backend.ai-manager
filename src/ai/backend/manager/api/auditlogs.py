@@ -26,37 +26,37 @@ if TYPE_CHECKING:
 log = BraceStyleAdapter(logging.getLogger(__name__))
 
 
-@server_status_required(READ_ALLOWED)
-@auth_required
-@check_api_params(t.Dict(
-    {
-        t.Key('action'): tx.String,
-        t.Key('target'): tx.String,
-        t.Key('data'): tx.JSONString,
-    },
-))
-async def create(request: web.Request, params: Any) -> web.Response:
-    root_ctx: RootContext = request.app['_root.context']
-    requester_access_key = await get_access_key_scopes(request, params)
-    user_id = request['user']['uuid']
-    user_email = request['user']['email']
+# @server_status_required(READ_ALLOWED)
+# @auth_required
+# @check_api_params(t.Dict(
+#     {
+#         t.Key('action'): tx.String,
+#         t.Key('target'): tx.String,
+#         t.Key('data'): tx.JSONString,
+#     },
+# ))
+# async def create(request: web.Request, params: Any) -> web.Response:
+#     root_ctx: RootContext = request.app['_root.context']
+#     requester_access_key = await get_access_key_scopes(request, params)
+#     user_id = request['user']['uuid']
+#     user_email = request['user']['email']
 
-    async with root_ctx.db.begin() as conn:
-        resp = {
-            'success': True,
-        }
-        query = audit_logs.insert().values({
-            'user_id': user_id,
-            'access_key': requester_access_key,
-            'email': user_email,
-            'action': params['action'],
-            'data': params['data'],
-            'target': params['target'],
+#     async with root_ctx.db.begin() as conn:
+#         resp = {
+#             'success': True,
+#         }
+#         query = audit_logs.insert().values({
+#             'user_id': user_id,
+#             'access_key': requester_access_key,
+#             'email': user_email,
+#             'action': params['action'],
+#             'data': params['data'],
+#             'target': params['target'],
 
-        })
-        result = await conn.execute(query)
-        assert result.rowcount == 1
-    return web.json_response(resp)
+#         })
+#         result = await conn.execute(query)
+#         assert result.rowcount == 1
+#     return web.json_response(resp)
 
 
 @auth_required

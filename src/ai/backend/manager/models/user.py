@@ -563,13 +563,13 @@ class CreateUser(graphene.Mutation):
             await conn.execute(kp_insert_query)
 
             # Create Audit Log
-            from .audit_logs import CreateAuditLog
+            from .audit_logs import CreateAuditLog, AuditLogInput
 
-            data_before: Dict[str, Any]
+            data_before: Dict[str, Any] = {}
             data_after = user_data
             try:
                 # audit log on target: user
-                auditlog_data_user = {
+                auditlog_data_user: AuditLogInput = {
                                     'user_email': graph_ctx.user['email'],
                                     'user_id': graph_ctx.user['uuid'],
                                     'access_key': graph_ctx.access_key,
@@ -587,7 +587,7 @@ class CreateUser(graphene.Mutation):
                                       'resource_policy': kp_data['resource_policy'],
                                       'rate_limit': kp_data['rate_limit'],
                                       'user': created_user.uuid}
-                auditlog_data_keypair = {
+                auditlog_data_keypair: AuditLogInput = {
                                         'user_email': graph_ctx.user['email'],
                                         'user_id': graph_ctx.user['uuid'],
                                         'access_key': graph_ctx.access_key,
@@ -811,11 +811,11 @@ class ModifyUser(graphene.Mutation):
             else:
                 prev_user_data.update({'group_ids': None})
             # Create Audit Log
-            from .audit_logs import CreateAuditLog
+            from .audit_logs import CreateAuditLog, AuditLogInput
 
             data_after = props
             try:
-                auditlog_data = {
+                auditlog_data: AuditLogInput = {
                                 'user_email': graph_ctx.user['email'],
                                 'user_id': graph_ctx.user['uuid'],
                                 'access_key': graph_ctx.access_key,
@@ -882,10 +882,10 @@ class DeleteUser(graphene.Mutation):
                 .where(keypairs.c.user_id == email),
             )
             ak_info = get_ak_info.first()
-            from .audit_logs import CreateAuditLog
+            from .audit_logs import CreateAuditLog, AuditLogInput
             try:
                 # audit log on target: user
-                auditlog_data_user = {
+                auditlog_data_user: AuditLogInput = {
                                     'user_email': graph_ctx.user['email'],
                                     'user_id': graph_ctx.user['uuid'],
                                     'access_key': graph_ctx.access_key,
@@ -896,7 +896,7 @@ class DeleteUser(graphene.Mutation):
                                 }
                 await CreateAuditLog.mutate(info, auditlog_data_user)
                 # audit log on target: keypair
-                auditlog_data_keypair = {
+                auditlog_data_keypair: AuditLogInput = {
                                     'user_email': graph_ctx.user['email'],
                                     'user_id': graph_ctx.user['uuid'],
                                     'access_key': graph_ctx.access_key,
