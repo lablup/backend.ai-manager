@@ -477,12 +477,12 @@ async def _create(request: web.Request, params: dict[str, Any]) -> web.Response:
         # It's time to create a new session.
         pass
 
-    if params.get('session_type') == SessionTypes.BATCH and not params.get('startup_command'):
+    if params['session_type'] == SessionTypes.BATCH and not params['startup_command']:
         raise InvalidAPIParameters('Batch sessions must have a non-empty startup command.')
-    if params.get('session_type') != SessionTypes.BATCH and params.get('starts_at'):
+    if params['session_type'] != SessionTypes.BATCH and params['starts_at']:
         raise InvalidAPIParameters('Parameter starts_at should be used only for batch sessions')
     starts_at: Union[datetime, None] = None
-    if params.get('starts_at'):
+    if params['starts_at']:
         try:
             starts_at = isoparse(params['starts_at'])
         except ValueError:
@@ -492,10 +492,10 @@ async def _create(request: web.Request, params: dict[str, Any]) -> web.Response:
     if params['cluster_size'] > 1:
         log.debug(" -> cluster_mode:{} (replicate)", params['cluster_mode'])
 
-    if params.get('dependencies') is None:
+    if params['dependencies'] is None:
         params['dependencies'] = []
 
-    if params.get('callback_url') is None:
+    if params['callback_url'] is None:
         params['callback_url'] = None
 
     session_creation_id = secrets.token_urlsafe(16)
@@ -638,7 +638,7 @@ async def _create(request: web.Request, params: dict[str, Any]) -> web.Response:
             UndefChecker | t.Null | t.String,
         tx.AliasedKey(['bootstrap_script', 'bootstrapScript'], default=undefined):
             UndefChecker | t.Null | t.String,
-        t.Key('dependencies', default=undefined):
+        t.Key('dependencies', default=None):
             UndefChecker | t.Null | t.List(tx.UUID) | t.List(t.String),
         tx.AliasedKey(['callback_url', 'callbackUrl', 'callbackURL'], default=None):
             UndefChecker | t.Null | tx.URL,
