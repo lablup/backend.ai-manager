@@ -1,0 +1,1 @@
+Wrap UnknownImageReference as InvalidAPIParameters instead of InternalServerError
