@@ -631,13 +631,13 @@ async def _create(request: web.Request, params: dict[str, Any]) -> web.Response:
         t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
         tx.AliasedKey(['starts_at', 'startsAt'], default=None): t.Null | t.String,
         t.Key('reuseIfExists', default=True) >> 'reuse': t.ToBool,
-        t.Key('startupCommand', default=undefined) >> 'startup_command':
+        t.Key('startupCommand', default=None) >> 'startup_command':
             UndefChecker | t.Null | t.String,
         tx.AliasedKey(['bootstrap_script', 'bootstrapScript'], default=undefined):
             UndefChecker | t.Null | t.String,
-        t.Key('dependencies', default=undefined):
+        t.Key('dependencies', default=None):
             UndefChecker | t.Null | t.List(tx.UUID) | t.List(t.String),
-        tx.AliasedKey(['callback_url', 'callbackUrl', 'callbackURL'], default=undefined):
+        tx.AliasedKey(['callback_url', 'callbackUrl', 'callbackURL'], default=None):
             UndefChecker | t.Null | tx.URL,
         t.Key('owner_access_key', default=undefined): UndefChecker | t.Null | t.String,
     },
