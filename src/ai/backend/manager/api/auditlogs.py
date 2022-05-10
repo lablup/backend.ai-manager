@@ -30,8 +30,8 @@ log = BraceStyleAdapter(logging.getLogger(__name__))
 @auth_required
 @check_api_params(t.Dict(
     {
-        t.Key('action'): tx.String(),
-        t.Key('target'): tx.String(),
+        t.Key('action'): tx.String,
+        t.Key('target'): tx.String,
         t.Key('data'): tx.JSONString,
     },
 ))
@@ -40,7 +40,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
     requester_access_key = await get_access_key_scopes(request, params)
     user_id = request['user']['uuid']
     user_email = request['user']['email']
-    
+
     async with root_ctx.db.begin() as conn:
         resp = {
             'success': True,
@@ -105,38 +105,3 @@ async def list_auditlogs(request: web.Request, params: Any) -> web.Response:
             resp['auditlogs'].append(result_item)
         resp['count'] = await conn.scalar(count_query)
         return web.json_response(resp, status=200)
-
-
-# @server_status_required(READ_ALLOWED)
-# @auth_required
-# @check_api_params(t.Dict(
-#     {
-#         t.Key('severity'): tx.Enum(LogSeverity),
-#         t.Key('source'): t.String,
-#         t.Key('message'): t.String,
-#         t.Key('context_lang'): t.String,
-#         t.Key('context_env'): tx.JSONString,
-#         t.Key('request_url', default=None): t.Null | t.String,
-#         t.Key('request_status', default=None): t.Null | t.Int,
-#         t.Key('traceback', default=None): t.Null | t.String,
-#     },
-# ))
-# async def init(app: web.Application) -> None:
-#     pass
-
-
-# async def shutdown(app: web.Application) -> None:
-#     pass
-
-
-# def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
-#     app = web.Application()
-#     app.on_startup.append(init)
-#     app.on_shutdown.append(shutdown)
-#     app['api_versions'] = (4, 5)
-#     app['prefix'] = '/logs/audit'
-#     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
-#     cors.add(app.router.add_route('POST', '', append))
-#     cors.add(app.router.add_route('GET', '', list_auditlogs))
-
-#     return app, []

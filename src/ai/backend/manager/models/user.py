@@ -565,7 +565,7 @@ class CreateUser(graphene.Mutation):
             # Create Audit Log
             from .audit_logs import CreateAuditLog
 
-            data_before = {}
+            data_before: Dict[str, Any]
             data_after = user_data
             try:
                 # audit log on target: user
@@ -816,13 +816,13 @@ class ModifyUser(graphene.Mutation):
             data_after = props
             try:
                 auditlog_data = {
-                            'user_email': graph_ctx.user['email'],
-                            'user_id': graph_ctx.user['uuid'],
-                            'access_key': graph_ctx.access_key,
-                            'data_before': prev_user_data,
-                            'data_after': data_after,
-                            'action': 'CHANGE',
-                            'target': updated_user.uuid,
+                                'user_email': graph_ctx.user['email'],
+                                'user_id': graph_ctx.user['uuid'],
+                                'access_key': graph_ctx.access_key,
+                                'data_before': prev_user_data,
+                                'data_after': data_after,
+                                'action': 'CHANGE',
+                                'target': updated_user.uuid,
                             }
                 await CreateAuditLog.mutate(info, auditlog_data)
             except Exception as e:
@@ -886,26 +886,26 @@ class DeleteUser(graphene.Mutation):
             try:
                 # audit log on target: user
                 auditlog_data_user = {
-                            'user_email': graph_ctx.user['email'],
-                            'user_id': graph_ctx.user['uuid'],
-                            'access_key': graph_ctx.access_key,
-                            'data_before': {'is_active': ak_info.is_active},
-                            'data_after': {'is_active': False},
-                            'action': 'DELETE',
-                            'target': ak_info.access_key,
-                            }
+                                    'user_email': graph_ctx.user['email'],
+                                    'user_id': graph_ctx.user['uuid'],
+                                    'access_key': graph_ctx.access_key,
+                                    'data_before': {'is_active': ak_info.is_active},
+                                    'data_after': {'is_active': False},
+                                    'action': 'DELETE',
+                                    'target': ak_info.access_key,
+                                }
                 await CreateAuditLog.mutate(info, auditlog_data_user)
                 # audit log on target: keypair
                 auditlog_data_keypair = {
-                            'user_email': graph_ctx.user['email'],
-                            'user_id': graph_ctx.user['uuid'],
-                            'access_key': graph_ctx.access_key,
-                            'data_before': {'status': prev_user_data['status']},
-                            'data_after': {'status': UserStatus.DELETED,
-                                           'status_info': 'admin-requested'},
-                            'action': 'DELETE',
-                            'target': prev_user_data['uuid'],
-                            }
+                                    'user_email': graph_ctx.user['email'],
+                                    'user_id': graph_ctx.user['uuid'],
+                                    'access_key': graph_ctx.access_key,
+                                    'data_before': {'status': prev_user_data['status']},
+                                    'data_after': {'status': UserStatus.DELETED,
+                                                'status_info': 'admin-requested'},
+                                    'action': 'DELETE',
+                                    'target': prev_user_data['uuid'],
+                                }
                 await CreateAuditLog.mutate(info, auditlog_data_keypair)
             except Exception as e:
                 log.error(str(e))

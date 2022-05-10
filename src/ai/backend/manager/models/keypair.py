@@ -471,7 +471,7 @@ class CreateKeyPair(graphene.Mutation):
         )
         from .audit_logs import CreateAuditLog
 
-        data_before = {}
+        data_before: Dict[str, Any]
         data_after = {'user_id': data['user_id'],
                       'access_key': data['access_key'],
                       'is_active': data['is_active'],

@@ -9,19 +9,15 @@ from .base import (
     PaginatedList,
     simple_db_mutate)
 from typing import (
-    Any,
     Sequence,
     Optional,
     TYPE_CHECKING)
 import logging
 from .user import UserRole
-import json
+
 from graphene.types.datetime import DateTime as GQLDateTime
 import graphene
-from typing import (
-    Union,
-    Dict,
-)
+
 from ai.backend.common.logging import BraceStyleAdapter
 
 
@@ -164,8 +160,6 @@ class CreateAuditLog(graphene.Mutation):
         # root,
         info: graphene.ResolveInfo,
         props: AuditLogInput,
-
-
     ) -> CreateAuditLog:
         graph_ctx: GraphQueryContext = info.context
         if props['action'] == 'CHANGE':

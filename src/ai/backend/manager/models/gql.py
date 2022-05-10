@@ -37,7 +37,6 @@ from .agent import (
 from .audit_logs import (
     AuditLog,
     AuditLogList,
-    CreateAuditLog,
 )
 from .domain import (
     Domain,
