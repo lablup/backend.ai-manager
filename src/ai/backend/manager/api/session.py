@@ -495,9 +495,6 @@ async def _create(request: web.Request, params: dict[str, Any]) -> web.Response:
     if params['dependencies'] is None:
         params['dependencies'] = []
 
-    if params['callback_url'] is None:
-        params['callback_url'] = None
-
     session_creation_id = secrets.token_urlsafe(16)
     start_event = asyncio.Event()
     kernel_id: Optional[KernelId] = None
