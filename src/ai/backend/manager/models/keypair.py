@@ -483,13 +483,13 @@ class CreateKeyPair(graphene.Mutation):
         try:
             # audit log on target: user
             auditlog_data = {
-                        'user_email': graph_ctx.user['email'],
-                        'user_id': graph_ctx.user['uuid'],
-                        'access_key': graph_ctx.access_key,
-                        'data_before': data_before,
-                        'data_after': data_after,
-                        'action': 'CREATE',
-                        'target': data['access_key'],
+                            'user_email': graph_ctx.user['email'],
+                            'user_id': graph_ctx.user['uuid'],
+                            'access_key': graph_ctx.access_key,
+                            'data_before': data_before,
+                            'data_after': data_after,
+                            'action': 'CREATE',
+                            'target': data['access_key'],
                         }
             await CreateAuditLog.mutate(info, auditlog_data)
         except Exception as e:
@@ -561,13 +561,13 @@ class ModifyKeyPair(graphene.Mutation):
 
             try:
                 auditlog_data = {
-                            'user_email': ctx.user['email'],
-                            'user_id': ctx.user['uuid'],
-                            'access_key': ctx.access_key,
-                            'data_before': data_before,
-                            'data_after': data_after,
-                            'action': 'CHANGE',
-                            'target': access_key,
+                                'user_email': ctx.user['email'],
+                                'user_id': ctx.user['uuid'],
+                                'access_key': ctx.access_key,
+                                'data_before': data_before,
+                                'data_after': data_after,
+                                'action': 'CHANGE',
+                                'target': access_key,
                             }
                 await CreateAuditLog.mutate(info, auditlog_data)
             except Exception as e:
@@ -610,7 +610,7 @@ class DeleteKeyPair(graphene.Mutation):
                             sa.select([keypairs])
                             .select_from(keypairs)
                             .where(keypairs.c.access_key == access_key),
-                            )
+                        )
             key_info = dict(get_key_info.first())
             data_before = {'user_id': key_info['user_id'],
                            'access_key': key_info['access_key'],
@@ -622,14 +622,14 @@ class DeleteKeyPair(graphene.Mutation):
             data_after = {}
             try:
                 auditlog_data = {
-                            'user_email': ctx.user['email'],
-                            'user_id': ctx.user['uuid'],
-                            'access_key': ctx.access_key,
-                            'data_before': data_before,
-                            'data_after': data_after,
-                            'action': 'DELETE',
-                            'target': access_key,
-                            }
+                                'user_email': ctx.user['email'],
+                                'user_id': ctx.user['uuid'],
+                                'access_key': ctx.access_key,
+                                'data_before': data_before,
+                                'data_after': data_after,
+                                'action': 'DELETE',
+                                'target': access_key,
+                            }   
                 await CreateAuditLog.mutate(info, auditlog_data)
             except Exception as e:
                 log.error(str(e))

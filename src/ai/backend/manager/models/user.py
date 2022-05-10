@@ -902,7 +902,7 @@ class DeleteUser(graphene.Mutation):
                                     'access_key': graph_ctx.access_key,
                                     'data_before': {'status': prev_user_data['status']},
                                     'data_after': {'status': UserStatus.DELETED,
-                                                'status_info': 'admin-requested'},
+                                                   'status_info': 'admin-requested'},
                                     'action': 'DELETE',
                                     'target': prev_user_data['uuid'],
                                 }
