@@ -148,7 +148,6 @@ class AuditLogInput(graphene.InputObjectType):
     target = graphene.String(required=True)
 
 
-# class CreateAuditLog(graphene.Mutation):
 class CreateAuditLog(graphene.Mutation):
     allowed_roles = (UserRole.SUPERADMIN,)
 
@@ -169,8 +168,6 @@ class CreateAuditLog(graphene.Mutation):
 
     ) -> CreateAuditLog:
         graph_ctx: GraphQueryContext = info.context
-        print(f"data {props}")
-
         if props['action'] == 'CHANGE':
             prepare_data_before = {}
             prepare_data_after = {}
@@ -183,7 +180,6 @@ class CreateAuditLog(graphene.Mutation):
                     else:
                         prepare_data_after.update({key: value})
             for key in prepare_data_after.keys():
-                # for key in props['data_after'].keys():
                 prepare_data_before.update({key: props['data_before'][key]})
         else:
             prepare_data_before = props['data_before']

@@ -570,14 +570,14 @@ class CreateUser(graphene.Mutation):
             try:
                 # audit log on target: user
                 auditlog_data_user = {
-                            'user_email': graph_ctx.user['email'],
-                            'user_id': graph_ctx.user['uuid'],
-                            'access_key': graph_ctx.access_key,
-                            'data_before': data_before,
-                            'data_after': data_after,
-                            'action': 'CREATE',
-                            'target': created_user.uuid,
-                            }
+                                    'user_email': graph_ctx.user['email'],
+                                    'user_id': graph_ctx.user['uuid'],
+                                    'access_key': graph_ctx.access_key,
+                                    'data_before': data_before,
+                                    'data_after': data_after,
+                                    'action': 'CREATE',
+                                    'target': created_user.uuid,
+                                }
                 await CreateAuditLog.mutate(info, auditlog_data_user)
                 # audit log on target: keypair
                 data_after_keypair = {'user_id': kp_data['user_id'],
@@ -588,14 +588,14 @@ class CreateUser(graphene.Mutation):
                                       'rate_limit': kp_data['rate_limit'],
                                       'user': created_user.uuid}
                 auditlog_data_keypair = {
-                            'user_email': graph_ctx.user['email'],
-                            'user_id': graph_ctx.user['uuid'],
-                            'access_key': graph_ctx.access_key,
-                            'data_before': data_before,
-                            'data_after': data_after_keypair,
-                            'action': 'CREATE',
-                            'target': kp_data['access_key'],
-                            }
+                                        'user_email': graph_ctx.user['email'],
+                                        'user_id': graph_ctx.user['uuid'],
+                                        'access_key': graph_ctx.access_key,
+                                        'data_before': data_before,
+                                        'data_after': data_after_keypair,
+                                        'action': 'CREATE',
+                                        'target': kp_data['access_key'],
+                                    }
                 await CreateAuditLog.mutate(info, auditlog_data_keypair)
             except Exception as e:
                 log.error(str(e))
