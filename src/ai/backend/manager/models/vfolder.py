@@ -528,22 +528,25 @@ async def prepare_vfolder_mounts(
 
     # Fast-path for empty requested mounts
     if not accessible_vfolders:
-        return []
+        if requested_vfolder_names:
+            raise VFolderNotFound("There is no accessible vfolders at all.")
+        else:
+            return []
+    accessible_vfolders_map = {
+        vfolder['name']: vfolder for vfolder in accessible_vfolders
+    }
 
     # add automount folder list into requested_vfolder_names
     # and requested_vfolder_subpath
-    for vfolder in accessible_vfolders:
-        if vfolder['name'].startswith('.'):
-            requested_vfolder_names.setdefault(vfolder['name'], vfolder['name'])
-            requested_vfolder_subpaths.setdefault(vfolder['name'], '.')
+    for _vfolder in accessible_vfolders:
+        if _vfolder['name'].startswith('.'):
+            requested_vfolder_names.setdefault(_vfolder['name'], _vfolder['name'])
+            requested_vfolder_subpaths.setdefault(_vfolder['name'], '.')
 
     # for vfolder in accessible_vfolders:
     for key, vfolder_name in requested_vfolder_names.items():
-        for vfolder in accessible_vfolders:
-            if vfolder['name'] == requested_vfolder_names[key]:
-                break
-            if vfolder['name'] not in requested_vfolder_names:
-                raise VFolderNotFound(f"VFolder {vfolder_name} is not found or accessible.")
+        if not (vfolder := accessible_vfolders_map.get(vfolder_name)):
+            raise VFolderNotFound(f"VFolder {vfolder_name} is not found or accessible.")
         if vfolder['group'] is not None and vfolder['group'] != str(user_scope.group_id):
             # User's accessible group vfolders should not be mounted
             # if not belong to the execution kernel.
