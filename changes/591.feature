@@ -1,1 +1,1 @@
-Wrap UnknownImageReference as InvalidAPIParameters instead of InternalServerError
+Wrap `UnknownImageReference` as `ObjectNotFound` error instead of `InternalServerError`
