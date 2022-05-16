@@ -563,13 +563,13 @@ class CreateUser(graphene.Mutation):
             await conn.execute(kp_insert_query)
 
             # Create Audit Log
-            from .audit_logs import CreateAuditLog, AuditLogInput
+            from .audit_logs import CreateAuditLog
 
             data_before: Dict[str, Any] = {}
             data_after = user_data
             try:
                 # audit log on target: user
-                auditlog_data_user: AuditLogInput = {
+                auditlog_data_user = graph_ctx.schema.get_type('AuditLogInput').create_container({
                                     'user_email': graph_ctx.user['email'],
                                     'user_id': graph_ctx.user['uuid'],
                                     'access_key': graph_ctx.access_key,
@@ -577,7 +577,7 @@ class CreateUser(graphene.Mutation):
                                     'data_after': data_after,
                                     'action': 'CREATE',
                                     'target': created_user.uuid,
-                                }
+                                })
                 await CreateAuditLog.mutate(info, auditlog_data_user)
                 # audit log on target: keypair
                 data_after_keypair = {'user_id': kp_data['user_id'],
@@ -587,7 +587,7 @@ class CreateUser(graphene.Mutation):
                                       'resource_policy': kp_data['resource_policy'],
                                       'rate_limit': kp_data['rate_limit'],
                                       'user': created_user.uuid}
-                auditlog_data_keypair: AuditLogInput = {
+                auditlog_data_keypair = graph_ctx.schema.get_type('AuditLogInput').create_container({
                                         'user_email': graph_ctx.user['email'],
                                         'user_id': graph_ctx.user['uuid'],
                                         'access_key': graph_ctx.access_key,
@@ -595,7 +595,7 @@ class CreateUser(graphene.Mutation):
                                         'data_after': data_after_keypair,
                                         'action': 'CREATE',
                                         'target': kp_data['access_key'],
-                                    }
+                                    })
                 await CreateAuditLog.mutate(info, auditlog_data_keypair)
             except Exception as e:
                 log.error(str(e))
@@ -811,11 +811,11 @@ class ModifyUser(graphene.Mutation):
             else:
                 prev_user_data.update({'group_ids': None})
             # Create Audit Log
-            from .audit_logs import CreateAuditLog, AuditLogInput
+            from .audit_logs import CreateAuditLog
 
             data_after = props
             try:
-                auditlog_data: AuditLogInput = {
+                auditlog_data = graph_ctx.schema.get_type('AuditLogInput').create_container({
                                 'user_email': graph_ctx.user['email'],
                                 'user_id': graph_ctx.user['uuid'],
                                 'access_key': graph_ctx.access_key,
@@ -823,7 +823,7 @@ class ModifyUser(graphene.Mutation):
                                 'data_after': data_after,
                                 'action': 'CHANGE',
                                 'target': updated_user.uuid,
-                            }
+                            })
                 await CreateAuditLog.mutate(info, auditlog_data)
             except Exception as e:
                 log.error(str(e))
@@ -871,21 +871,16 @@ class DeleteUser(graphene.Mutation):
             prev_user_data = dict(result.first())
             # Make all user keypairs inactive.
             from ai.backend.manager.models import keypairs
-            await conn.execute(
-                sa.update(keypairs)
-                .values(is_active=False)
-                .where(keypairs.c.user_id == email),
-            )
             get_ak_info = await conn.execute(
                 sa.select([keypairs.c.access_key,
                            keypairs.c.is_active])
                 .where(keypairs.c.user_id == email),
             )
             ak_info = get_ak_info.first()
-            from .audit_logs import CreateAuditLog, AuditLogInput
+            from .audit_logs import CreateAuditLog
             try:
                 # audit log on target: user
-                auditlog_data_user: AuditLogInput = {
+                auditlog_data_user = graph_ctx.schema.get_type('AuditLogInput').create_container({
                                     'user_email': graph_ctx.user['email'],
                                     'user_id': graph_ctx.user['uuid'],
                                     'access_key': graph_ctx.access_key,
@@ -893,10 +888,10 @@ class DeleteUser(graphene.Mutation):
                                     'data_after': {'is_active': False},
                                     'action': 'DELETE',
                                     'target': ak_info.access_key,
-                                }
+                                })
                 await CreateAuditLog.mutate(info, auditlog_data_user)
                 # audit log on target: keypair
-                auditlog_data_keypair: AuditLogInput = {
+                auditlog_data_keypair = graph_ctx.schema.get_type('AuditLogInput').create_container({
                                     'user_email': graph_ctx.user['email'],
                                     'user_id': graph_ctx.user['uuid'],
                                     'access_key': graph_ctx.access_key,
@@ -905,10 +900,15 @@ class DeleteUser(graphene.Mutation):
                                                    'status_info': 'admin-requested'},
                                     'action': 'DELETE',
                                     'target': prev_user_data['uuid'],
-                                }
+                                })
                 await CreateAuditLog.mutate(info, auditlog_data_keypair)
             except Exception as e:
                 log.error(str(e))
+            await conn.execute(
+                sa.update(keypairs)
+                .values(is_active=False)
+                .where(keypairs.c.user_id == email),
+            )
         update_query = (
             sa.update(users)
             .values(status=UserStatus.DELETED,

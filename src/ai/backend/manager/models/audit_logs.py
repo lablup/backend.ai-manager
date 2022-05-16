@@ -168,7 +168,6 @@ class CreateAuditLog(graphene.Mutation):
             for key in props['data_after'].keys():  # check update command options to only show changes
                 value = props['data_after'][key]
                 if props['data_before'][key] != value and value is not None:
-                    print("into if")
                     if key == 'password':
                         prepare_data_after.update({key: 'new_password_set'})  # don't show new password
                     else:
@@ -196,7 +195,7 @@ class CreateAuditLog(graphene.Mutation):
                 sa.insert(audit_logs)
                 .values(data_set)
             )
-            return await simple_db_mutate(cls, graph_ctx, insert_query)
         else:
             log.warning("No data to write in Audit log")
-            return None
+            insert_query = ()
+        return await simple_db_mutate(cls, graph_ctx, insert_query)

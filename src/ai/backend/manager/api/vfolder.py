@@ -51,8 +51,7 @@ from ..models import (
     get_allowed_vfolder_hosts_by_group,
     get_allowed_vfolder_hosts_by_user,
     verify_vfolder_name,
-    CreateAuditLog,
-    AuditLogInput,
+    audit_logs,
 )
 from .auth import admin_required, auth_required, superadmin_required
 from .exceptions import (
@@ -381,19 +380,25 @@ async def create(request: web.Request, params: Any) -> web.Response:
             raise InvalidAPIParameters
         assert result.rowcount == 1
         data_before: Dict[str, Any] = {}
-        try:
-            auditlog_data: AuditLogInput = {
-                            'user_email': request['user']['email'],
-                            'user_id': request['user']['uuid'],
+        auditlog_data = {
+                            'user_id': str(request['user']['uuid']),
+                            'email': request['user']['email'],
                             'access_key': request['keypair']['access_key'],
-                            'data_before': data_before,
-                            'data_after': insert_values,
+                            'data': {
+                                'before': data_before,
+                                'after': insert_values,
+                            },
                             'action': 'CREATE',
                             'target': params['name'],
                         }
-            await CreateAuditLog.mutate(request, auditlog_data)
-        except Exception as e:
-            log.error(str(e))
+        try:
+            insert_auditlog_query = (
+                sa.insert(audit_logs)
+                .values(auditlog_data)
+            )
+            await conn.execute(insert_auditlog_query)
+        except sa.exc.DataError:
+            raise InvalidAPIParameters
     return web.json_response(resp, status=201)
 
 
@@ -507,22 +512,35 @@ async def delete_by_id(request: web.Request, params: Any) -> web.Response:
             .select_from(vfolders)
             .where(vfolders.c.id == params['id'])
         )
-        prev_data = await conn.scalar(query)
+        vfolder_info = await conn.execute(query)
+        prev_data = dict(vfolder_info.first())
+        prev_data['id'] = str(prev_data['id'])
+        prev_data['user'] = str(prev_data['user'])
+        prev_data['permission'] = str(prev_data['permission'][1])
+        prev_data['usage_mode'] = prev_data['usage_mode'][1]
         query = (sa.delete(vfolders).where(vfolders.c.id == folder_id))
         await conn.execute(query)
-    try:
-        auditlog_data: AuditLogInput = {
-                        'user_email': request['user']['email'],
-                        'user_id': request['user']['uuid'],
+        auditlog_data = {
+                        'email': request['user']['email'],
+                        'user_id': str(request['user']['uuid']),
                         'access_key': request['keypair']['access_key'],
-                        'data_before': prev_data,
-                        'data_after': {},
+                        'data': {
+                            'data_before': prev_data,
+                            'data_after': {},
+                        },
                         'action': 'DELETE',
-                        'target': params['name'],
+                        'target': prev_data['name'],
                     }
-        await CreateAuditLog.mutate(request, auditlog_data)
-    except Exception as e:
-        log.error(e)
+        try:
+            insert_auditlog_query = (
+                    sa.insert(audit_logs)
+                    .values(auditlog_data)
+            )
+            await conn.execute(insert_auditlog_query)
+        except sa.exc.DataError:
+            raise InvalidAPIParameters
+        query = (sa.delete(vfolders).where(vfolders.c.id == folder_id))
+        await conn.execute(query)
     # fs-level deletion may fail or take longer time
     # but let's complete the db transaction to reflect that it's deleted.
     async with root_ctx.storage_manager.request(
@@ -1665,25 +1683,36 @@ async def delete(request: web.Request) -> web.Response:
             .select_from(vfolders)
             .where(vfolders.c.id == entry['id'])
         )
-        prev_data = await conn.scalar(query)
+        result = await conn.execute(query)
+        prev_data = dict(result.first())
+        prev_data['id'] = str(prev_data['id'])
+        prev_data['user'] = str(prev_data['user'])
+        prev_data['permission'] = str(prev_data['permission'][1])
+        prev_data['usage_mode'] = prev_data['usage_mode'][1]
         query = (sa.delete(vfolders).where(vfolders.c.id == folder_id))
         await conn.execute(query)
+        auditlog_data = {
+                        'email': request['user']['email'],
+                        'user_id': str(request['user']['uuid']),
+                        'access_key': request['keypair']['access_key'],
+                        'data': {
+                            'data_before': prev_data,
+                            'data_after': {},
+                        },
+                        'action': 'DELETE',
+                        'target': folder_name,
+                    }
+        try:
+            insert_auditlog_query = (
+                    sa.insert(audit_logs)
+                    .values(auditlog_data)
+            )
+            await conn.execute(insert_auditlog_query)
+        except sa.exc.DataError:
+            raise InvalidAPIParameters
     # fs-level deletion may fail or take longer time
     # but let's complete the db transaction to reflect that it's deleted.
     proxy_name, volume_name = root_ctx.storage_manager.split_host(folder_host)
-    try:
-        auditlog_data: AuditLogInput = {
-                        'user_email': request['user']['email'],
-                        'user_id': request['user']['uuid'],
-                        'access_key': request['keypair']['access_key'],
-                        'data_before': prev_data,
-                        'data_after': {},
-                        'action': 'DELETE',
-                        'target': entry['name'],
-                    }
-        await CreateAuditLog.mutate(request, auditlog_data)
-    except Exception as e:
-        log.error(e)
     async with root_ctx.storage_manager.request(
         proxy_name, 'POST', 'folder/delete',
         json={
