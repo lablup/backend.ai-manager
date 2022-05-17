@@ -1,1 +1,0 @@
-Change the default values of `dependencies`, `callback_url` and `startup_command` to `None` instead of `undefined` (which is for template arguments).
