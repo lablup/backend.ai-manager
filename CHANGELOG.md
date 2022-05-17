@@ -16,6 +16,17 @@ Changes
 
 <!-- towncrier release notes start -->
 
+## 22.03.2 (2022-05-17)
+
+### Features
+* Wrap `UnknownImageReference` as `ObjectNotFound` error instead of `InternalServerError` ([#591](https://github.com/lablup/backend.ai-manager/issues/591))
+
+### Fixes
+* Fix to mount dotfolder when creating a session, which was omitted when there was no vfolder to explicitly mount. ([#588](https://github.com/lablup/backend.ai-manager/issues/588))
+* Change the default values of `dependencies`, `callback_url` and `startup_command` to `None` instead of `undefined` (which is for template arguments). ([#589](https://github.com/lablup/backend.ai-manager/issues/589))
+* Temporarily rollback the default distributed lock implementation to `pg_advisory` from `etcd` until we identify and fix spurious lock timeout issues ([#592](https://github.com/lablup/backend.ai-manager/issues/592))
+
+
 ## 22.03.1 (2022-05-03)
 
 ### Features
