@@ -1,0 +1,1 @@
+Update `AbstractDistributedLock` import path to keep compatibility with `backend.ai-common`.
