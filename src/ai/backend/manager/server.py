@@ -25,6 +25,7 @@ from typing import (
 
 from aiohttp import web
 import aiohttp_cors
+import aioredis
 import aiotools
 import click
 from pathlib import Path
@@ -291,17 +292,27 @@ async def manager_status_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     yield
 
 
+async def _validate_redis_connection(client: aioredis.client.Redis):
+    try:
+        _ = await client.time()
+    except aioredis.exceptions.ConnectionError as e:
+        raise e
+
+
 @actxmgr
 async def redis_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
-
     root_ctx.redis_live = redis.get_redis_object(root_ctx.shared_config.data['redis'], db=REDIS_LIVE_DB)
+    await _validate_redis_connection(root_ctx.redis_live.client)
     root_ctx.redis_stat = redis.get_redis_object(root_ctx.shared_config.data['redis'], db=REDIS_STAT_DB)
+    await _validate_redis_connection(root_ctx.redis_stat.client)
     root_ctx.redis_image = redis.get_redis_object(
         root_ctx.shared_config.data['redis'], db=REDIS_IMAGE_DB,
     )
+    await _validate_redis_connection(root_ctx.redis_image.client)
     root_ctx.redis_stream = redis.get_redis_object(
         root_ctx.shared_config.data['redis'], db=REDIS_STREAM_DB,
     )
+    await _validate_redis_connection(root_ctx.redis_stream.client)
     yield
     await root_ctx.redis_stream.close()
     await root_ctx.redis_image.close()
