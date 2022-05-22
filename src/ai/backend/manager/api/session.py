@@ -1117,6 +1117,7 @@ async def create_cluster(request: web.Request, params: dict[str, Any]) -> web.Re
 @auth_required
 @check_api_params(
     t.Dict({
+        t.Key('login_session_token', default=None): t.Null | t.String,
         tx.AliasedKey(['app', 'service']): t.String,
         # The port argument is only required to use secondary ports
         # when the target app listens multiple TCP ports.
@@ -1202,6 +1203,7 @@ async def start_service(request: web.Request, params: Mapping[str, Any]) -> web.
 
     async with aiohttp.ClientSession() as session:
         async with session.post(f'{wsproxy_addr}/v2/conf', json={
+            'login_session_token': params['login_session_token'],
             'kernel_host': kernel_host,
             'kernel_port': host_port,
         }) as resp:
