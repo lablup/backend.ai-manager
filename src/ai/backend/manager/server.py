@@ -494,6 +494,7 @@ def init_lock_factory(root_ctx: RootContext) -> DistributedLockFactory:
             return lambda lock_id, lifetime_hint: FileLock(
                 ipc_base_path / f"{manager_id}.{lock_id}.lock",
                 timeout=0,
+                lifetime=min(lifetime_hint * 2, lifetime_hint + 30),
             )
         case 'pg_advisory':
             from .pglock import PgAdvisoryLock
