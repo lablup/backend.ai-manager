@@ -25,7 +25,6 @@ from typing import (
 
 from aiohttp import web
 import aiohttp_cors
-import aioredis
 import aiotools
 import click
 from pathlib import Path
@@ -302,7 +301,10 @@ async def redis_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     root_ctx.redis_stream = redis.get_redis_object(
         root_ctx.shared_config.data['redis'], db=REDIS_STREAM_DB,
     )
-    for redis_info in [root_ctx.redis_live, root_ctx.redis_stat, root_ctx.redis_image, root_ctx.redis_stream]:
+    for redis_info in [
+        root_ctx.redis_live, root_ctx.redis_stat,
+        root_ctx.redis_image, root_ctx.redis_stream
+    ]:
         await redis.ping_redis_connection(redis_info.client)
     yield
     await root_ctx.redis_stream.close()
