@@ -30,6 +30,10 @@ import sqlalchemy as sa
 from sqlalchemy.engine.row import Row
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 from sqlalchemy.dialects import postgresql as pgsql
+from sqlalchemy.orm import (
+    relationship,
+    selectinload,
+)
 
 from ai.backend.common import msgpack, redis
 from ai.backend.common.types import (
@@ -60,7 +64,7 @@ from .base import (
     URLColumn,
     batch_result,
     batch_multiresult,
-    metadata,
+    mapper_registry,
 )
 from .group import groups
 from .minilang.queryfilter import QueryFilterParser
@@ -71,7 +75,7 @@ if TYPE_CHECKING:
 
 __all__ = (
     'kernels',
-    'session_dependencies',
+    # 'session_dependencies',
     'KernelStatistics',
     'KernelStatus',
     'ComputeContainer',
@@ -152,21 +156,21 @@ def default_hostname(context) -> str:
 
 
 kernels = sa.Table(
-    'kernels', metadata,
+    'kernels', mapper_registry.metadata,
     # The Backend.AI-side UUID for each kernel
     # (mapped to a container in the docker backend and a pod in the k8s backend)
     KernelIDColumn(),
     # session_id == id when the kernel is the main container in a multi-container session or a
     # single-container session.
     # Otherwise, it refers the kernel ID of the main contaienr of the belonged multi-container session.
-    sa.Column('session_id', SessionIDColumnType, unique=False, index=True, nullable=False),
-    sa.Column('session_creation_id', sa.String(length=32), unique=False, index=False),
-    sa.Column('session_name', sa.String(length=64), unique=False, index=True),     # previously sess_id
-    sa.Column('session_type', EnumType(SessionTypes), index=True, nullable=False,  # previously sess_type
-              default=SessionTypes.INTERACTIVE, server_default=SessionTypes.INTERACTIVE.name),
-    sa.Column('cluster_mode', sa.String(length=16), nullable=False,
-              default=ClusterMode.SINGLE_NODE, server_default=ClusterMode.SINGLE_NODE.name),
-    sa.Column('cluster_size', sa.Integer, nullable=False, default=1),
+    sa.Column('session_id', SessionIDColumnType, sa.ForeignKey('sessions.id'), index=True, nullable=False),
+    # sa.Column('session_creation_id', sa.String(length=32), unique=False, index=False),
+    # sa.Column('session_name', sa.String(length=64), unique=False, index=True),     # previously sess_id
+    # sa.Column('session_type', EnumType(SessionTypes), index=True, nullable=False,  # previously sess_type
+    #           default=SessionTypes.INTERACTIVE, server_default=SessionTypes.INTERACTIVE.name),
+    # sa.Column('cluster_mode', sa.String(length=16), nullable=False,
+    #           default=ClusterMode.SINGLE_NODE, server_default=ClusterMode.SINGLE_NODE.name),
+    # sa.Column('cluster_size', sa.Integer, nullable=False, default=1),
     sa.Column('cluster_role', sa.String(length=16), nullable=False, default=DEFAULT_ROLE, index=True),
     sa.Column('cluster_idx', sa.Integer, nullable=False, default=0),
     sa.Column('cluster_hostname', sa.String(length=64), nullable=False, default=default_hostname),
@@ -271,28 +275,35 @@ kernels = sa.Table(
     sa.Column('num_queries', sa.BigInteger(), default=0),
     sa.Column('last_stat', pgsql.JSONB(), nullable=True, default=sa.null()),
 
-    sa.Index('ix_kernels_sess_id_role', 'session_id', 'cluster_role', unique=False),
-    sa.Index('ix_kernels_status_role', 'status', 'cluster_role'),
+    # sa.Index('ix_kernels_sess_id_role', 'session_id', 'cluster_role', unique=False),
+    # sa.Index('ix_kernels_status_role', 'status', 'cluster_role'),
     sa.Index('ix_kernels_updated_order',
              sa.func.greatest('created_at', 'terminated_at', 'status_changed'),
              unique=False),
-    sa.Index('ix_kernels_unique_sess_token', 'access_key', 'session_name',
-             unique=True,
-             postgresql_where=sa.text(
-                 "status NOT IN ('TERMINATED', 'CANCELLED') and "
-                 "cluster_role = 'main'")),
+    # sa.Index('ix_kernels_unique_sess_token', 'access_key', 'session_name',
+    #          unique=True,
+    #          postgresql_where=sa.text(
+    #              "status NOT IN ('TERMINATED', 'CANCELLED') and "
+    #              "cluster_role = 'main'")),
 )
 
-session_dependencies = sa.Table(
-    'session_dependencies', metadata,
-    sa.Column('session_id', GUID,
-              sa.ForeignKey('kernels.id', onupdate='CASCADE', ondelete='CASCADE'),
-              index=True, nullable=False),
-    sa.Column('depends_on', GUID,
-              sa.ForeignKey('kernels.id', onupdate='CASCADE', ondelete='CASCADE'),
-              index=True, nullable=False),
-    sa.PrimaryKeyConstraint('session_id', 'depends_on'),
-)
+
+class KernelRow:
+    session: relationship
+
+mapper_registry.map_imperatively(KernelRow, kernels)
+KernelRow.session = relationship('SessionRow', back_populates='kernels')
+
+# session_dependencies = sa.Table(
+#     'session_dependencies', metadata,
+#     sa.Column('session_id', GUID,
+#               sa.ForeignKey('kernels.id', onupdate='CASCADE', ondelete='CASCADE'),
+#               index=True, nullable=False),
+#     sa.Column('depends_on', GUID,
+#               sa.ForeignKey('kernels.id', onupdate='CASCADE', ondelete='CASCADE'),
+#               index=True, nullable=False),
+#     sa.PrimaryKeyConstraint('session_id', 'depends_on'),
+# )
 
 DEFAULT_SESSION_ORDERING = [
     sa.desc(sa.func.greatest(
