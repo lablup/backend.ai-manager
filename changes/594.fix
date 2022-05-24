@@ -1,1 +1,0 @@
-Add missing login session token (AIOHTTP_SESSION) in initiating app proxying.

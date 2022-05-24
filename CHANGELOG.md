@@ -16,6 +16,13 @@ Changes
 
 <!-- towncrier release notes start -->
 
+## 22.03.3 (2022-05-24)
+
+### Fixes
+* Add missing login session token (AIOHTTP_SESSION) in initiating app proxying. ([#594](https://github.com/lablup/backend.ai-manager/issues/594))
+* Bump `backend.ai-common` to 22.03.1.
+
+
 ## 22.03.2 (2022-05-17)
 
 ### Features
