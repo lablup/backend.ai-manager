@@ -303,7 +303,7 @@ async def redis_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     )
     for redis_info in [
         root_ctx.redis_live, root_ctx.redis_stat,
-        root_ctx.redis_image, root_ctx.redis_stream
+        root_ctx.redis_image, root_ctx.redis_stream,
     ]:
         await redis.ping_redis_connection(redis_info.client)
     yield
