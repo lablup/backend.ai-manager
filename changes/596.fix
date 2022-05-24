@@ -1,0 +1,1 @@
+Add explicit connection checks to notify `aioredis.exceptions.ConnectionError` caused by an incorrect server URL or temporary network failures.
