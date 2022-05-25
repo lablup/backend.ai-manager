@@ -96,10 +96,11 @@ keypairs = sa.Table(
 )
 
 class KeyPairRow:
-    session: relationship
+    pass
 
-mapper_registry.map_imperatively(KeyPairRow, keypairs)
-KeyPairRow.session = relationship('SessionRow', back_populates='keypair')
+mapper_registry.map_imperatively(KeyPairRow, keypairs, properties={
+    'sessions' : relationship('SessionRow', backref='access_key'),
+})
 
 
 class UserInfo(graphene.ObjectType):

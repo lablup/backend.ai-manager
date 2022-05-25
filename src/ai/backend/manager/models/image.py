@@ -177,7 +177,7 @@ class ImageRow(Base):
             }),
         ),
     ), nullable=False)
-    session = relationship('SessionRow', back_populates='image')
+    sessions = relationship('SessionRow', backref='image')
     aliases: relationship
 
     def __init__(

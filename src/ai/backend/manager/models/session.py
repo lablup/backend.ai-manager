@@ -66,23 +66,17 @@ class SessionRow(Base):
     cluster_mode = sa.Column('cluster_mode', sa.String(length=16), nullable=False,
               default=ClusterMode.SINGLE_NODE, server_default=ClusterMode.SINGLE_NODE.name)
     cluster_size = sa.Column('cluster_size', sa.Integer, nullable=False, default=1)
-    kernel = relationship('KernelRow', back_populates='session')
-    
+    kernels = relationship('KernelRow', backref='session')
+
     # Resource ownership
-    scaling_group_name = sa.Column('scaling_group', sa.ForeignKey('scaling_groups.name'), index=True, nullable=True)
-    scaling_group = relationship('ScalingGroupRow', back_populates='sessions')
+    scaling_group_name = sa.Column('scaling_group_name', sa.ForeignKey('scaling_groups.name'), index=True, nullable=True)
     domain_name = sa.Column('domain_name', sa.String(length=64), sa.ForeignKey('domains.name'), nullable=False)
-    domain = relationship('DomainRow', back_populates='sessions')
     group_id = ForeignKeyIDColumn('group_id', 'groups.id', nullable=False)
-    group = relationship('GroupRow', back_populates='sessions')
     user_uuid = ForeignKeyIDColumn('user_uuid', 'users.uuid', nullable=False)
-    user = relationship('UserRow', back_populates='sessions')
-    kp_access_key = sa.Column('access_key', sa.String(length=20), sa.ForeignKey('keypairs.access_key'))
-    access_key = relationship('KeyPairRow', back_populates='sessions')
+    kp_access_key = sa.Column('kp_access_key', sa.String(length=20), sa.ForeignKey('keypairs.access_key'))
 
     # if image_id is null, should find a image field from related kernel row.
-    image_id = ForeignKeyIDColumn('image', 'images.id')
-    image = relationship('ImageRow', back_populates='sessions')
+    image_id = ForeignKeyIDColumn('image_id', 'images.id')
     tag = sa.Column('tag', sa.String(length=64), nullable=True)
 
     # Resource occupation

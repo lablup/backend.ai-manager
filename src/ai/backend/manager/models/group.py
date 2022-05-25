@@ -98,10 +98,12 @@ groups = sa.Table(
 )
 
 class GroupRow:
-    session: relationship
+    pass
 
-mapper_registry.map_imperatively(GroupRow, groups)
-GroupRow.session = relationship('SessionRow', back_populates='group')
+mapper_registry.map_imperatively(GroupRow, groups, properties={
+    'sessions' : relationship('SessionRow', backref='group'),
+})
+
 
 async def resolve_group_name_or_id(
     db_conn: SAConnection,

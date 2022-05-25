@@ -71,10 +71,12 @@ domains = sa.Table(
 )
 
 class DomainRow:
-    session: relationship
+    pass
 
-mapper_registry.map_imperatively(DomainRow, domains)
-DomainRow.session = relationship('SessionRow', back_populates='domain')
+mapper_registry.map_imperatively(DomainRow, domains, properties={
+    'sessions' : relationship('SessionRow', backref='domain'),
+})
+
 
 class Domain(graphene.ObjectType):
     name = graphene.String()

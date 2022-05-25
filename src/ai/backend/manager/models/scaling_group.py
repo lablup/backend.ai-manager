@@ -112,11 +112,11 @@ scaling_groups = sa.Table(
 )
 
 class ScalingGroupRow:
-    session: relationship
+    pass
 
-mapper_registry.map_imperatively(ScalingGroupRow, scaling_groups)
-ScalingGroupRow.session = relationship('SessionRow', back_populates='scaling_group')
-
+mapper_registry.map_imperatively(ScalingGroupRow, scaling_groups, properties={
+    'sessions' : relationship('SessionRow', backref='scaling_group'),
+})
 
 # When scheduling, we take the union of allowed scaling groups for
 # each domain, group, and keypair.

@@ -128,10 +128,11 @@ users = sa.Table(
 )
 
 class UserRow:
-    session: relationship
+    pass
 
-mapper_registry.map_imperatively(UserRow, users)
-UserRow.session = relationship('SessionRow', back_populates='user')
+mapper_registry.map_imperatively(UserRow, users, properties={
+    'sessions' : relationship('SessionRow', backref='user'),
+})
 
 
 class UserGroup(graphene.ObjectType):

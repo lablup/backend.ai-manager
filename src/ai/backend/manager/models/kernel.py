@@ -289,10 +289,9 @@ kernels = sa.Table(
 
 
 class KernelRow:
-    session: relationship
+    pass
 
 mapper_registry.map_imperatively(KernelRow, kernels)
-KernelRow.session = relationship('SessionRow', back_populates='kernels')
 
 # session_dependencies = sa.Table(
 #     'session_dependencies', metadata,
