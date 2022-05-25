@@ -17,11 +17,12 @@ from ai.backend.common.types import (
     SessionId,
     SessionTypes,
     SessionResult,
+    VFolderMount,
 )
 
 from .base import (
     EnumType, GUID, ForeignKeyIDColumn, SessionIDColumn,
-    IDColumn, ResourceSlotColumn, URLColumn,
+    IDColumn, ResourceSlotColumn, URLColumn, StructuredJSONObjectListColumn,
     KVPair, ResourceLimit, KVPairInput, ResourceLimitInput,
     Base, StructuredJSONColumn, set_if_set,
 )
@@ -61,10 +62,6 @@ class SessionRow(Base):
     name = sa.Column('name', sa.String(length=64), unique=False, index=True)
     session_type = sa.Column('session_type', EnumType(SessionTypes), index=True, nullable=False,  # previously sess_type
               default=SessionTypes.INTERACTIVE, server_default=SessionTypes.INTERACTIVE.name)
-    status = sa.Column('status', EnumType(SessionStatus),
-              default=SessionStatus.PENDING,
-              server_default=SessionStatus.PENDING.name,
-              nullable=False, index=True)
 
     cluster_mode = sa.Column('cluster_mode', sa.String(length=16), nullable=False,
               default=ClusterMode.SINGLE_NODE, server_default=ClusterMode.SINGLE_NODE.name)
@@ -92,6 +89,9 @@ class SessionRow(Base):
     # occupied_slots = sa.Column('occupied_slots', ResourceSlotColumn(), nullable=False)
     occupying_slots = sa.Column('occupying_slots', ResourceSlotColumn(), nullable=False)
     requested_slots = sa.Column('requested_slots', ResourceSlotColumn(), nullable=False)
+    vfolder_mounts = sa.Column('vfolder_mounts', StructuredJSONObjectListColumn(VFolderMount), nullable=True)
+    resource_opts = sa.Column('resource_opts', pgsql.JSONB(), nullable=True, default={})
+    bootstrap_script= sa.Column('bootstrap_script', sa.String(length=16 * 1024), nullable=True)
 
     # Lifecycle
     created_at = sa.Column('created_at', sa.DateTime(timezone=True),
@@ -128,13 +128,6 @@ class SessionRow(Base):
         ),
     )
 
-# sa.Index('ix_sessions_unique_name_token', SessionRow.access_key, SessionRow.name,
-#     unique=True,
-#     postgresql_where=sa.text(
-#         "status NOT IN ('TERMINATED', 'CANCELLED')",
-#         # "and cluster_role = 'main'"),
-#     )
-# )
 
 class SessionDependencyRow(Base):
     __tablename__ = 'session_dependencies'
