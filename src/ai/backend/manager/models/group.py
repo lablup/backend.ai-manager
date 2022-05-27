@@ -101,7 +101,7 @@ class GroupRow:
     pass
 
 mapper_registry.map_imperatively(GroupRow, groups, properties={
-    'sessions' : relationship('SessionRow', backref='group'),
+    'sessions': relationship('SessionRow', back_populates='group'),
 })
 
 

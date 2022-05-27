@@ -11,12 +11,10 @@ from sqlalchemy.dialects import postgresql as pgsql
 from sqlalchemy.orm import relationship, registry
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.expression import bindparam
-from sqlalchemy.ext.declarative import declarative_base
 
 from ai.backend.manager.models.base import (
     GUID, KernelIDColumn, convention
 )
-from ai.backend.manager.models import ImageRow
 
 # revision identifiers, used by Alembic.
 revision = 'ab6ac93efd6c'
@@ -53,6 +51,7 @@ kernels = sa.Table(
     sa.Column('session_name', sa.String(length=64), unique=False),
     sa.Column('session_type', pgsql.ENUM('INTERACTIVE', 'BATCH'), nullable=False,
                 default='INTERACTIVE', server_default='INTERACTIVE'),
+    sa.Column('cluster_role', sa.String(length=16), nullable=False, default='main'),
     sa.Column('cluster_mode', sa.String(length=16), nullable=False,
                 default='SINGLE_NODE', server_default='SINGLE_NODE'),
     sa.Column('cluster_size', sa.Integer, nullable=False, default=1),
@@ -104,6 +103,11 @@ class KernelRow:
 
 mapper_registry.map_imperatively(KernelRow, kernels)
 
+class ImageRow(Base):
+    __tablename__ = 'images'
+    id = sa.Column('id', GUID(), nullable=False, primary_key=True)
+    name = sa.Column('name', sa.String, nullable=False, index=True)
+
 
 class SessionRow(Base):
     __tablename__ = 'sessions'
@@ -113,6 +117,7 @@ class SessionRow(Base):
     session_type = sa.Column('session_type', pgsql.ENUM('INTERACTIVE', 'BATCH', name='sessiontypes', create_type=False), server_default='INTERACTIVE', nullable=False)
     cluster_mode = sa.Column('cluster_mode', sa.String(length=16), server_default='SINGLE_NODE', nullable=False)
     cluster_size = sa.Column('cluster_size', sa.Integer(), nullable=False)
+    main_kernel_id = sa.Column('main_kernel_id', GUID(), nullable=False)
     
     # Resource ownership
     scaling_group_name = sa.Column('scaling_group_name', sa.String(length=64), nullable=True)
@@ -168,6 +173,7 @@ def upgrade():
     op.create_foreign_key(op.f('fk_sessions_image_images'), 'sessions', 'images', ['image_id'], ['id'])
     op.create_foreign_key(op.f('fk_sessions_scaling_group_scaling_groups'), 'sessions', 'scaling_groups', ['scaling_group_name'], ['name'])
     op.create_foreign_key(op.f('fk_sessions_user_uuid_users'), 'sessions', 'users', ['user_uuid'], ['uuid'])
+    op.create_foreign_key(op.f('fk_sessions_main_kernel_id_kernels'), 'sessions', 'kernels', ['main_kernel_id'], ['id'])
     op.create_index(op.f('ix_sessions_created_at'), 'sessions', ['created_at'], unique=False)
     op.create_index(op.f('ix_sessions_name'), 'sessions', ['name'], unique=False)
     op.create_index(op.f('ix_sessions_result'), 'sessions', ['result'], unique=False)
@@ -176,6 +182,7 @@ def upgrade():
     op.create_index(op.f('ix_sessions_status'), 'sessions', ['status'], unique=False)
     op.create_index(op.f('ix_sessions_status_changed'), 'sessions', ['status_changed'], unique=False)
     op.create_index(op.f('ix_sessions_terminated_at'), 'sessions', ['terminated_at'], unique=False)
+    op.create_index(op.f('ix_sessions_main_kernel_id'), 'sessions', ['main_kernel_id'], unique=True)
 
     query = (
         sa.select([kernels])
@@ -190,9 +197,11 @@ def upgrade():
     all_kernel_sessions = {}
     for row in kernel_rows:
         sess_id = row['session_id']
+        main_kid = row['id'] if row['cluster_role'] == 'main' else None
         if sess_id not in all_kernel_sessions:
             sess = {
                 'id': sess_id,
+                'main_kernel_id': main_kid,
                 'creation_id': row['session_creation_id'],
                 'name': row['session_name'],
                 'session_type': row['session_type'],
@@ -226,6 +235,9 @@ def upgrade():
             all_kernel_sessions[sess_id] = sess
         else:
             sess = all_kernel_sessions[sess_id]
+            if sess['main_kernel_id'] is None:
+                sess['main_kernel_id'] = main_kid
+
             st_change = sess['status_changed']
 
             if sess['created_at'] > row['created_at']:
@@ -261,7 +273,7 @@ def upgrade():
             #     sinfo = {**sinfo, row['id']: row['status_info']}
             #     sess['status_info'] = json.dumps(sinfo)
         
-    creates = list(all_kernel_sessions.values())
+    creates = [sess for sess in all_kernel_sessions.values() if sess['main_kernel_id'] is not None]
     if creates:
         connection.execute(SessionRow.__table__.insert(), creates)
 
@@ -272,17 +284,8 @@ def upgrade():
     op.drop_constraint('fk_session_dependencies_session_id_kernels', 'session_dependencies', type_='foreignkey')
 
     # Kernel table
-    op.create_foreign_key(op.f('fk_kernels_session_id_sessions'), 'kernels', 'sessions', ['session_id'], ['id'])
-    op.drop_index('ix_kernels_sess_id_role', table_name='kernels')
-    op.drop_index('ix_kernels_session_name', table_name='kernels')
-    op.drop_index('ix_kernels_session_type', table_name='kernels')
-    op.drop_index('ix_kernels_status_role', table_name='kernels')
     op.drop_index('ix_kernels_unique_sess_token', table_name='kernels')
-    op.drop_column('kernels', 'session_type')
-    op.drop_column('kernels', 'cluster_mode')
-    op.drop_column('kernels', 'session_name')
-    op.drop_column('kernels', 'cluster_size')
-    op.drop_column('kernels', 'session_creation_id')
+    op.create_foreign_key(op.f('fk_kernels_session_id_sessions'), 'kernels', 'sessions', ['session_id'], ['id'])
     # ### end Alembic commands ###
 
 
@@ -291,67 +294,8 @@ def downgrade():
     connection = op.get_bind()
 
     # Kernel table
-    op.add_column('kernels', sa.Column('session_creation_id', sa.String(length=32), nullable=True, autoincrement=False))
-    op.add_column('kernels', sa.Column('cluster_size', sa.Integer, nullable=False, autoincrement=False,
-                                       default=1, server_default=sa.text('1')))
-    op.add_column('kernels', sa.Column('session_name', sa.VARCHAR(length=64), autoincrement=False, nullable=True))
-    op.add_column('kernels', sa.Column('cluster_mode', sa.VARCHAR(length=16), server_default='SINGLE_NODE', autoincrement=False, nullable=False))
-    op.add_column('kernels', sa.Column('session_type', pgsql.ENUM('INTERACTIVE', 'BATCH', name='sessiontypes', create_type=False), server_default='INTERACTIVE', autoincrement=False, nullable=False))
+    op.create_index('ix_kernels_unique_sess_token', 'kernels', ['access_key', 'session_name'], unique=True, postgresql_where=sa.text("status NOT IN ('TERMINATED', 'CANCELLED') and cluster_role = 'main'"))
     op.drop_constraint(op.f('fk_kernels_session_id_sessions'), 'kernels', type_='foreignkey')
-    op.create_index('ix_kernels_unique_sess_token', 'kernels', ['access_key', 'session_name'], unique=False)
-    op.create_index('ix_kernels_status_role', 'kernels', ['status', 'cluster_role'], unique=False)
-    op.create_index('ix_kernels_session_type', 'kernels', ['session_type'], unique=False)
-    op.create_index('ix_kernels_session_name', 'kernels', ['session_name'], unique=False)
-    op.create_index('ix_kernels_sess_id_role', 'kernels', ['session_id', 'cluster_role'], unique=False)
-
-    query = (
-        sa.select([
-            SessionRow.id,
-            SessionRow.creation_id,
-            SessionRow.cluster_size,
-            SessionRow.name,
-            SessionRow.cluster_mode,
-            SessionRow.session_type,
-        ])
-        .select_from(SessionRow)
-    )
-    session_rows = connection.execute(query).fetchall()
-    sess_map = {str(sess['id']): sess for sess in session_rows}
-
-    query = (
-        sa.select([
-            kernels.c.id,
-            kernels.c.session_id,
-        ])
-        .select_from(kernels)
-        .order_by(kernels.c.created_at)
-    )
-    kernel_rows = connection.execute(query).fetchall()
-    updates = []
-
-    for row in kernel_rows:
-        sess = sess_map[str(row['session_id'])]
-        kernel = {
-            'row_id': row['id'],
-            'session_creation_id': sess['creation_id'],
-            'cluster_size': sess['cluster_size'],
-            'session_name': sess['name'],
-            'cluster_mode': sess['cluster_mode'],
-            'session_type': sess['session_type'],
-        }
-        updates.append(kernel)
-
-    if updates:
-        query = (sa.update(kernels)
-                   .values({
-                       'session_creation_id': bindparam('session_creation_id'),
-                       'cluster_size': bindparam('cluster_size'),
-                       'session_name': bindparam('session_name'),
-                       'cluster_mode': bindparam('cluster_mode'),
-                       'session_type': bindparam('session_type'),
-                   })
-                   .where(kernels.c.id == bindparam('row_id')))
-        connection.execute(query, updates)
 
     # Session dependency table
     op.create_foreign_key('fk_session_dependencies_session_id_kernels', 'session_dependencies', 'kernels', ['session_id'], ['id'], onupdate='CASCADE', ondelete='CASCADE')
@@ -368,5 +312,6 @@ def downgrade():
     op.drop_index(op.f('ix_sessions_result'), table_name='sessions')
     op.drop_index(op.f('ix_sessions_name'), table_name='sessions')
     op.drop_index(op.f('ix_sessions_created_at'), table_name='sessions')
+    op.drop_index(op.f('ix_sessions_main_kernel_id'), table_name='sessions')
     op.drop_table('sessions')
-    # ### end Alembic commands ###
+    ### end Alembic commands ###

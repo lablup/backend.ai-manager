@@ -115,7 +115,7 @@ class ScalingGroupRow:
     pass
 
 mapper_registry.map_imperatively(ScalingGroupRow, scaling_groups, properties={
-    'sessions' : relationship('SessionRow', backref='scaling_group'),
+    'sessions' : relationship('SessionRow', back_populates='scaling_group'),
 })
 
 # When scheduling, we take the union of allowed scaling groups for

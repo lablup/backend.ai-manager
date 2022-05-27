@@ -1,5 +1,8 @@
+from __future__ import annotations
 
 import enum
+from typing import Sequence, Union
+from uuid import UUID
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +24,7 @@ from ai.backend.common.types import (
 )
 
 from .base import (
-    EnumType, GUID, ForeignKeyIDColumn, SessionIDColumn,
+    EnumType, GUID, ForeignKeyIDColumn, SessionIDColumn, KernelIDColumnType,
     IDColumn, ResourceSlotColumn, URLColumn, StructuredJSONObjectListColumn,
     KVPair, ResourceLimit, KVPairInput, ResourceLimitInput,
     Base, StructuredJSONColumn, set_if_set,
@@ -55,6 +58,11 @@ class SessionStatus(enum.Enum):
     CANCELLED = 43
 
 
+DEAD_SESSION_STATUSES = (
+    SessionStatus.CANCELLED,
+    SessionStatus.TERMINATED,
+)
+
 class SessionRow(Base):
     __tablename__ = 'sessions'
     id = SessionIDColumn()
@@ -66,17 +74,26 @@ class SessionRow(Base):
     cluster_mode = sa.Column('cluster_mode', sa.String(length=16), nullable=False,
               default=ClusterMode.SINGLE_NODE, server_default=ClusterMode.SINGLE_NODE.name)
     cluster_size = sa.Column('cluster_size', sa.Integer, nullable=False, default=1)
-    kernels = relationship('KernelRow', backref='session')
+    kernels = relationship('KernelRow', back_populates='session')
+    main_kernel_id = sa.Column('main_kernel_id', KernelIDColumnType, sa.ForeignKey('kernels.id'),
+                  nullable=False, unique=True, index=True)
+    main_kernel = relationship('KernelRow', foreign_keys=[main_kernel_id])
 
     # Resource ownership
     scaling_group_name = sa.Column('scaling_group_name', sa.ForeignKey('scaling_groups.name'), index=True, nullable=True)
+    scaling_group = relationship('ScalingGroupRow', back_populates='sessions')
     domain_name = sa.Column('domain_name', sa.String(length=64), sa.ForeignKey('domains.name'), nullable=False)
+    domain = relationship('DomainRow', back_populates='sessions')
     group_id = ForeignKeyIDColumn('group_id', 'groups.id', nullable=False)
+    group = relationship('GroupRow', back_populates='sessions')
     user_uuid = ForeignKeyIDColumn('user_uuid', 'users.uuid', nullable=False)
+    user = relationship('UserRow', back_populates='sessions')
     kp_access_key = sa.Column('kp_access_key', sa.String(length=20), sa.ForeignKey('keypairs.access_key'))
+    access_key = relationship('KeyPairRow', back_populates='sessions')
 
     # if image_id is null, should find a image field from related kernel row.
     image_id = ForeignKeyIDColumn('image_id', 'images.id')
+    image = relationship('ImageRow', back_populates='sessions')
     tag = sa.Column('tag', sa.String(length=64), nullable=True)
 
     # Resource occupation
@@ -121,6 +138,61 @@ class SessionRow(Base):
             unique=False,
         ),
     )
+
+    @classmethod
+    async def match_sessions(
+        cls,
+        db_session: AsyncSession,
+        session_name_or_id: Union[str, UUID],
+        access_key: AccessKey,
+        *,
+        filter_dead: bool=False,
+        for_update: bool=False,
+        max_matches: int=10,
+        load_kernels: bool=False,
+    ) -> Sequence[SessionRow]:
+        """
+        Match the prefix of session ID or session name among the sessions
+        that belongs to the given access key, and return the list of SessionRow.
+        """
+
+        def build_query(find_by, allow_prefix: bool=False):
+            if allow_prefix:
+                cond = (sa.sql.expression.cast(find_by, sa.String).like(f'{session_name_or_id}%'))
+            else:
+                cond = (find_by == (f'{session_name_or_id}'))
+            cond = cond & (SessionRow.kp_access_key == access_key)
+            if filter_dead:
+                cond = cond & (~SessionRow.status.in_(DEAD_SESSION_STATUSES))
+            info_cols = [
+                SessionRow.id,
+                SessionRow.name,
+                SessionRow.status,
+                SessionRow.created_at,
+            ]
+            query = (
+                sa.select(info_cols)
+                .where(cond)
+                .order_by(sa.desc(SessionRow.created_at))
+                .limit(max_matches).offset(0)
+            )
+            if for_update:
+                query = query.with_for_update()
+            if load_kernels:
+                query = query.options(selectinload(SessionRow.kernels))
+            return query
+
+        strict_id_query = build_query(SessionRow.id)
+        id_query = build_query(SessionRow.id, allow_prefix=True)
+        name_query = build_query(SessionRow.name, allow_prefix=True)
+
+        for query in (strict_id_query, id_query, name_query):
+            result = await db_session.execute(query)
+            rows = result.fetchall()
+            if not rows:
+                continue
+            return rows
+        return []
 
 
 class SessionDependencyRow(Base):

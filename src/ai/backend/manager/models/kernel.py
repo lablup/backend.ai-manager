@@ -164,16 +164,19 @@ kernels = sa.Table(
     # single-container session.
     # Otherwise, it refers the kernel ID of the main contaienr of the belonged multi-container session.
     sa.Column('session_id', SessionIDColumnType, sa.ForeignKey('sessions.id'), index=True, nullable=False),
-    # sa.Column('session_creation_id', sa.String(length=32), unique=False, index=False),
-    # sa.Column('session_name', sa.String(length=64), unique=False, index=True),     # previously sess_id
-    # sa.Column('session_type', EnumType(SessionTypes), index=True, nullable=False,  # previously sess_type
-    #           default=SessionTypes.INTERACTIVE, server_default=SessionTypes.INTERACTIVE.name),
-    # sa.Column('cluster_mode', sa.String(length=16), nullable=False,
-    #           default=ClusterMode.SINGLE_NODE, server_default=ClusterMode.SINGLE_NODE.name),
-    # sa.Column('cluster_size', sa.Integer, nullable=False, default=1),
     sa.Column('cluster_role', sa.String(length=16), nullable=False, default=DEFAULT_ROLE, index=True),
     sa.Column('cluster_idx', sa.Integer, nullable=False, default=0),
     sa.Column('cluster_hostname', sa.String(length=64), nullable=False, default=default_hostname),
+
+    # Legacy columns. migrated to `sessions` table.
+    sa.Column('session_creation_id', sa.String(length=32), unique=False, index=False),
+    sa.Column('session_name', sa.String(length=64), unique=False, index=True),     # previously sess_id
+    sa.Column('session_type', EnumType(SessionTypes), index=True, nullable=False,  # previously sess_type
+              default=SessionTypes.INTERACTIVE, server_default=SessionTypes.INTERACTIVE.name),
+    sa.Column('cluster_mode', sa.String(length=16), nullable=False,
+              default=ClusterMode.SINGLE_NODE, server_default=ClusterMode.SINGLE_NODE.name),
+    sa.Column('cluster_size', sa.Integer, nullable=False, default=1),
+    
 
     # Resource ownership
     sa.Column('scaling_group', sa.ForeignKey('scaling_groups.name'), index=True, nullable=True),
@@ -275,8 +278,8 @@ kernels = sa.Table(
     sa.Column('num_queries', sa.BigInteger(), default=0),
     sa.Column('last_stat', pgsql.JSONB(), nullable=True, default=sa.null()),
 
-    # sa.Index('ix_kernels_sess_id_role', 'session_id', 'cluster_role', unique=False),
-    # sa.Index('ix_kernels_status_role', 'status', 'cluster_role'),
+    sa.Index('ix_kernels_sess_id_role', 'session_id', 'cluster_role', unique=False),
+    sa.Index('ix_kernels_status_role', 'status', 'cluster_role'),
     sa.Index('ix_kernels_updated_order',
              sa.func.greatest('created_at', 'terminated_at', 'status_changed'),
              unique=False),
@@ -291,18 +294,10 @@ kernels = sa.Table(
 class KernelRow:
     pass
 
-mapper_registry.map_imperatively(KernelRow, kernels)
+mapper_registry.map_imperatively(KernelRow, kernels, properties={
+    'session': relationship('SessionRow', back_populates='kernels', foreign_keys=['session_id']),
+})
 
-# session_dependencies = sa.Table(
-#     'session_dependencies', metadata,
-#     sa.Column('session_id', GUID,
-#               sa.ForeignKey('kernels.id', onupdate='CASCADE', ondelete='CASCADE'),
-#               index=True, nullable=False),
-#     sa.Column('depends_on', GUID,
-#               sa.ForeignKey('kernels.id', onupdate='CASCADE', ondelete='CASCADE'),
-#               index=True, nullable=False),
-#     sa.PrimaryKeyConstraint('session_id', 'depends_on'),
-# )
 
 DEFAULT_SESSION_ORDERING = [
     sa.desc(sa.func.greatest(

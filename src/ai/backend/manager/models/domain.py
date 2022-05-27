@@ -74,7 +74,7 @@ class DomainRow:
     pass
 
 mapper_registry.map_imperatively(DomainRow, domains, properties={
-    'sessions' : relationship('SessionRow', backref='domain'),
+    'sessions' : relationship('SessionRow', back_populates='domain'),
 })
 
 

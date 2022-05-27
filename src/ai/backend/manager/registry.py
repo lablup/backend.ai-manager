@@ -45,6 +45,7 @@ import snappy
 import sqlalchemy as sa
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.sql.expression import true
+from sqlalchemy.ext.asyncio import AsyncSession
 from yarl import URL
 import zmq
 

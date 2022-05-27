@@ -131,7 +131,7 @@ class UserRow:
     pass
 
 mapper_registry.map_imperatively(UserRow, users, properties={
-    'sessions' : relationship('SessionRow', backref='user'),
+    'sessions' : relationship('SessionRow', back_populates='user'),
 })
 
 

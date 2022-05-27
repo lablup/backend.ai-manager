@@ -99,7 +99,7 @@ class KeyPairRow:
     pass
 
 mapper_registry.map_imperatively(KeyPairRow, keypairs, properties={
-    'sessions' : relationship('SessionRow', backref='access_key'),
+    'sessions' : relationship('SessionRow', back_populates='access_key'),
 })
 
 
