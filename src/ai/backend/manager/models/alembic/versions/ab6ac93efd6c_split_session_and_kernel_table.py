@@ -284,7 +284,6 @@ def upgrade():
     op.drop_constraint('fk_session_dependencies_session_id_kernels', 'session_dependencies', type_='foreignkey')
 
     # Kernel table
-    op.drop_index('ix_kernels_unique_sess_token', table_name='kernels')
     op.create_foreign_key(op.f('fk_kernels_session_id_sessions'), 'kernels', 'sessions', ['session_id'], ['id'])
     # ### end Alembic commands ###
 
@@ -294,7 +293,6 @@ def downgrade():
     connection = op.get_bind()
 
     # Kernel table
-    op.create_index('ix_kernels_unique_sess_token', 'kernels', ['access_key', 'session_name'], unique=True, postgresql_where=sa.text("status NOT IN ('TERMINATED', 'CANCELLED') and cluster_role = 'main'"))
     op.drop_constraint(op.f('fk_kernels_session_id_sessions'), 'kernels', type_='foreignkey')
 
     # Session dependency table

@@ -146,7 +146,8 @@ class SessionRow(Base):
         session_name_or_id: Union[str, UUID],
         access_key: AccessKey,
         *,
-        filter_dead: bool=False,
+        allow_prefix: bool=True,
+        allow_stale: bool=False,
         for_update: bool=False,
         max_matches: int=10,
         load_kernels: bool=False,
@@ -162,7 +163,7 @@ class SessionRow(Base):
             else:
                 cond = (find_by == (f'{session_name_or_id}'))
             cond = cond & (SessionRow.kp_access_key == access_key)
-            if filter_dead:
+            if not allow_stale:
                 cond = cond & (~SessionRow.status.in_(DEAD_SESSION_STATUSES))
             info_cols = [
                 SessionRow.id,
@@ -185,8 +186,12 @@ class SessionRow(Base):
         strict_id_query = build_query(SessionRow.id)
         id_query = build_query(SessionRow.id, allow_prefix=True)
         name_query = build_query(SessionRow.name, allow_prefix=True)
+    
+        match_queries = [strict_id_query]
+        if allow_prefix:
+            match_queries.extend([id_query, name_query])
 
-        for query in (strict_id_query, id_query, name_query):
+        for query in match_queries:
             result = await db_session.execute(query)
             rows = result.fetchall()
             if not rows:
