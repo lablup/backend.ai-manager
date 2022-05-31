@@ -1079,7 +1079,7 @@ class Queries(graphene.ObjectType):
         executor: AsyncioExecutor,
         info: graphene.ResolveInfo,
         id: str,
-    ) -> VirtualFolder:
+    ) -> Optional[VirtualFolder]:
         return await VirtualFolder.load_by_id(info.context, id)
 
     @staticmethod
