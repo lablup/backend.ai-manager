@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import enum
-from typing import Sequence, Union
+from typing import Callable, Container, Optional, Sequence, Tuple, Union, TYPE_CHECKING
 from uuid import UUID
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession as SASession
 from sqlalchemy.orm import (
     relationship,
     selectinload,
@@ -29,6 +29,9 @@ from .base import (
     KVPair, ResourceLimit, KVPairInput, ResourceLimitInput,
     Base, StructuredJSONColumn, set_if_set,
 )
+
+if TYPE_CHECKING:
+    from ..scheduler.types import PendingSession
 
 __all__ = (
     'SessionStatus',
@@ -63,6 +66,32 @@ DEAD_SESSION_STATUSES = (
     SessionStatus.TERMINATED,
 )
 
+
+async def _match_sessions(
+    db_session: SASession,
+    build_query: Callable,
+    session_name_or_id: Union[str, UUID],
+    allow_prefix: bool=False,
+) -> Sequence[SessionRow]:
+    id_cond = (sa.sql.expression.cast(SessionRow.id, sa.String).like(f'{session_name_or_id}%'))
+    name_cond = (SessionRow.name == (f'{session_name_or_id}'))
+    id_query = build_query(id_cond)
+    name_query = build_query(name_cond)
+
+    match_queries = [id_query, name_query]
+    if allow_prefix:
+        prefix_name_cond = (SessionRow.name.like(f'{session_name_or_id}%'))
+        prefix_name_query = build_query(prefix_name_cond)
+        match_queries.append(prefix_name_query)
+
+    for query in match_queries:
+        result = await db_session.execute(query)
+        rows = result.scalars().all()
+        if not rows:
+            continue
+        return rows
+    return []
+
 class SessionRow(Base):
     __tablename__ = 'sessions'
     id = SessionIDColumn()
@@ -74,7 +103,7 @@ class SessionRow(Base):
     cluster_mode = sa.Column('cluster_mode', sa.String(length=16), nullable=False,
               default=ClusterMode.SINGLE_NODE, server_default=ClusterMode.SINGLE_NODE.name)
     cluster_size = sa.Column('cluster_size', sa.Integer, nullable=False, default=1)
-    kernels = relationship('KernelRow', back_populates='session')
+    kernels = relationship('KernelRow', back_populates='session', primaryjoin='SessionRow.id==KernelRow.session_id')
     main_kernel_id = sa.Column('main_kernel_id', KernelIDColumnType, sa.ForeignKey('kernels.id'),
                   nullable=False, unique=True, index=True)
     main_kernel = relationship('KernelRow', foreign_keys=[main_kernel_id])
@@ -140,39 +169,58 @@ class SessionRow(Base):
     )
 
     @classmethod
+    async def match_sessions_attrs(
+        cls,
+        db_session: SASession,
+        session_name_or_id: Union[str, UUID],
+        access_key: AccessKey,
+        info_cols: Sequence,
+        *,
+        allow_prefix: bool=False,
+        allow_stale: bool=True,
+        max_matches: int=10,
+    ) -> Sequence[SessionRow]:
+        def build_query(base_cond):
+            cond = base_cond & (SessionRow.kp_access_key == access_key)
+            if not allow_stale:
+                cond = cond & (~SessionRow.status.in_(DEAD_SESSION_STATUSES))
+            query = (
+                sa.select(*info_cols)
+                .where(cond)
+                .order_by(sa.desc(SessionRow.created_at))
+                .limit(max_matches).offset(0)
+            )
+            return query
+
+        return await _match_sessions(
+            db_session, build_query, session_name_or_id, allow_prefix,
+        )
+
+    @classmethod
     async def match_sessions(
         cls,
-        db_session: AsyncSession,
+        db_session: SASession,
         session_name_or_id: Union[str, UUID],
         access_key: AccessKey,
         *,
-        allow_prefix: bool=True,
-        allow_stale: bool=False,
+        allow_prefix: bool=False,
+        allow_stale: bool=True,
         for_update: bool=False,
         max_matches: int=10,
         load_kernels: bool=False,
+        load_main_kernel: bool=False,
     ) -> Sequence[SessionRow]:
         """
         Match the prefix of session ID or session name among the sessions
         that belongs to the given access key, and return the list of SessionRow.
         """
 
-        def build_query(find_by, allow_prefix: bool=False):
-            if allow_prefix:
-                cond = (sa.sql.expression.cast(find_by, sa.String).like(f'{session_name_or_id}%'))
-            else:
-                cond = (find_by == (f'{session_name_or_id}'))
-            cond = cond & (SessionRow.kp_access_key == access_key)
+        def build_query(base_cond):
+            cond = base_cond & (SessionRow.kp_access_key == access_key)
             if not allow_stale:
                 cond = cond & (~SessionRow.status.in_(DEAD_SESSION_STATUSES))
-            info_cols = [
-                SessionRow.id,
-                SessionRow.name,
-                SessionRow.status,
-                SessionRow.created_at,
-            ]
             query = (
-                sa.select(info_cols)
+                sa.select(SessionRow)
                 .where(cond)
                 .order_by(sa.desc(SessionRow.created_at))
                 .limit(max_matches).offset(0)
@@ -181,23 +229,42 @@ class SessionRow(Base):
                 query = query.with_for_update()
             if load_kernels:
                 query = query.options(selectinload(SessionRow.kernels))
+            if load_main_kernel:
+                query = query.options(selectinload(SessionRow.main_kernel))
             return query
 
-        strict_id_query = build_query(SessionRow.id)
-        id_query = build_query(SessionRow.id, allow_prefix=True)
-        name_query = build_query(SessionRow.name, allow_prefix=True)
+        return await _match_sessions(
+            db_session, build_query, session_name_or_id, allow_prefix,
+        )
     
-        match_queries = [strict_id_query]
-        if allow_prefix:
-            match_queries.extend([id_query, name_query])
+    @classmethod
+    async def get_sessions(
+        cls,
+        db_session: SASession,
+        session_names: Container[str],
+        access_key: AccessKey,
+        info_cols: Sequence,
+        *,
+        allow_stale=False,
+    ) -> Sequence[SessionRow]:
+        default_cols = [
+            SessionRow.id, SessionRow.name, SessionRow.access_key,
+        ]
+        cols = set(default_cols + info_cols)
 
-        for query in match_queries:
-            result = await db_session.execute(query)
-            rows = result.fetchall()
-            if not rows:
-                continue
-            return rows
-        return []
+        cond = (
+            (SessionRow.name.in_(session_names)) &
+            (SessionRow.kp_access_key == access_key)
+        )
+        if not allow_stale:
+            cond = cond & (~SessionRow.status.in_(DEAD_SESSION_STATUSES))
+        query = (
+            sa.select(cols)
+            .select_from(SessionRow)
+            .where(cond)
+        )
+        result = await db_session.execute(query)
+        return result.scalars().all()
 
 
 class SessionDependencyRow(Base):
@@ -215,3 +282,36 @@ class SessionDependencyRow(Base):
             'session_id', 'depends_on',
             name='sess_dep_pk'),
     )
+
+    @classmethod
+    async def check_all_dependencies(
+        cls,
+        db_session: SASession,
+        sess_ctx: PendingSession,
+    ) -> Tuple[bool, Optional[str]]:
+        j = sa.join(
+            SessionDependencyRow,
+            SessionRow,
+            SessionDependencyRow.depends_on == SessionDependencyRow.session_id,
+        )
+        query = (
+            sa.select(SessionRow.id, SessionRow.name, SessionRow.result)
+            .select_from(j)
+            .where(SessionDependencyRow.session_id == sess_ctx.session_id)
+        )
+        result = await db_session.execute(query)
+        rows = result.scalars().all()
+        pending_dependencies = []
+        sess_row: SessionRow
+        for sess_row in rows:
+            if sess_row.result != SessionResult.SUCCESS:
+                pending_dependencies.append(sess_row)
+        all_success = (not pending_dependencies)
+        if all_success:
+            return (True,)
+        return (
+            False,
+            "Waiting dependency sessions to finish as success. ({})".format(
+                ", ".join(f"{sess_row.name} ({sess_row.session_id})" for sess_row in pending_dependencies),
+            )
+        )

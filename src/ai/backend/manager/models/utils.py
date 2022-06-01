@@ -198,24 +198,6 @@ async def reenter_txn(
             yield conn
 
 
-@actxmgr
-async def reenter_txn_session(
-    pool: ExtendedAsyncSAEngine,
-    sess: SASession | None = None,
-    read_only: bool = False,
-) -> AsyncIterator[SAConnection]:
-    if sess is None:
-        if read_only:
-            async with pool.begin_readonly_session() as sess:
-                yield sess
-        else:
-            async with pool.begin_session() as sess:
-                yield sess
-    else:
-        async with sess.begin_nested():
-            yield sess
-
-
 TQueryResult = TypeVar('TQueryResult')
 
 

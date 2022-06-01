@@ -4,8 +4,10 @@ from collections import OrderedDict
 from datetime import datetime
 from decimal import Decimal
 import enum
+import logging
 from typing import (
     Any,
+    Container,
     Dict,
     Iterable,
     List,
@@ -28,7 +30,10 @@ import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 from sqlalchemy.engine.row import Row
-from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
+from sqlalchemy.ext.asyncio import (
+    AsyncConnection as SAConnection,
+    AsyncSession as SASession,
+)
 from sqlalchemy.dialects import postgresql as pgsql
 from sqlalchemy.orm import (
     relationship,
@@ -36,6 +41,7 @@ from sqlalchemy.orm import (
 )
 
 from ai.backend.common import msgpack, redis
+from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
     AccessKey,
     BinarySize,
@@ -72,6 +78,8 @@ from .minilang.ordering import QueryOrderParser
 from .user import users
 if TYPE_CHECKING:
     from .gql import GraphQueryContext
+    from sqlalchemy.orm.attributes import InstrumentedAttribute
+
 
 __all__ = (
     'kernels',
@@ -92,6 +100,8 @@ __all__ = (
     'recalc_concurrency_used',
 )
 
+
+log = BraceStyleAdapter(logging.getLogger(__name__))
 
 class KernelStatus(enum.Enum):
     # values are only meaningful inside the manager
@@ -176,7 +186,7 @@ kernels = sa.Table(
     sa.Column('cluster_mode', sa.String(length=16), nullable=False,
               default=ClusterMode.SINGLE_NODE, server_default=ClusterMode.SINGLE_NODE.name),
     sa.Column('cluster_size', sa.Integer, nullable=False, default=1),
-    
+
 
     # Resource ownership
     sa.Column('scaling_group', sa.ForeignKey('scaling_groups.name'), index=True, nullable=True),
@@ -292,10 +302,101 @@ kernels = sa.Table(
 
 
 class KernelRow:
-    pass
+    id: InstrumentedAttribute
+    session_id: InstrumentedAttribute
+    access_key: InstrumentedAttribute
+    cluster_role: InstrumentedAttribute
+    session: InstrumentedAttribute
+    agent_addr: InstrumentedAttribute
+
+    kernel_host: InstrumentedAttribute
+    service_ports: InstrumentedAttribute
+
+    created_at: InstrumentedAttribute
+    status: InstrumentedAttribute
+
+    @classmethod
+    async def match_kernels(
+        cls,
+        db_session: SASession,
+        kernel_id: Union[str, UUID],
+        access_key: AccessKey,
+        *,
+        allow_stale: bool=False,
+        for_update: bool=False,
+        max_matches: int=10,
+        load_session: bool=False,
+    ) -> Sequence[KernelRow]:
+        """
+        Match the prefix of kernel ID among the kernels
+        that belongs to the given access key, and return the list of KernelRow.
+        """
+
+        cond = (
+            (sa.sql.expression.cast(KernelRow.id, sa.String) == (f'{kernel_id}'))
+            & (KernelRow.access_key == access_key)
+        )
+        if not allow_stale:
+            cond = cond & (~KernelRow.status.in_(DEAD_KERNEL_STATUSES))
+        query = (
+            sa.select(KernelRow)
+            .where(cond)
+            .order_by(sa.desc(KernelRow.created_at))
+            .limit(max_matches).offset(0)
+        )
+        if for_update:
+            query = query.with_for_update()
+        if load_session:
+            query = query.options(selectinload(KernelRow.session))
+
+        result = await db_session.execute(query)
+        return result.scalars().all()
+
+    @classmethod
+    async def get_kernels(
+        cls,
+        db_session: SASession,
+        kernel_ids: Container[str],
+        access_key: AccessKey,
+        info_cols: Sequence,
+        *,
+        allow_stale=False,
+    ) -> Sequence[KernelRow]:
+        default_cols = [
+            KernelRow.id, KernelRow.session, KernelRow.agent_addr,
+            KernelRow.kernel_host, KernelRow.access_key, KernelRow.service_ports,
+        ]
+        cols = set(default_cols + info_cols)
+
+        cond = (
+            (KernelRow.name.in_(kernel_ids)) &
+            (KernelRow.kp_access_key == access_key)
+        )
+        if not allow_stale:
+            cond = cond & (~KernelRow.status.in_(DEAD_KERNEL_STATUSES))
+        query = (
+            sa.select(cols)
+            .select_from(KernelRow)
+            .where(cond)
+        )
+        result = await db_session.execute(query)
+        return result.scalars().all()
+
+    @classmethod
+    async def update(
+        cls,
+        db_session: SASession,
+        kernel_id: str,
+        values: Mapping[str, Any],
+    ) -> None:
+        await db_session.execute(
+            sa.update(KernelRow)
+            .values(**values)
+            .where(KernelRow.id == kernel_id)
+        )
 
 mapper_registry.map_imperatively(KernelRow, kernels, properties={
-    'session': relationship('SessionRow', back_populates='kernels', foreign_keys=['session_id']),
+    'session': relationship('SessionRow', back_populates='kernels', foreign_keys=[kernels.c.session_id]),
 })
 
 
@@ -1069,29 +1170,29 @@ class ComputeSession(graphene.ObjectType):
         async with ctx.db.begin_readonly() as conn:
             return [cls.from_row(ctx, r) async for r in (await conn.stream(query))]
 
-    @classmethod
-    async def batch_load_by_dependency(
-        cls,
-        ctx: GraphQueryContext,
-        session_ids: Sequence[SessionId],
-    ) -> Sequence[Sequence[ComputeSession]]:
-        j = sa.join(
-            kernels, session_dependencies,
-            kernels.c.session_id == session_dependencies.c.depends_on,
-        )
-        query = (
-            sa.select([kernels])
-            .select_from(j)
-            .where(
-                (kernels.c.cluster_role == DEFAULT_ROLE) &
-                (session_dependencies.c.session_id.in_(session_ids)),
-            )
-        )
-        async with ctx.db.begin_readonly() as conn:
-            return await batch_multiresult(
-                ctx, conn, query, cls,
-                session_ids, lambda row: row['id'],
-            )
+    # @classmethod
+    # async def batch_load_by_dependency(
+    #     cls,
+    #     ctx: GraphQueryContext,
+    #     session_ids: Sequence[SessionId],
+    # ) -> Sequence[Sequence[ComputeSession]]:
+    #     j = sa.join(
+    #         kernels, session_dependencies,
+    #         kernels.c.session_id == session_dependencies.c.depends_on,
+    #     )
+    #     query = (
+    #         sa.select([kernels])
+    #         .select_from(j)
+    #         .where(
+    #             (kernels.c.cluster_role == DEFAULT_ROLE) &
+    #             (session_dependencies.c.session_id.in_(session_ids)),
+    #         )
+    #     )
+    #     async with ctx.db.begin_readonly() as conn:
+    #         return await batch_multiresult(
+    #             ctx, conn, query, cls,
+    #             session_ids, lambda row: row['id'],
+    #         )
 
     @classmethod
     async def batch_load_detail(
