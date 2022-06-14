@@ -792,17 +792,11 @@ class SharedConfig(AbstractConfig):
             if slot_unit is None:
                 # ignore unknown slots
                 continue
+            str2num_func = lambda x: BinarySize.from_str(x) if slot_unit == 'bytes' else Decimal(x)
             raw_min_value = slot_range.get('min')
-            if raw_min_value is None:
-                min_value = Decimal(0)
             raw_max_value = slot_range.get('max')
-            if raw_max_value is None:
-                max_value = Decimal('Infinity')
-            str2num_func = BinarySize.from_str if slot_unit == 'bytes' else Decimal
-            if not isinstance(min_value, Decimal):
-                min_value = str2num_func(raw_min_value)
-            if not isinstance(max_value, Decimal):
-                max_value = str2num_func(raw_max_value)
+            min_value = str2num_func(raw_min_value) if raw_min_value is not None else Decimal(0)
+            max_value = str2num_func(raw_max_value) if raw_max_value is not None else Decimal('Infinity')
             min_slot[slot_key] = min_value
             max_slot[slot_key] = max_value
 
