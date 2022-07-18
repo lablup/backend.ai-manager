@@ -1,0 +1,1 @@
+Fix `SharedConfig.get_image_slot_ranges()` raising `UnboundLocalError` when `raw_min_value` is not None.
