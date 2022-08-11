@@ -14,12 +14,12 @@ import trafaret as t
 from typing import Any, TYPE_CHECKING, Tuple, MutableMapping
 
 from ai.backend.common import redis, validators as tx
+from ai.backend.common.distributed import GlobalTimer
 from ai.backend.common.events import AbstractEvent, EmptyEventArgs
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import AgentId, LogSeverity, RedisConnectionInfo
 
-from ..defs import REDIS_LIVE_DB, AdvisoryLock
-from ..distributed import GlobalTimer
+from ..defs import REDIS_LIVE_DB, LockID
 from ..models import (
     error_logs, UserRole, groups,
     association_groups_users as agus,
@@ -109,7 +109,7 @@ async def list_logs(request: web.Request, params: Any) -> web.Response:
             .limit(params['page_size'])
         )
         count_query = (
-            sa.select([sa.func.count(error_logs.c.message)])
+            sa.select([sa.func.count()])
             .select_from(error_logs)
         )
         if params['page_no'] > 1:
@@ -255,8 +255,7 @@ async def init(app: web.Application) -> None:
         db=REDIS_LIVE_DB,
     )
     app_ctx.log_cleanup_timer = GlobalTimer(
-        root_ctx.db,
-        AdvisoryLock.LOCKID_LOG_CLEANUP_TIMER,
+        root_ctx.distributed_lock_factory(LockID.LOCKID_LOG_CLEANUP_TIMER, 20.0),
         root_ctx.event_producer,
         lambda: DoLogCleanupEvent(),
         20.0,

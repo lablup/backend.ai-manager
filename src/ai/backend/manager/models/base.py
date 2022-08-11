@@ -5,6 +5,7 @@ import collections
 import enum
 import functools
 import logging
+import trafaret as t
 from typing import (
     Any,
     Awaitable,
@@ -41,12 +42,16 @@ from sqlalchemy.ext.asyncio import (
     AsyncConnection as SAConnection,
     AsyncEngine as SAEngine,
 )
+from sqlalchemy.orm import (
+    registry,
+)
 from sqlalchemy.types import (
     SchemaType,
     TypeDecorator,
     CHAR,
 )
 from sqlalchemy.dialects.postgresql import UUID, ENUM, JSONB
+import yarl
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
@@ -54,6 +59,7 @@ from ai.backend.common.types import (
     KernelId,
     ResourceSlot,
     SessionId,
+    JSONSerializableMixin,
 )
 
 from ai.backend.manager.models.utils import execute_with_retry
@@ -82,6 +88,8 @@ convention = {
     "pk": "pk_%(table_name)s",
 }
 metadata = sa.MetaData(naming_convention=convention)
+mapper_registry = registry(metadata=metadata)
+Base: Any = mapper_registry.generate_base()  # TODO: remove Any after #422 is merged
 
 pgsql_connect_opts = {
     'server_settings': {
@@ -191,6 +199,112 @@ class ResourceSlotColumn(TypeDecorator):
         return ResourceSlotColumn()
 
 
+class StructuredJSONColumn(TypeDecorator):
+    """
+    A column type to convert JSON values back and forth using a Trafaret.
+    """
+
+    impl = JSONB
+    cache_ok = True
+
+    def __init__(self, schema: t.Trafaret) -> None:
+        super().__init__()
+        self._schema = schema
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == 'sqlite':
+            return dialect.type_descriptor(sa.JSON)
+        else:
+            return super().load_dialect_impl(dialect)
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return self._schema.check({})
+        try:
+            self._schema.check(value)
+        except t.DataError as e:
+            raise ValueError(
+                "The given value does not conform with the structured json column format.",
+                e.as_dict(),
+            )
+        return value
+
+    def process_result_value(self, raw_value, dialect):
+        if raw_value is None:
+            return self._schema.check({})
+        return self._schema.check(raw_value)
+
+    def copy(self):
+        return StructuredJSONColumn(self._schema)
+
+
+class StructuredJSONObjectColumn(TypeDecorator):
+    """
+    A column type to convert JSON values back and forth using JSONSerializableMixin.
+    """
+
+    impl = JSONB
+    cache_ok = True
+
+    def __init__(self, schema: Type[JSONSerializableMixin]) -> None:
+        super().__init__()
+        self._schema = schema
+
+    def process_bind_param(self, value, dialect):
+        return self._schema.to_json(value)
+
+    def process_result_value(self, raw_value, dialect):
+        return self._schema.from_json(raw_value)
+
+    def copy(self):
+        return StructuredJSONObjectColumn(self._schema)
+
+
+class StructuredJSONObjectListColumn(TypeDecorator):
+    """
+    A column type to convert JSON values back and forth using JSONSerializableMixin,
+    but store and load a list of the objects.
+    """
+
+    impl = JSONB
+    cache_ok = True
+
+    def __init__(self, schema: Type[JSONSerializableMixin]) -> None:
+        super().__init__()
+        self._schema = schema
+
+    def process_bind_param(self, value, dialect):
+        return [self._schema.to_json(item) for item in value]
+
+    def process_result_value(self, raw_value, dialect):
+        if raw_value is None:
+            return []
+        return [self._schema.from_json(item) for item in raw_value]
+
+    def copy(self):
+        return StructuredJSONObjectListColumn(self._schema)
+
+
+class URLColumn(TypeDecorator):
+    """
+    A column type for URL strings
+    """
+
+    impl = sa.types.UnicodeText
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if isinstance(value, yarl.URL):
+            return str(value)
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        if value is not None:
+            return yarl.URL(value)
+
+
 class CurrencyTypes(enum.Enum):
     KRW = 'KRW'
     USD = 'USD'
@@ -237,7 +351,10 @@ class GUID(TypeDecorator, Generic[UUID_SubType]):
             return value
         else:
             cls = type(self)
-            return cast(UUID_SubType, cls.uuid_subtype_func(uuid.UUID(value)))
+            if isinstance(value, bytes):
+                return cast(UUID_SubType, cls.uuid_subtype_func(uuid.UUID(bytes=value)))
+            else:
+                return cast(UUID_SubType, cls.uuid_subtype_func(uuid.UUID(value)))
 
 
 class SessionIDColumnType(GUID[SessionId]):
@@ -321,6 +438,17 @@ class ResourceLimit(graphene.ObjectType):
 
 
 class KVPair(graphene.ObjectType):
+    key = graphene.String()
+    value = graphene.String()
+
+
+class ResourceLimitInput(graphene.InputObjectType):
+    key = graphene.String()
+    min = graphene.String()
+    max = graphene.String()
+
+
+class KVPairInput(graphene.InputObjectType):
     key = graphene.String()
     value = graphene.String()
 
@@ -681,14 +809,17 @@ async def simple_db_mutate_returning_item(
         return result_cls(False, f"unexpected error: {e}", None)
 
 
-def set_if_set(src: object, target: MutableMapping[str, Any], name: str, *, clean_func=None) -> None:
+def set_if_set(
+    src: object, target: MutableMapping[str, Any], name: str, *,
+    clean_func=None, target_key: Optional[str] = None,
+) -> None:
     v = getattr(src, name)
     # NOTE: unset optional fields are passed as null.
     if v is not None:
         if callable(clean_func):
-            target[name] = clean_func(v)
+            target[target_key or name] = clean_func(v)
         else:
-            target[name] = v
+            target[target_key or name] = v
 
 
 async def populate_fixture(
@@ -708,4 +839,7 @@ async def populate_fixture(
                 elif isinstance(col.type, EnumValueType):
                     for row in rows:
                         row[col.name] = col.type._enum_cls(row[col.name])
+                elif isinstance(col.type, (StructuredJSONObjectColumn, StructuredJSONObjectListColumn)):
+                    for row in rows:
+                        row[col.name] = col.type._schema.from_json(row[col.name])
             await conn.execute(sa.dialects.postgresql.insert(table, rows).on_conflict_do_nothing())

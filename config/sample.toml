@@ -79,6 +79,14 @@ hide-agents = false
 # compatibility issues.
 # event-loop = "asyncio"
 
+# One of: "filelock", "pg_advisory", "redlock", "etcd"
+# Choose the implementation of distributed lock.
+# "filelock" is the simplest one when the manager is deployed on only one node.
+# "pg_advisory" uses PostgreSQL's session-level advisory lock.
+# "redlock" uses Redis-based distributed lock (Redlock) -- currently not supported.
+# "etcd" uses etcd-based distributed lock via etcetra.
+# distributed-lock = "pg_advisory"
+
 # The Docker image name that is used for importing external Docker images.
 # You need to change this if your are at offline environments so that the manager
 # uses an importer image from a private registry.
@@ -152,3 +160,4 @@ ssl-verify = true
 
 [debug]
 enabled = false
+periodic-sync-stats = false  # periodically sync container stat from Redis to the kernels.last_stat column.

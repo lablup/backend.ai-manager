@@ -1,29 +1,39 @@
 from __future__ import annotations
 
+import asyncio
 import configparser
 import json.decoder
 import logging
 import subprocess
 import sys
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 
+import aioredis, aioredis.client
 import click
 import psycopg2
 import tomlkit
+import sqlalchemy as sa
+from more_itertools import chunked
+from setproctitle import setproctitle
+
+from ai.backend.common import redis as redis_helper
 from ai.backend.common.cli import LazyGroup
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.validators import TimeDuration
 from setproctitle import setproctitle
 
-from ai.backend.manager.cli.configure.alembic import config_alembic
-from ai.backend.manager.cli.configure.database import config_database
-from ai.backend.manager.cli.configure.etcd import config_etcd
-from ai.backend.manager.cli.configure.manager import config_manager
-from ai.backend.manager.cli.configure.redis import config_redis
-from .context import CLIContext, init_logger
+from ..cli.configure.alembic import config_alembic
+from ..cli.configure.database import config_database
+from ..cli.configure.etcd import config_etcd
+from ..cli.configure.manager import config_manager
+from ..cli.configure.redis import config_redis
 from ..config import load as load_config
+from ..models import kernels
 from ..models.keypair import generate_keypair as _gen_keypair
+from ..models.utils import connect_database
+from .context import CLIContext, init_logger, redis_ctx
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.cli'))
 
@@ -141,6 +151,68 @@ def clear_history(cli_ctx: CLIContext, retention, vacuum_full) -> None:
         expiration = today - duration.check_and_return(retention)
         expiration_date = expiration.strftime('%Y-%m-%d %H:%M:%S')
 
+        async def _clear_redis_history():
+            try:
+                async with connect_database(cli_ctx.local_config) as db:
+                    async with db.begin_readonly() as conn:
+                        query = (
+                            sa.select([kernels.c.id])
+                            .select_from(kernels)
+                            .where(
+                                (kernels.c.terminated_at < expiration),
+                            )
+                        )
+                        result = await conn.execute(query)
+                        target_kernels = [str(x['id']) for x in result.all()]
+
+                delete_count = 0
+                async with redis_ctx(cli_ctx) as redis_conn_set:
+
+                    def _build_pipe(
+                        r: aioredis.Redis,
+                        kernel_ids: list[str],
+                    ) -> aioredis.client.Pipeline:
+                        pipe = r.pipeline(transaction=False)
+                        pipe.delete(*kernel_ids)
+                        return pipe
+
+                    if len(target_kernels) > 0:
+                        # Apply chunking to avoid excessive length of command params
+                        # and indefinite blocking of the Redis server.
+                        for kernel_ids in chunked(target_kernels, 32):
+                            results = await redis_helper.execute(
+                                redis_conn_set.stat,
+                                partial(_build_pipe, kernel_ids=kernel_ids),
+                            )
+                        # Each DEL command returns the number of keys deleted.
+                        delete_count += sum(results)
+                        log.info(
+                            "Cleaned up {:,} redis statistics records older than {:}.",
+                            delete_count, expiration_date,
+                        )
+
+                    # Sync and compact the persistent database of Redis
+                    redis_config = await redis_helper.execute(
+                        redis_conn_set.stat,
+                        lambda r: r.config_get("appendonly"),
+                    )
+                    if redis_config['appendonly'] == 'yes':
+                        await redis_helper.execute(
+                            redis_conn_set.stat,
+                            lambda r: r.bgrewriteaof(),
+                        )
+                        log.info("Issued BGREWRITEAOF to the Redis database.")
+                    else:
+                        await redis_helper.execute(
+                            redis_conn_set.stat,
+                            lambda r: r.execute_command("BGSAVE SCHEDULE"),
+                        )
+                        log.info("Issued BGSAVE to the Redis database.")
+            except:
+                log.exception("Unexpected error while cleaning up redis history")
+
+        asyncio.run(_clear_redis_history())
+
         conn = psycopg2.connect(
             host=local_config['db']['addr'][0],
             port=local_config['db']['addr'][1],
@@ -237,6 +309,11 @@ def fixture():
 @main.group(cls=LazyGroup, import_name='ai.backend.manager.cli.gql:cli')
 def gql():
     '''Command set for GraphQL schema.'''
+
+
+@main.group(cls=LazyGroup, import_name='ai.backend.manager.cli.image:cli')
+def image():
+    '''Command set for managing images.'''
 
 
 if __name__ == '__main__':

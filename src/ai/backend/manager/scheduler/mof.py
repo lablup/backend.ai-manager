@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 from typing import (
-    Any,
     Optional,
     Sequence,
-    Mapping,
 )
 
 import trafaret as t
@@ -29,9 +27,6 @@ class MOFScheduler(AbstractScheduler):
     """Minimum Occupied slot First Scheduler"""
 
     config_iv = t.Dict({}).allow_extra('*')
-
-    def __init__(self, config: Mapping[str, Any]) -> None:
-        super().__init__(config)
 
     def pick_session(
         self,

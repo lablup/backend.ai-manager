@@ -17,6 +17,7 @@ from typing import (
 from aiohttp import web
 import aiohttp_cors
 from aioredis import Redis
+from aioredis.client import Pipeline as RedisPipeline
 from dateutil.tz import tzutc
 from dateutil.parser import parse as dtparse
 import sqlalchemy as sa
@@ -41,7 +42,7 @@ from .exceptions import (
     AuthorizationFailed,
     GenericBadRequest,
     GenericForbidden,
-    GenericNotFound,
+    ObjectNotFound,
     InternalServerError,
     InvalidAuthParameters,
     InvalidAPIParameters,
@@ -437,12 +438,12 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
             if row is None:
                 raise AuthorizationFailed('Access key not found')
 
-            async def _pipe_builder(r: Redis):
+            async def _pipe_builder(r: Redis) -> RedisPipeline:
                 pipe = r.pipeline()
                 num_queries_key = f'kp:{access_key}:num_queries'
                 pipe.incr(num_queries_key)
                 pipe.expire(num_queries_key, 86400 * 30)  # retention: 1 month
-                await pipe.execute()
+                return pipe
 
             await redis.execute(root_ctx.redis_stat, _pipe_builder)
         else:
@@ -482,12 +483,12 @@ async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
             if not secrets.compare_digest(my_signature, signature):
                 raise AuthorizationFailed('Signature mismatch')
 
-            async def _pipe_builder(r: Redis):
+            async def _pipe_builder(r: Redis) -> RedisPipeline:
                 pipe = r.pipeline()
                 num_queries_key = f'kp:{access_key}:num_queries'
                 pipe.incr(num_queries_key)
                 pipe.expire(num_queries_key, 86400 * 30)  # retention: 1 month
-                await pipe.execute()
+                return pipe
 
             await redis.execute(root_ctx.redis_stat, _pipe_builder)
         else:
@@ -600,8 +601,10 @@ async def get_role(request: web.Request, params: Any) -> web.Response:
             result = await conn.execute(query)
             row = result.first()
             if row is None:
-                raise GenericNotFound('No such user group or '
-                                      'you are not the member of the group.')
+                raise ObjectNotFound(
+                    extra_msg='No such project or you are not the member of it.',
+                    object_name='project (user group)',
+                )
         group_role = 'user'
     resp_data = {
         'global_role': 'superadmin' if request['is_superadmin'] else 'user',
@@ -664,6 +667,12 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
         keypair = result.first()
     if keypair is None:
         raise AuthorizationFailed('No API keypairs found.')
+    # [Hooking point for POST_AUTHORIZE as one-way notification]
+    # The hook handlers should accept a tuple of the request, user, and keypair objects.
+    await root_ctx.hook_plugin_ctx.notify(
+        'POST_AUTHORIZE',
+        (request, user, keypair),
+    )
     return web.json_response({
         'data': {
             'access_key': keypair['access_key'],
@@ -749,7 +758,6 @@ async def signup(request: web.Request, params: Any) -> web.Response:
                 'is_active': True if data.get('status') == UserStatus.ACTIVE else False,
                 'is_admin': False,
                 'resource_policy': resource_policy,
-                'concurrency_used': 0,
                 'rate_limit': 1000,
                 'num_queries': 0,
                 'user': user.uuid,

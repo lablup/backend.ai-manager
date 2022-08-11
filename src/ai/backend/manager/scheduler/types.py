@@ -21,6 +21,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 from sqlalchemy.sql import Select, ColumnElement
 from sqlalchemy.engine.row import Row
+from datetime import datetime
 import trafaret as t
 
 from ai.backend.common.logging import BraceStyleAdapter
@@ -37,12 +38,14 @@ from ai.backend.common.types import (
     ResourceSlot,
     SlotName,
     SlotTypes,
+    VFolderMount,
 )
 
 from ..defs import DEFAULT_ROLE
 from ..models import (
     kernels, keypairs,
 )
+from ..models.scaling_group import ScalingGroupOpts
 from ..registry import AgentRegistry
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.scheduler'))
@@ -70,6 +73,7 @@ class AgentAllocationContext:
 class AgentContext:
     agent_id: AgentId
     agent_addr: str
+    architecture: str
     scaling_group: str
     available_slots: ResourceSlot
     occupied_slots: ResourceSlot
@@ -194,12 +198,12 @@ class PendingSession:
     requested_slots: ResourceSlot
     target_sgroup_names: MutableSequence[str]
     environ: MutableMapping[str, str]
-    mounts: Sequence[str]
-    mount_map: Mapping[str, str]
+    vfolder_mounts: Sequence[VFolderMount]
     bootstrap_script: Optional[str]
     startup_command: Optional[str]
     internal_data: Optional[MutableMapping[str, Any]]
     preopen_ports: List[int]
+    created_at: datetime
 
     @property
     def main_kernel_id(self) -> KernelId:
@@ -230,11 +234,11 @@ class PendingSession:
             kernels.c.internal_data,
             kernels.c.resource_opts,
             kernels.c.environ,
-            kernels.c.mounts,
-            kernels.c.mount_map,
+            kernels.c.vfolder_mounts,
             kernels.c.bootstrap_script,
             kernels.c.startup_command,
             kernels.c.preopen_ports,
+            kernels.c.created_at,
         }
 
     @classmethod
@@ -276,11 +280,11 @@ class PendingSession:
                 k: v for k, v
                 in map(lambda s: s.split('=', maxsplit=1), row['environ'])
             },
-            mounts=row['mounts'],
-            mount_map=row['mount_map'],
+            vfolder_mounts=row['vfolder_mounts'],
             bootstrap_script=row['bootstrap_script'],
             startup_command=row['startup_command'],
             preopen_ports=row['preopen_ports'],
+            created_at=row['created_at'],
         )
 
     @classmethod
@@ -317,6 +321,7 @@ class KernelInfo:
     requested_slots: ResourceSlot
     bootstrap_script: Optional[str]
     startup_command: Optional[str]
+    created_at: datetime
 
     def __str__(self):
         return f'{self.kernel_id}#{self.cluster_role}{self.cluster_idx}'
@@ -333,11 +338,13 @@ class KernelInfo:
             kernels.c.cluster_idx,
             kernels.c.cluster_hostname,
             kernels.c.image,
+            kernels.c.architecture,
             kernels.c.registry,
             kernels.c.resource_opts,
             kernels.c.occupied_slots,
             kernels.c.bootstrap_script,
             kernels.c.startup_command,
+            kernels.c.created_at,
         }
 
     @classmethod
@@ -351,11 +358,12 @@ class KernelInfo:
             cluster_role=row['cluster_role'],
             cluster_idx=row['cluster_idx'],
             cluster_hostname=row['cluster_hostname'],
-            image_ref=ImageRef(row['image'], [row['registry']]),
+            image_ref=ImageRef(row['image'], [row['registry']], row['architecture']),
             resource_opts=row['resource_opts'],
             requested_slots=row['occupied_slots'],
             bootstrap_script=row['bootstrap_script'],
             startup_command=row['startup_command'],
+            created_at=row['created_at'],
         )
 
 
@@ -389,10 +397,12 @@ class AbstractScheduler(metaclass=ABCMeta):
     ``schedule()`` method is a pure function.
     """
 
-    config: Mapping[str, Any]
+    sgroup_opts: ScalingGroupOpts  # sgroup-specific config
+    config: Mapping[str, Any]   # scheduler-specific config
     config_iv: t.Dict
 
-    def __init__(self, config: Mapping[str, Any]) -> None:
+    def __init__(self, sgroup_opts: ScalingGroupOpts, config: Mapping[str, Any]) -> None:
+        self.sgroup_opts = sgroup_opts
         self.config = self.config_iv.check(config)
 
     @abstractmethod

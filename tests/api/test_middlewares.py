@@ -4,7 +4,7 @@ from ai.backend.manager.api.utils import method_placeholder
 from ai.backend.manager.server import api_middleware
 
 
-async def test_api_method_override(test_client):
+async def test_api_method_override(aiohttp_client):
     observed_method = None
     app = web.Application()
 
@@ -18,7 +18,7 @@ async def test_api_method_override(test_client):
     app.router.add_route('REPORT', r'/test',
                          service_handler)
     app.middlewares.append(api_middleware)
-    client = await test_client(app)
+    client = await aiohttp_client(app)
 
     # native method
     resp = await client.request('REPORT', '/test')
@@ -48,7 +48,7 @@ async def test_api_method_override(test_client):
     assert observed_method is None
 
 
-async def test_api_method_override_with_different_ops(test_client):
+async def test_api_method_override_with_different_ops(aiohttp_client):
     observed_method = None
     app = web.Application()
 
@@ -65,7 +65,7 @@ async def test_api_method_override_with_different_ops(test_client):
     app.router.add_route('POST', r'/test', op1_handler)
     app.router.add_route('REPORT', r'/test', op2_handler)
     app.middlewares.append(api_middleware)
-    client = await test_client(app)
+    client = await aiohttp_client(app)
 
     # native method
     resp = await client.request('POST', '/test')
@@ -99,7 +99,7 @@ async def test_api_method_override_with_different_ops(test_client):
     assert observed_method == 'REPORT'
 
 
-async def test_api_ver(test_client):
+async def test_api_ver(aiohttp_client):
     inner_request = None
     app = web.Application()
 
@@ -110,7 +110,7 @@ async def test_api_ver(test_client):
 
     app.router.add_post(r'/test', dummy_handler)
     app.middlewares.append(api_middleware)
-    client = await test_client(app)
+    client = await aiohttp_client(app)
 
     # normal call
     resp = await client.post('/test', headers={

@@ -78,7 +78,6 @@ keypairs = sa.Table(
     sa.Column('modified_at', sa.DateTime(timezone=True),
               server_default=sa.func.now(), onupdate=sa.func.current_timestamp()),
     sa.Column('last_used', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('concurrency_used', sa.Integer),
     sa.Column('rate_limit', sa.Integer),
     sa.Column('num_queries', sa.Integer, server_default='0'),
 
@@ -143,7 +142,6 @@ class KeyPair(graphene.ObjectType):
     resource_policy = graphene.String()
     created_at = GQLDateTime()
     last_used = GQLDateTime()
-    concurrency_used = graphene.Int()
     rate_limit = graphene.Int()
     num_queries = graphene.Int()
     user = graphene.UUID()
@@ -155,13 +153,14 @@ class KeyPair(graphene.ObjectType):
         'ai.backend.manager.models.ComputeSession',
         status=graphene.String(),
     )
+    concurrency_used = graphene.Int()
 
     user_info = graphene.Field(lambda: UserInfo)
 
     # Deprecated
     concurrency_limit = graphene.Int(
         deprecation_reason='Moved to KeyPairResourcePolicy object as '
-                           'max_concurrent_sessions field.')
+                           'the max_concurrent_sessions field.')
 
     async def resolve_user_info(
         self,
@@ -188,11 +187,10 @@ class KeyPair(graphene.ObjectType):
             resource_policy=row['resource_policy'],
             created_at=row['created_at'],
             last_used=row['last_used'],
-            concurrency_limit=0,  # moved to resource policy
-            concurrency_used=row['concurrency_used'],
             rate_limit=row['rate_limit'],
             user=row['user'],
             ssh_public_key=row['ssh_public_key'],
+            concurrency_limit=0,  # deprecated
         )
 
     async def resolve_num_queries(self, info: graphene.ResolveInfo) -> int:
@@ -214,6 +212,17 @@ class KeyPair(graphene.ObjectType):
             status = KernelStatus[raw_status]
         loader = ctx.dataloader_manager.get_loader(ctx, 'ComputeSession', status=status)
         return await loader.load(self.access_key)
+
+    async def resolve_concurrency_used(self, info: graphene.ResolveInfo) -> int:
+        ctx: GraphQueryContext = info.context
+        kp_key = 'keypair.concurrency_used'
+        concurrency_used = await redis.execute(
+            ctx.redis_stat,
+            lambda r: r.get(f'{kp_key}.{self.access_key}'),
+        )
+        if concurrency_used is not None:
+            return int(concurrency_used)
+        return 0
 
     @classmethod
     async def load_all(
@@ -255,8 +264,6 @@ class KeyPair(graphene.ObjectType):
         "resource_policy": ("keypairs_resource_policy", None),
         "created_at": ("keypairs_created_at", dtparse),
         "last_used": ("keypairs_last_used", dtparse),
-        "concurrency_limit": ("keypairs_concurrency_limit", None),
-        "concurrency_used": ("keypairs_concurrency_used", None),
         "rate_limit": ("keypairs_rate_limit", None),
         "num_queries": ("keypairs_num_queries", None),
         "ssh_public_key": ("keypairs_ssh_public_key", None),
@@ -271,8 +278,6 @@ class KeyPair(graphene.ObjectType):
         "resource_policy": "keypairs_resource_policy",
         "created_at": "keypairs_created_at",
         "last_used": "keypairs_last_used",
-        "concurrency_limit": "keypairs_concurrency_limit",
-        "concurrency_used": "keypairs_concurrency_used",
         "rate_limit": "keypairs_rate_limit",
         "num_queries": "keypairs_num_queries",
     }
@@ -290,7 +295,7 @@ class KeyPair(graphene.ObjectType):
         from .user import users
         j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
         query = (
-            sa.select([sa.func.count(keypairs.c.access_key)])
+            sa.select([sa.func.count()])
             .select_from(j)
         )
         if domain_name is not None:
@@ -472,7 +477,6 @@ class CreateKeyPair(graphene.Mutation):
             'is_active': props.is_active,
             'is_admin': props.is_admin,
             'resource_policy': props.resource_policy,
-            'concurrency_used': 0,
             'rate_limit': props.rate_limit,
             'num_queries': 0,
             'ssh_public_key': pubkey,
@@ -535,6 +539,10 @@ class DeleteKeyPair(graphene.Mutation):
         delete_query = (
             sa.delete(keypairs)
             .where(keypairs.c.access_key == access_key)
+        )
+        await redis.execute(
+            ctx.redis_stat,
+            lambda r: r.delete(f'keypair.concurrency_used.{access_key}'),
         )
         return await simple_db_mutate(cls, ctx, delete_query)
 

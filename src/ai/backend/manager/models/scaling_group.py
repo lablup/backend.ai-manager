@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import (
     Any,
     Dict,
+    Mapping,
     Sequence,
     Set,
     TYPE_CHECKING,
@@ -10,12 +12,17 @@ from typing import (
 )
 import uuid
 
+import attr
+import graphene
+from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 from sqlalchemy.engine.row import Row
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
-import graphene
-from graphene.types.datetime import DateTime as GQLDateTime
+import trafaret as t
+
+from ai.backend.common import validators as tx
+from ai.backend.common.types import SessionTypes, JSONSerializableMixin
 
 from .base import (
     metadata,
@@ -24,6 +31,7 @@ from .base import (
     set_if_set,
     batch_result,
     batch_multiresult,
+    StructuredJSONObjectColumn,
 )
 from .group import resolve_group_name_or_id
 from .user import UserRole
@@ -52,6 +60,39 @@ __all__: Sequence[str] = (
 )
 
 
+@attr.define(slots=True)
+class ScalingGroupOpts(JSONSerializableMixin):
+    allowed_session_types: list[SessionTypes] = attr.Factory(
+        lambda: [SessionTypes.INTERACTIVE, SessionTypes.BATCH],
+    )
+    pending_timeout: timedelta = timedelta(seconds=0)
+    config: Mapping[str, Any] = attr.Factory(dict)
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "allowed_session_types": [
+                item.value for item in self.allowed_session_types
+            ],
+            "pending_timeout": self.pending_timeout.total_seconds(),
+            "config": self.config,
+        }
+
+    @classmethod
+    def from_json(cls, obj: Mapping[str, Any]) -> ScalingGroupOpts:
+        return cls(**cls.as_trafaret().check(obj))
+
+    @classmethod
+    def as_trafaret(cls) -> t.Trafaret:
+        return t.Dict({
+            t.Key('allowed_session_types', default=['interactive', 'batch']):
+                t.List(tx.Enum(SessionTypes), min_length=1),
+            t.Key('pending_timeout', default=0):
+                tx.TimeDuration(allow_negative=False),
+            # Each scheduler impl refers an additional "config" key.
+            t.Key("config", default={}): t.Mapping(t.String, t.Any),
+        }).allow_extra('*')
+
+
 scaling_groups = sa.Table(
     'scaling_groups', metadata,
     sa.Column('name', sa.String(length=64), primary_key=True),
@@ -63,7 +104,10 @@ scaling_groups = sa.Table(
     sa.Column('driver', sa.String(length=64), nullable=False),
     sa.Column('driver_opts', pgsql.JSONB(), nullable=False, default={}),
     sa.Column('scheduler', sa.String(length=64), nullable=False),
-    sa.Column('scheduler_opts', pgsql.JSONB(), nullable=False, default={}),
+    sa.Column(
+        'scheduler_opts', StructuredJSONObjectColumn(ScalingGroupOpts),
+        nullable=False, default={},
+    ),
 )
 
 
@@ -192,7 +236,7 @@ class ScalingGroup(graphene.ObjectType):
             driver=row['driver'],
             driver_opts=row['driver_opts'],
             scheduler=row['scheduler'],
-            scheduler_opts=row['scheduler_opts'],
+            scheduler_opts=row['scheduler_opts'].to_json(),
         )
 
     @classmethod
@@ -372,7 +416,7 @@ class CreateScalingGroup(graphene.Mutation):
             'driver': props.driver,
             'driver_opts': props.driver_opts,
             'scheduler': props.scheduler,
-            'scheduler_opts': props.scheduler_opts,
+            'scheduler_opts': ScalingGroupOpts.from_json(props.scheduler_opts),
         }
         insert_query = (
             sa.insert(scaling_groups).values(data)
@@ -408,7 +452,7 @@ class ModifyScalingGroup(graphene.Mutation):
         set_if_set(props, data, 'wsproxy_addr')
         set_if_set(props, data, 'driver_opts')
         set_if_set(props, data, 'scheduler')
-        set_if_set(props, data, 'scheduler_opts')
+        set_if_set(props, data, 'scheduler_opts', clean_func=lambda v: ScalingGroupOpts.from_json(v))
         update_query = (
             sa.update(scaling_groups)
             .values(data)

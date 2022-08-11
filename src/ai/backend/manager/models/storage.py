@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager as actxmgr
 from contextvars import ContextVar
 import itertools
 import logging
+from pathlib import PurePosixPath
 from typing import (
     Any,
     AsyncIterator,
@@ -30,6 +31,7 @@ import yarl
 from .base import (
     Item, PaginatedList,
 )
+from ..api.exceptions import VFolderOperationFailed
 from ..exceptions import InvalidArgument
 if TYPE_CHECKING:
     from .gql import GraphQueryContext
@@ -119,12 +121,18 @@ class StorageSessionManager:
         _ctx_volumes_cache.set(results)
         return results
 
-    async def get_mount_path(self, vfolder_host: str, vfolder_id: UUID) -> str:
+    async def get_mount_path(
+        self,
+        vfolder_host: str,
+        vfolder_id: UUID,
+        subpath: PurePosixPath = PurePosixPath("."),
+    ) -> str:
         async with self.request(
             vfolder_host, 'GET', 'folder/mount',
             json={
                 'volume': self.split_host(vfolder_host)[1],
                 'vfid': str(vfolder_id),
+                'subpath': str(subpath),
             },
         ) as (_, resp):
             reply = await resp.json()
@@ -153,6 +161,19 @@ class StorageSessionManager:
             headers=headers,
             **kwargs,
         ) as client_resp:
+            if client_resp.status // 100 != 2:
+                try:
+                    error_data = await client_resp.json()
+                    raise VFolderOperationFailed(
+                        extra_msg=error_data.pop("msg"),
+                        extra_data=error_data,
+                    )
+                except aiohttp.ClientResponseError:
+                    # when the response body is not JSON, just raise with status info.
+                    raise VFolderOperationFailed(
+                        extra_msg=f"Storage proxy responded with "
+                                  f"{client_resp.status} {client_resp.reason}",
+                    )
             yield proxy_info.client_api_url, client_resp
 
 

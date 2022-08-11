@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from decimal import Decimal
 import secrets
+from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import (
     Any,
     Mapping,
@@ -13,8 +14,9 @@ from uuid import uuid4, UUID
 from pprint import pprint
 
 import attr
-from dateutil.parser import parse as dtparse
 import pytest
+import trafaret as t
+from dateutil.parser import parse as dtparse
 
 from ai.backend.common.docker import ImageRef
 from ai.backend.common.types import (
@@ -22,16 +24,20 @@ from ai.backend.common.types import (
     ResourceSlot, SessionTypes,
     ClusterMode,
 )
-from ai.backend.manager.defs import DEFAULT_ROLE
+from ai.backend.manager.defs import DEFAULT_IMAGE_ARCH, DEFAULT_ROLE
+from ai.backend.manager.models.scaling_group import ScalingGroupOpts
 from ai.backend.manager.scheduler.types import (
     KernelInfo,
     PendingSession,
     ExistingSession,
     AgentContext,
 )
-from ai.backend.common.plugin.hook import HookPluginContext
 from ai.backend.manager.registry import AgentRegistry
-from ai.backend.manager.scheduler.dispatcher import load_scheduler, SchedulerDispatcher
+from ai.backend.manager.scheduler.dispatcher import (
+    load_scheduler,
+    SchedulerDispatcher,
+    _list_pending_sessions,
+)
 from ai.backend.manager.scheduler.fifo import FIFOSlotScheduler, LIFOSlotScheduler
 from ai.backend.manager.scheduler.drf import DRFScheduler
 from ai.backend.manager.scheduler.mof import MOFScheduler
@@ -39,10 +45,31 @@ from ai.backend.manager.scheduler.predicates import check_reserved_batch_session
 
 
 def test_load_intrinsic():
-    assert isinstance(load_scheduler('fifo', {}), FIFOSlotScheduler)
-    assert isinstance(load_scheduler('lifo', {}), LIFOSlotScheduler)
-    assert isinstance(load_scheduler('drf', {}), DRFScheduler)
-    assert isinstance(load_scheduler('mof', {}), MOFScheduler)
+    default_sgroup_opts = ScalingGroupOpts()
+    assert isinstance(load_scheduler('fifo', default_sgroup_opts, {}), FIFOSlotScheduler)
+    assert isinstance(load_scheduler('lifo', default_sgroup_opts, {}), LIFOSlotScheduler)
+    assert isinstance(load_scheduler('drf', default_sgroup_opts, {}), DRFScheduler)
+    assert isinstance(load_scheduler('mof', default_sgroup_opts, {}), MOFScheduler)
+
+
+def test_scheduler_configs():
+    example_sgroup_opts = ScalingGroupOpts(  # already processed by column trafaret
+        allowed_session_types=[SessionTypes.BATCH],
+        pending_timeout=timedelta(seconds=86400 * 2),
+        config={
+            'extra_config': None,
+            'num_retries_to_skip': 5,
+        },
+    )
+    scheduler = load_scheduler('fifo', example_sgroup_opts, example_sgroup_opts.config)
+    assert isinstance(scheduler, FIFOSlotScheduler)
+    assert scheduler.config == {
+        'extra_config': None,
+        'num_retries_to_skip': 5,
+    }
+    with pytest.raises(t.DataError):
+        example_sgroup_opts.config['num_retries_to_skip'] = -1  # invalid value
+        scheduler = load_scheduler('fifo', example_sgroup_opts, example_sgroup_opts.config)
 
 
 example_group_id = uuid4()
@@ -56,6 +83,7 @@ def example_agents():
         AgentContext(
             agent_id=AgentId('i-001'),
             agent_addr='10.0.1.1:6001',
+            architecture=DEFAULT_IMAGE_ARCH,
             scaling_group='sg01',
             available_slots=ResourceSlot({
                 'cpu': Decimal('4.0'),
@@ -73,6 +101,7 @@ def example_agents():
         AgentContext(
             agent_id=AgentId('i-101'),
             agent_addr='10.0.2.1:6001',
+            architecture=DEFAULT_IMAGE_ARCH,
             scaling_group='sg02',
             available_slots=ResourceSlot({
                 'cpu': Decimal('3.0'),
@@ -96,6 +125,7 @@ def example_mixed_agents():
         AgentContext(
             agent_id=AgentId('i-gpu'),
             agent_addr='10.0.1.1:6001',
+            architecture=DEFAULT_IMAGE_ARCH,
             scaling_group='sg01',
             available_slots=ResourceSlot({
                 'cpu': Decimal('4.0'),
@@ -111,6 +141,7 @@ def example_mixed_agents():
         AgentContext(
             agent_id=AgentId('i-cpu'),
             agent_addr='10.0.2.1:6001',
+            architecture=DEFAULT_IMAGE_ARCH,
             scaling_group='sg02',
             available_slots=ResourceSlot({
                 'cpu': Decimal('3.0'),
@@ -132,6 +163,7 @@ def example_agents_first_one_assigned():
         AgentContext(
             agent_id=AgentId('i-001'),
             agent_addr='10.0.1.1:6001',
+            architecture=DEFAULT_IMAGE_ARCH,
             scaling_group='sg01',
             available_slots=ResourceSlot({
                 'cpu': Decimal('2.0'),
@@ -149,6 +181,7 @@ def example_agents_first_one_assigned():
         AgentContext(
             agent_id=AgentId('i-101'),
             agent_addr='10.0.2.1:6001',
+            architecture=DEFAULT_IMAGE_ARCH,
             scaling_group='sg02',
             available_slots=ResourceSlot({
                 'cpu': Decimal('3.0'),
@@ -172,6 +205,7 @@ def example_agents_no_valid():
         AgentContext(
             agent_id=AgentId('i-001'),
             agent_addr='10.0.1.1:6001',
+            architecture=DEFAULT_IMAGE_ARCH,
             scaling_group='sg01',
             available_slots=ResourceSlot({
                 'cpu': Decimal('0'),
@@ -189,6 +223,7 @@ def example_agents_no_valid():
         AgentContext(
             agent_id=AgentId('i-101'),
             agent_addr='10.0.2.1:6001',
+            architecture=DEFAULT_IMAGE_ARCH,
             scaling_group='sg02',
             available_slots=ResourceSlot({
                 'cpu': Decimal('0'),
@@ -227,6 +262,9 @@ pending_session_kernel_ids = [
             KernelId(UUID('251907d9-1290-4126-bc6c-000000000301')),
             KernelId(UUID('251907d9-1290-4126-bc6c-000000000302')),
         ]),
+    SessionKernelIdPair(
+        session_id=UUID('251907d9-1290-4126-bc6c-000000000400'),
+        kernel_ids=[KernelId(UUID('251907d9-1290-4126-bc6c-000000000400'))]),
 ]
 
 existing_session_kernel_ids = [
@@ -252,8 +290,7 @@ _common_dummy_for_pending_session: Mapping[str, Any] = dict(
     group_id=example_group_id,
     resource_policy={},
     resource_opts={},
-    mounts=[],
-    mount_map={},
+    vfolder_mounts=[],
     environ={},
     bootstrap_script=None,
     startup_command=None,
@@ -292,6 +329,7 @@ def example_pending_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
+                    created_at=dtparse('2021-12-28T23:59:59+00:00'),
                 ),
             ],
             access_key=AccessKey('user01'),
@@ -313,6 +351,7 @@ def example_pending_sessions():
             }),
             target_sgroup_names=[],
             **_common_dummy_for_pending_session,
+            created_at=dtparse('2021-12-28T23:59:59+00:00'),
         ),
         PendingSession(  # cuda
             kernels=[
@@ -335,6 +374,7 @@ def example_pending_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
+                    created_at=dtparse('2022-02-01T23:59:59+00:00'),
                 ),
             ],
             access_key=AccessKey('user02'),
@@ -356,6 +396,7 @@ def example_pending_sessions():
             }),
             target_sgroup_names=[],
             **_common_dummy_for_pending_session,
+            created_at=dtparse('2022-02-01T23:59:59+00:00'),
         ),
         PendingSession(  # cpu-only
             kernels=[
@@ -378,6 +419,7 @@ def example_pending_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
+                    created_at=dtparse('2021-12-01T23:59:59+00:00'),
                 ),
                 KernelInfo(
                     kernel_id=pending_session_kernel_ids[2].kernel_ids[1],
@@ -398,6 +440,7 @@ def example_pending_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
+                    created_at=dtparse('2021-12-01T23:59:59+00:00'),
                 ),
                 KernelInfo(
                     kernel_id=pending_session_kernel_ids[2].kernel_ids[2],
@@ -418,6 +461,7 @@ def example_pending_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
+                    created_at=dtparse('2021-12-01T23:59:59+00:00'),
                 ),
             ],
             access_key=AccessKey('user03'),
@@ -439,6 +483,7 @@ def example_pending_sessions():
             }),
             target_sgroup_names=[],
             **_common_dummy_for_pending_session,
+            created_at=dtparse('2021-12-01T23:59:59+00:00'),
         ),
     ]
 
@@ -467,6 +512,7 @@ def example_existing_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
+                    created_at=dtparse('2022-02-05T00:00:00+00:00'),
                 ),
                 KernelInfo(
                     kernel_id=existing_session_kernel_ids[0].kernel_ids[1],
@@ -487,6 +533,7 @@ def example_existing_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
+                    created_at=dtparse('2022-02-05T00:00:00+00:00'),
                 ),
             ],
             access_key=AccessKey('user01'),
@@ -525,6 +572,7 @@ def example_existing_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
+                    created_at=dtparse('2021-09-03T00:00:00+00:00'),
                 ),
             ],
             access_key=AccessKey('user02'),
@@ -563,6 +611,7 @@ def example_existing_sessions():
                     }),
                     bootstrap_script=None,
                     startup_command=None,
+                    created_at=dtparse('2022-01-15T00:00:00+00:00'),
                 ),
             ],
             access_key=AccessKey('user03'),
@@ -594,29 +643,36 @@ def _find_and_pop_picked_session(pending_sessions, picked_session_id):
 
 
 def test_fifo_scheduler(example_agents, example_pending_sessions, example_existing_sessions):
-    scheduler = FIFOSlotScheduler({})
+    scheduler = FIFOSlotScheduler(ScalingGroupOpts(), {})
     picked_session_id = scheduler.pick_session(
         example_total_capacity,
         example_pending_sessions,
-        example_existing_sessions)
+        example_existing_sessions,
+    )
     assert picked_session_id == example_pending_sessions[0].session_id
     picked_session = _find_and_pop_picked_session(
-        example_pending_sessions, picked_session_id)
-
-    agent_id = scheduler.assign_agent_for_session(example_agents, picked_session)
+        example_pending_sessions,
+        picked_session_id,
+    )
+    agent_id = scheduler.assign_agent_for_session(
+        example_agents,
+        picked_session,
+    )
     assert agent_id == AgentId('i-001')
 
 
 def test_lifo_scheduler(example_agents, example_pending_sessions, example_existing_sessions):
-    scheduler = LIFOSlotScheduler({})
+    scheduler = LIFOSlotScheduler(ScalingGroupOpts(), {})
     picked_session_id = scheduler.pick_session(
         example_total_capacity,
         example_pending_sessions,
-        example_existing_sessions)
+        example_existing_sessions,
+    )
     assert picked_session_id == example_pending_sessions[2].session_id
     picked_session = _find_and_pop_picked_session(
-        example_pending_sessions, picked_session_id)
-
+        example_pending_sessions,
+        picked_session_id,
+    )
     agent_id = scheduler.assign_agent_for_session(example_agents, picked_session)
     assert agent_id == 'i-001'
 
@@ -625,15 +681,18 @@ def test_fifo_scheduler_favor_cpu_for_requests_without_accelerators(
     example_mixed_agents,
     example_pending_sessions,
 ):
-    scheduler = FIFOSlotScheduler({})
+    scheduler = FIFOSlotScheduler(ScalingGroupOpts(), {})
     for idx in range(3):
         picked_session_id = scheduler.pick_session(
             example_total_capacity,
             example_pending_sessions,
-            [])
+            [],
+        )
         assert picked_session_id == example_pending_sessions[0].session_id
         picked_session = _find_and_pop_picked_session(
-            example_pending_sessions, picked_session_id)
+            example_pending_sessions,
+            picked_session_id,
+        )
         agent_id = scheduler.assign_agent_for_session(example_mixed_agents, picked_session)
         if idx == 0:
             # example_mixed_agents do not have any agent with ROCM accelerators.
@@ -663,6 +722,7 @@ def gen_pending_for_holb_tests(session_id: str, status_data: Mapping[str, Any]) 
         requested_slots=ResourceSlot({'cpu': Decimal(1), 'mem': Decimal(1024)}),
         target_sgroup_names=[],
         **_common_dummy_for_pending_session,
+        created_at=dtparse('2020-03-21T00:00:00+00:00'),
     )
 
 
@@ -670,7 +730,7 @@ def test_fifo_scheduler_hol_blocking_avoidance_empty_status_data():
     """
     Without any status_data, it should just pick the first session.
     """
-    scheduler = FIFOSlotScheduler({'num_retries_to_skip': 5})
+    scheduler = FIFOSlotScheduler(ScalingGroupOpts(), {'num_retries_to_skip': 5})
     pending_sessions = [
         gen_pending_for_holb_tests("s0", {}),
         gen_pending_for_holb_tests("s1", {}),
@@ -688,7 +748,7 @@ def test_fifo_scheduler_hol_blocking_avoidance_config():
     If the upfront sessions have enough number of retries,
     it should skip them.
     """
-    scheduler = FIFOSlotScheduler({'num_retries_to_skip': 0})
+    scheduler = FIFOSlotScheduler(ScalingGroupOpts(), {'num_retries_to_skip': 0})
     pending_sessions = [
         gen_pending_for_holb_tests("s0", {'scheduler': {'retries': 5}}),
         gen_pending_for_holb_tests("s1", {}),
@@ -700,7 +760,7 @@ def test_fifo_scheduler_hol_blocking_avoidance_config():
         [])
     assert picked_session_id == 's0'
 
-    scheduler = FIFOSlotScheduler({'num_retries_to_skip': 5})
+    scheduler = FIFOSlotScheduler(ScalingGroupOpts(), {'num_retries_to_skip': 5})
     pending_sessions = [
         gen_pending_for_holb_tests("s0", {'scheduler': {'retries': 5}}),
         gen_pending_for_holb_tests("s1", {'scheduler': {'retries': 4}}),
@@ -718,7 +778,7 @@ def test_fifo_scheduler_hol_blocking_avoidance_skips():
     If the upfront sessions have enough number of retries,
     it should skip them.
     """
-    scheduler = FIFOSlotScheduler({'num_retries_to_skip': 5})
+    scheduler = FIFOSlotScheduler(ScalingGroupOpts(), {'num_retries_to_skip': 5})
     pending_sessions = [
         gen_pending_for_holb_tests("s0", {'scheduler': {'retries': 5}}),
         gen_pending_for_holb_tests("s1", {}),
@@ -747,7 +807,7 @@ def test_fifo_scheduler_hol_blocking_avoidance_all_skipped():
     If all sessions are skipped due to excessive number of retries,
     then we go back to the normal FIFO by choosing the first of them.
     """
-    scheduler = FIFOSlotScheduler({'num_retries_to_skip': 5})
+    scheduler = FIFOSlotScheduler(ScalingGroupOpts(), {'num_retries_to_skip': 5})
     pending_sessions = [
         gen_pending_for_holb_tests("s0", {'scheduler': {'retries': 5}}),
         gen_pending_for_holb_tests("s1", {'scheduler': {'retries': 5}}),
@@ -765,7 +825,7 @@ def test_fifo_scheduler_hol_blocking_avoidance_no_skip():
     If non-first sessions have to be skipped, the scheduler should still
     choose the first session.
     """
-    scheduler = FIFOSlotScheduler({'num_retries_to_skip': 5})
+    scheduler = FIFOSlotScheduler(ScalingGroupOpts(), {'num_retries_to_skip': 5})
     pending_sessions = [
         gen_pending_for_holb_tests("s0", {}),
         gen_pending_for_holb_tests("s1", {'scheduler': {'retries': 10}}),
@@ -784,7 +844,7 @@ def test_lifo_scheduler_favor_cpu_for_requests_without_accelerators(
 ):
     # Check the reverse with the LIFO scheduler.
     # The result must be same.
-    scheduler = LIFOSlotScheduler({})
+    scheduler = LIFOSlotScheduler(ScalingGroupOpts(), {})
     for idx in range(3):
         picked_session_id = scheduler.pick_session(
             example_total_capacity,
@@ -805,23 +865,33 @@ def test_lifo_scheduler_favor_cpu_for_requests_without_accelerators(
             assert agent_id == AgentId('i-cpu')
 
 
-def test_drf_scheduler(example_agents, example_pending_sessions, example_existing_sessions):
-    scheduler = DRFScheduler({})
+def test_drf_scheduler(
+    example_agents,
+    example_pending_sessions,
+    example_existing_sessions,
+):
+    scheduler = DRFScheduler(ScalingGroupOpts(), {})
     picked_session_id = scheduler.pick_session(
         example_total_capacity,
         example_pending_sessions,
-        example_existing_sessions)
+        example_existing_sessions,
+    )
     pprint(example_pending_sessions)
     assert picked_session_id == example_pending_sessions[1].session_id
     picked_session = _find_and_pop_picked_session(
-        example_pending_sessions, picked_session_id)
-
+        example_pending_sessions,
+        picked_session_id,
+    )
     agent_id = scheduler.assign_agent_for_session(example_agents, picked_session)
     assert agent_id == 'i-001'
 
 
-def test_mof_scheduler_first_assign(example_agents, example_pending_sessions, example_existing_sessions):
-    scheduler = MOFScheduler({})
+def test_mof_scheduler_first_assign(
+    example_agents,
+    example_pending_sessions,
+    example_existing_sessions,
+):
+    scheduler = MOFScheduler(ScalingGroupOpts(), {})
     picked_session_id = scheduler.pick_session(
         example_total_capacity,
         example_pending_sessions,
@@ -834,9 +904,12 @@ def test_mof_scheduler_first_assign(example_agents, example_pending_sessions, ex
     assert agent_id == 'i-001'
 
 
-def test_mof_scheduler_second_assign(example_agents_first_one_assigned, example_pending_sessions,
-                                     example_existing_sessions):
-    scheduler = MOFScheduler({})
+def test_mof_scheduler_second_assign(
+    example_agents_first_one_assigned,
+    example_pending_sessions,
+    example_existing_sessions,
+):
+    scheduler = MOFScheduler(ScalingGroupOpts(), {})
     picked_session_id = scheduler.pick_session(
         example_total_capacity,
         example_pending_sessions,
@@ -850,9 +923,12 @@ def test_mof_scheduler_second_assign(example_agents_first_one_assigned, example_
     assert agent_id == 'i-101'
 
 
-def test_mof_scheduler_no_valid_agent(example_agents_no_valid, example_pending_sessions,
-                                      example_existing_sessions):
-    scheduler = MOFScheduler({})
+def test_mof_scheduler_no_valid_agent(
+    example_agents_no_valid,
+    example_pending_sessions,
+    example_existing_sessions,
+):
+    scheduler = MOFScheduler(ScalingGroupOpts(), {})
     picked_session_id = scheduler.pick_session(
         example_total_capacity,
         example_pending_sessions,
@@ -865,71 +941,71 @@ def test_mof_scheduler_no_valid_agent(example_agents_no_valid, example_pending_s
     assert agent_id is None
 
 
+@pytest.mark.asyncio
+async def test_pending_timeout(mocker):
+
+    class MockDatetime:
+        @classmethod
+        def now(cls, tzinfo):
+            return datetime(2021, 1, 1, 0, 0, 0)
+
+    mocker.patch('ai.backend.manager.scheduler.dispatcher.datetime', MockDatetime)
+    mock_query_result = MagicMock()
+    mock_query_result.fetchall = MagicMock(return_value=[
+        {'id': 'session3', 'created_at': datetime(2020, 12, 31, 23, 59, 59)},
+        {'id': 'session2', 'created_at': datetime(2020, 12, 30, 23, 59, 59)},
+        {'id': 'session1', 'created_at': datetime(2020, 12, 29, 23, 59, 59)},
+    ])
+    mock_execute = AsyncMock(return_value=mock_query_result)
+    mock_dbconn = MagicMock()
+    mock_dbconn.execute = mock_execute
+
+    scheduler = FIFOSlotScheduler(ScalingGroupOpts(pending_timeout=timedelta(seconds=86400 * 2)), {})
+    candidate_session_rows, cancelled_session_rows = await _list_pending_sessions(
+        mock_dbconn, scheduler, 'default',
+    )
+    assert len(candidate_session_rows) == 2
+    assert len(cancelled_session_rows) == 1
+    assert cancelled_session_rows[0]['id'] == 'session1'
+
+    scheduler = FIFOSlotScheduler(ScalingGroupOpts(pending_timeout=timedelta(seconds=0)), {})
+    candidate_session_rows, cancelled_session_rows = await _list_pending_sessions(
+        mock_dbconn, scheduler, 'default',
+    )
+    assert len(candidate_session_rows) == 3
+    assert len(cancelled_session_rows) == 0
+
+
 class DummyEtcd:
     async def get_prefix(self, key: str) -> Mapping[str, Any]:
         return {}
 
 
 @pytest.mark.asyncio
-async def test_manually_assign_agent_available(example_agents, example_pending_sessions):
-    sess_ctx = example_pending_sessions[0]
-
+async def test_manually_assign_agent_available(
+    file_lock_factory,
+    registry_ctx: tuple[AgentRegistry, MagicMock, MagicMock, MagicMock, MagicMock, MagicMock],
+    example_agents,
+    example_pending_sessions,
+):
     mock_local_config = MagicMock()
-
-    mock_shared_config = MagicMock()
-    mock_shared_config.update_resource_slots = AsyncMock()
-    mock_shared_config.etcd = None
-    mock_shared_config.get_redis_url = MagicMock()
-
-    mock_event_dispatcher = MagicMock()
-    mock_event_producer = MagicMock()
-    mock_event_producer.produce_event = AsyncMock()
-
-    mock_db = MagicMock()
-    mock_db_conn = MagicMock()
-    mock_dbconn_ctx = MagicMock()
-    mock_dbconn = MagicMock()
-    mock_dbresult = MagicMock()
-    mock_db.connect = MagicMock(return_value=mock_dbconn_ctx)
-    mock_db.begin = MagicMock(return_value=mock_dbconn_ctx)
-    mock_db_conn.execute = AsyncMock(return_value=None)
-    mock_dbconn_ctx.__aenter__ = AsyncMock(return_value=mock_dbconn)
-    mock_dbconn_ctx.__aexit__ = AsyncMock()
-    mock_dbconn.execute = AsyncMock(return_value=mock_dbresult)
-
-    mock_redis_stat = MagicMock()
-    mock_redis_live = MagicMock()
-    mock_redis_live.hset = AsyncMock()
-    mock_redis_image = MagicMock()
-
+    registry, mock_db, mock_dbresult, mock_shared_config, mock_event_dispatcher, mock_event_producer = \
+        registry_ctx
+    sess_ctx = example_pending_sessions[0]
     mock_sched_ctx = MagicMock()
     mock_check_result = MagicMock()
-    scheduler = FIFOSlotScheduler({})
+    scheduler = FIFOSlotScheduler(ScalingGroupOpts(), {})
     sgroup_name = example_agents[0].scaling_group
     candidate_agents = example_agents
     example_pending_sessions[0].agent_id = 'i-001'
     sess_ctx = example_pending_sessions[0]
-    mocked_etcd = DummyEtcd()
-    hook_plugin_ctx = HookPluginContext(mocked_etcd, {})
-
-    registry = AgentRegistry(
-        shared_config=mock_shared_config,
-        db=mock_db,
-        redis_stat=mock_redis_stat,
-        redis_live=mock_redis_live,
-        redis_image=mock_redis_image,
-        event_dispatcher=mock_event_dispatcher,
-        event_producer=mock_event_producer,
-        storage_manager=None,  # type: ignore
-        hook_plugin_ctx=hook_plugin_ctx,
-    )
-    await registry.init()
 
     dispatcher = SchedulerDispatcher(
         local_config=mock_local_config,
         shared_config=mock_shared_config,
         event_dispatcher=mock_event_dispatcher,
         event_producer=mock_event_producer,
+        lock_factory=file_lock_factory,
         registry=registry,
     )
 

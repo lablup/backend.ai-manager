@@ -24,11 +24,13 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import (
     AsyncConnection as SAConnection,
     AsyncEngine as SAEngine,
+    AsyncSession as SASession,
 )
 from tenacity import (
     AsyncRetrying,
     RetryError,
     TryAgain,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
 )
@@ -38,10 +40,13 @@ from ai.backend.common.logging import BraceStyleAdapter
 
 if TYPE_CHECKING:
     from ..config import LocalConfig
-from ..defs import AdvisoryLock
+from ..defs import LockID
 from ..types import Sentinel
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
+column_constraints = ['nullable', 'index', 'unique', 'primary_key']
+
+# TODO: Implement begin(), begin_readonly() for AsyncSession also
 
 
 class ExtendedAsyncSAEngine(SAEngine):
@@ -91,7 +96,23 @@ class ExtendedAsyncSAEngine(SAEngine):
                     self._readonly_txn_count -= 1
 
     @actxmgr
-    async def advisory_lock(self, lock_id: AdvisoryLock) -> AsyncIterator[None]:
+    async def begin_session(self) -> AsyncIterator[SASession]:
+        async with self.begin() as conn:
+            session = SASession(bind=conn)
+            try:
+                yield session
+                await session.commit()
+            except Exception as e:
+                await session.rollback()
+                raise e
+
+    @actxmgr
+    async def begin_readonly_session(self, deferrable: bool = False) -> AsyncIterator[SASession]:
+        async with self.begin_readonly(deferrable=deferrable) as conn:
+            yield SASession(bind=conn)
+
+    @actxmgr
+    async def advisory_lock(self, lock_id: LockID) -> AsyncIterator[None]:
         lock_acquired = False
         # Here we use the session-level advisory lock,
         # which follows the lifetime of underlying DB connection.
@@ -187,6 +208,7 @@ async def execute_with_retry(txn_func: Callable[[], Awaitable[TQueryResult]]) ->
         async for attempt in AsyncRetrying(
             wait=wait_exponential(multiplier=0.02, min=0.02, max=5.0),
             stop=stop_after_attempt(max_attempts),
+            retry=retry_if_exception_type(TryAgain),
         ):
             with attempt:
                 try:
@@ -263,3 +285,22 @@ def sql_json_increment(
     if _depth == len(key) - 1 and parent_updates is not None:
         expr = expr.concat(sa.func.cast(parent_updates, psql.JSONB))
     return expr
+
+
+def _populate_column(column: sa.Column):
+    column_attrs = dict(column.__dict__)
+    name = column_attrs.pop('name')
+    return sa.Column(name, column.type, **{k: column_attrs[k] for k in column_constraints})
+
+
+def regenerate_table(table: sa.Table, new_metadata: sa.MetaData) -> sa.Table:
+    '''
+    This function can be used to regenerate table which belongs to SQLAlchemy ORM Class,
+    which can be helpful when you're tring to build fresh new table for use on diffrent context
+    than main manager logic (e.g. test code).
+    Check out tests/test_image.py for more details.
+    '''
+    return sa.Table(
+        table.name, new_metadata,
+        *[_populate_column(c) for c in table.columns],
+    )
