@@ -707,7 +707,7 @@ class ModifyUser(graphene.Mutation):
                                 {
                                     "is_admin": bindparam("is_admin"),
                                     "is_active": bindparam("is_active"),
-                                }
+                                },
                             )
                             .where(keypairs.c.access_key == bindparam("b_access_key")),
                             kp_updates,

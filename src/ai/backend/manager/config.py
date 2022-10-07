@@ -211,6 +211,7 @@ from typing import (
     Any,
     Awaitable,
     Callable,
+    Coroutine,
     DefaultDict,
     Final,
     List,
@@ -628,7 +629,7 @@ class SharedConfig(AbstractConfig):
         known_registries = await get_known_registries(self.etcd)
         reverse_aliases = await self._scan_reverse_aliases()
         data = await self.etcd.get_prefix('images')
-        coros: List[asyncio.Task] = []
+        coros: List[Coroutine] = []
         for registry, images in data.items():
             if registry == '_aliases':
                 continue
