@@ -199,7 +199,7 @@ async def query_accessible_vfolders(
     domain_name=None,
     allowed_vfolder_types=None,
     extra_vf_conds=None,
-    extra_vfperm_conds=None,
+    extra_invited_vf_conds=None,
     extra_vf_user_conds=None,
     extra_vf_group_conds=None,
 ) -> Sequence[Mapping[str, Any]]:
@@ -294,6 +294,8 @@ async def query_accessible_vfolders(
                 (vfolders.c.ownership_type == VFolderOwnershipType.USER),
             )
         )
+        if extra_invited_vf_conds is not None:
+            query = query.where(extra_invited_vf_conds)
         await _append_entries(query, _is_owner=False)
 
     if 'group' in allowed_vfolder_types:
@@ -320,6 +322,8 @@ async def query_accessible_vfolders(
         )
         if user_role != UserRole.SUPERADMIN:
             query = query.where(vfolders.c.group.in_(group_ids))
+        if extra_vf_group_conds is not None:
+            query = query.where(extra_vf_group_conds)
         is_owner = ((user_role == UserRole.ADMIN or user_role == 'admin') or
                     (user_role == UserRole.SUPERADMIN or user_role == 'superadmin'))
         await _append_entries(query, is_owner)
