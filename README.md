@@ -1,6 +1,9 @@
 Backend.AI Manager with API Gateway
 ===================================
 
+> ### !!! Deprecation notice
+> This repository is deprecated and no longer maintained. The code has been migrated to our semi-mono repository at https://github.com/lablup/backend.ai.
+
 Package Structure
 -----------------
 
