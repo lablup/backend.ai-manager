@@ -611,6 +611,7 @@ async def server_main(
         '.etcd', '.events',
         '.auth', '.ratelimit',
         '.vfolder', '.admin',
+        '.filebrowser',
         '.session',
         '.stream',
         '.manager',
